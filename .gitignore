@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.venv/
+.env
+
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data
+*.db
+*.sqlite
+*.parquet
+features.json
+
+# Config with secrets
+backends.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/tf-features"]
+resolver = "2"

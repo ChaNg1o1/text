@@ -1,0 +1,317 @@
+"""Stylometry Agent -- writing style fingerprint analysis."""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+import litellm
+
+from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_MODEL = "claude-sonnet-4-20250514"
+
+
+class StylometryAgent:
+    """Analyzes writing style features to build an author fingerprint."""
+
+    SYSTEM_PROMPT = """\
+You are an expert forensic linguist specializing in stylometry -- the statistical \
+analysis of writing style for authorship attribution and verification. You have \
+decades of experience in computational stylistics, having contributed to landmark \
+authorship disputes in both literary and legal contexts.
+
+Your analytical framework covers the following dimensions:
+
+1. **Vocabulary Richness & Lexical Diversity**
+   - Type-Token Ratio (TTR): measures vocabulary range relative to text length. \
+Values above 0.7 suggest rich, varied vocabulary; below 0.4 indicate repetitive usage.
+   - Hapax Legomena Ratio: the proportion of words used exactly once. Higher ratios \
+(> 0.5) indicate a preference for unique word choices; lower ratios suggest formulaic \
+or constrained vocabulary.
+   - Yule's K: a text-length-independent measure of vocabulary richness. Values below \
+100 indicate very rich vocabulary; above 200 suggest limited range. This metric is \
+particularly robust for cross-sample comparison.
+
+2. **Sentence Structure & Syntactic Preferences**
+   - Average sentence length (in tokens) reveals cognitive load and stylistic register. \
+Academic writers tend toward 20-30 tokens; informal writers often stay below 15.
+   - Sentence length variance captures rhythmic patterns -- low variance indicates \
+monotonous structure while high variance may signal deliberate rhetorical variation or \
+inconsistent editing.
+   - POS tag distributions reveal syntactic fingerprints: noun-heavy writing suggests \
+an information-dense style; verb-heavy writing is more action-oriented; adjective and \
+adverb density correlates with descriptive or evaluative registers.
+   - Clause depth indicates syntactic complexity and embedding preferences.
+
+3. **Punctuation & Symbol Habits**
+   - Punctuation profiles are among the most stable authorial markers. Pay special \
+attention to: comma frequency (correlates with clause complexity), semicolon usage \
+(marks formal or academic style), dash patterns (em-dash vs en-dash vs hyphen), \
+exclamation and question mark density, and ellipsis usage.
+   - These features are particularly resistant to deliberate disguise.
+
+4. **N-gram Fingerprints**
+   - Character n-grams (especially 2-4 grams) capture subword patterns including \
+morphological preferences, spelling habits, and even keyboard patterns.
+   - Word n-grams reveal phrasal templates and collocational preferences that are \
+deeply ingrained and difficult to consciously alter.
+   - Unusual or distinctive n-gram patterns are strong discriminators.
+
+5. **Function Word Distribution**
+   - Function words (articles, prepositions, conjunctions, pronouns, auxiliary verbs) \
+are used largely unconsciously and are therefore among the most reliable authorship \
+indicators.
+   - Pay attention to: pronoun system preferences (I vs we, this vs that), article \
+usage patterns, preposition selection, conjunction density, and modal verb choices.
+
+6. **Cross-Sample Consistency**
+   - When multiple samples are provided, consistency of stylometric features across \
+samples is itself a powerful signal. An author's genuine writing shows stable patterns \
+within a predictable variance band.
+   - Sudden deviations may indicate: different authorship, deliberate disguise, \
+genre/register shift, or temporal changes in writing habits.
+
+**Output Requirements:**
+Provide your analysis as a JSON array of finding objects. Each finding must have:
+- "category": one of "vocabulary_richness", "sentence_structure", "punctuation_habits", \
+"ngram_fingerprint", "function_words", "cross_sample_consistency"
+- "description": a clear, specific analytical statement (2-4 sentences)
+- "confidence": a float between 0.0 and 1.0
+- "evidence": a list of specific data points supporting this finding
+
+Return ONLY the JSON array, no other text. Example:
+[
+  {
+    "category": "vocabulary_richness",
+    "description": "The author demonstrates...",
+    "confidence": 0.85,
+    "evidence": ["TTR of 0.72 indicates...", "Hapax ratio of 0.55 suggests..."]
+  }
+]
+
+**IMPORTANT: Language Requirement**
+You MUST write ALL text content (description, evidence, and any other free-text fields) \
+in Simplified Chinese (简体中文). Keep JSON keys and category identifiers in English. \
+Numerical values remain as numbers. Only the human-readable text should be in Chinese.
+"""
+
+    def __init__(
+        self,
+        model: str = _DEFAULT_MODEL,
+        api_base: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        self.model = model
+        self.api_base = api_base
+        self.api_key = api_key
+
+    async def analyze(
+        self,
+        features: list[FeatureVector],
+        task_context: str,
+    ) -> AgentReport:
+        """Analyze writing style features and return findings."""
+        user_prompt = self._build_prompt(features, task_context)
+
+        try:
+            raw_response = await _call_llm(
+                self.SYSTEM_PROMPT, user_prompt, self.model,
+                api_base=self.api_base, api_key=self.api_key,
+            )
+        except Exception:
+            logger.exception("StylometryAgent LLM call failed")
+            return AgentReport(
+                agent_name="stylometry",
+                discipline="stylometry",
+                summary="由于 LLM 调用失败，分析未完成。",
+            )
+
+        findings = _parse_findings(raw_response, discipline="stylometry")
+        summary = self._build_summary(findings)
+
+        return AgentReport(
+            agent_name="stylometry",
+            discipline="stylometry",
+            findings=findings,
+            summary=summary,
+            raw_llm_response=raw_response,
+        )
+
+    # ------------------------------------------------------------------
+    # Prompt construction
+    # ------------------------------------------------------------------
+
+    def _build_prompt(
+        self,
+        features: list[FeatureVector],
+        task_context: str,
+    ) -> str:
+        sections: list[str] = [
+            f"## Task Context\n{task_context}",
+            f"## Number of Text Samples: {len(features)}",
+        ]
+
+        for i, fv in enumerate(features, 1):
+            rust = fv.rust_features
+            nlp = fv.nlp_features
+
+            block = (
+                f"### Sample {i} (id={fv.text_id})\n"
+                f"**Vocabulary Metrics:**\n"
+                f"- Token count: {rust.token_count}\n"
+                f"- Type-Token Ratio: {rust.type_token_ratio:.4f}\n"
+                f"- Hapax Legomena Ratio: {rust.hapax_legomena_ratio:.4f}\n"
+                f"- Yule's K: {rust.yules_k:.2f}\n"
+                f"- Avg word length: {rust.avg_word_length:.2f}\n\n"
+                f"**Sentence Structure:**\n"
+                f"- Avg sentence length: {rust.avg_sentence_length:.2f}\n"
+                f"- Sentence length variance: {rust.sentence_length_variance:.2f}\n"
+                f"- Clause depth avg: {nlp.clause_depth_avg:.2f}\n"
+                f"- POS tag distribution: {_fmt_dict(nlp.pos_tag_distribution, top_n=15)}\n\n"
+                f"**Punctuation Profile:**\n"
+                f"{_fmt_dict(rust.punctuation_profile)}\n\n"
+                f"**Top Character N-grams:**\n"
+                f"{_fmt_dict(rust.char_ngrams, top_n=20)}\n\n"
+                f"**Top Word N-grams:**\n"
+                f"{_fmt_dict(rust.word_ngrams, top_n=20)}\n\n"
+                f"**Function Word Frequencies:**\n"
+                f"{_fmt_dict(rust.function_word_freq, top_n=25)}\n"
+            )
+            sections.append(block)
+
+        sections.append(
+            "Analyze these stylometric features thoroughly. "
+            "Identify distinctive authorial markers, cross-sample patterns, "
+            "and any anomalies. Return your findings as a JSON array."
+        )
+        return "\n\n".join(sections)
+
+    def _build_summary(self, findings: list[AgentFinding]) -> str:
+        if not findings:
+            return "文体学分析未产生任何发现。"
+        high = [f for f in findings if f.confidence >= 0.7]
+        return (
+            f"文体学分析产出 {len(findings)} 项发现"
+            f"（{len(high)} 项高置信度）。"
+            f"涵盖类别：{', '.join(sorted({f.category for f in findings}))}。"
+        )
+
+
+# ======================================================================
+# Shared helpers (module-level so other agents can reuse the pattern)
+# ======================================================================
+
+
+async def _call_llm(
+    system_prompt: str,
+    user_prompt: str,
+    model: str = _DEFAULT_MODEL,
+    api_base: str | None = None,
+    api_key: str | None = None,
+    max_retries: int = 3,
+) -> str:
+    """Call an LLM via litellm and return the text response.
+
+    Retries on transient errors with exponential backoff.
+    """
+    import asyncio as _asyncio
+
+    kwargs: dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+    }
+    if api_base:
+        kwargs["api_base"] = api_base
+    if api_key:
+        kwargs["api_key"] = api_key
+
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = await litellm.acompletion(**kwargs)
+            return response.choices[0].message.content
+        except (
+            litellm.RateLimitError,
+            litellm.ServiceUnavailableError,
+            litellm.Timeout,
+            litellm.InternalServerError,
+            litellm.APIConnectionError,
+        ) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = 2.0 * (2 ** (attempt - 1))
+                logger.warning(
+                    "LLM call failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                    attempt, max_retries, type(exc).__name__, delay,
+                )
+                await _asyncio.sleep(delay)
+            else:
+                logger.error("LLM call failed after %d attempts: %s", max_retries, exc)
+
+    raise last_exc  # type: ignore[misc]
+
+
+def _parse_findings(
+    raw: str,
+    discipline: str,
+) -> list[AgentFinding]:
+    """Best-effort parse of LLM JSON response into AgentFinding objects."""
+    # Strip markdown fences if present.
+    text = raw.strip()
+    if text.startswith("```"):
+        first_newline = text.index("\n")
+        last_fence = text.rfind("```")
+        text = text[first_newline + 1 : last_fence].strip()
+
+    try:
+        items: list[dict[str, Any]] = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse LLM response as JSON for %s agent", discipline)
+        return [
+            AgentFinding(
+                discipline=discipline,
+                category="unparsed",
+                description=raw[:500],
+                confidence=0.3,
+                evidence=["Raw LLM response could not be parsed as structured JSON."],
+            )
+        ]
+
+    findings: list[AgentFinding] = []
+    for item in items:
+        try:
+            findings.append(
+                AgentFinding(
+                    discipline=discipline,
+                    category=item.get("category", "unknown"),
+                    description=item.get("description", ""),
+                    confidence=float(item.get("confidence", 0.5)),
+                    evidence=item.get("evidence", []),
+                    metadata=item.get("metadata", {}),
+                )
+            )
+        except (ValueError, TypeError):
+            logger.warning("Skipping malformed finding item in %s agent", discipline)
+    return findings
+
+
+def _fmt_dict(
+    d: dict[str, float],
+    top_n: int | None = None,
+) -> str:
+    """Format a feature dict for prompt inclusion."""
+    if not d:
+        return "(empty)"
+    items = sorted(d.items(), key=lambda kv: kv[1], reverse=True)
+    if top_n is not None:
+        items = items[:top_n]
+    lines = [f"  {k}: {v:.4f}" for k, v in items]
+    return "\n".join(lines)

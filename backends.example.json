@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Configuration file for custom LLM backends. Copy to backends.json and edit.",
+
+  "backends": {
+    "deepseek": {
+      "provider": "openai_compatible",
+      "model": "deepseek-chat",
+      "api_base": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+
+    "deepseek-reasoner": {
+      "provider": "openai_compatible",
+      "model": "deepseek-reasoner",
+      "api_base": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+
+    "qwen": {
+      "provider": "openai_compatible",
+      "model": "qwen-plus",
+      "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "DASHSCOPE_API_KEY"
+    },
+
+    "glm": {
+      "provider": "openai_compatible",
+      "model": "glm-4-plus",
+      "api_base": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "ZHIPU_API_KEY"
+    },
+
+    "moonshot": {
+      "provider": "openai_compatible",
+      "model": "moonshot-v1-128k",
+      "api_base": "https://api.moonshot.cn/v1",
+      "api_key_env": "MOONSHOT_API_KEY"
+    },
+
+    "yi": {
+      "provider": "openai_compatible",
+      "model": "yi-large",
+      "api_base": "https://api.lingyiwanwu.com/v1",
+      "api_key_env": "YI_API_KEY"
+    },
+
+    "azure-gpt4": {
+      "provider": "openai_compatible",
+      "model": "gpt-4o",
+      "api_base": "https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT",
+      "api_key_env": "AZURE_OPENAI_API_KEY"
+    },
+
+    "claude-proxy": {
+      "provider": "anthropic_compatible",
+      "model": "claude-sonnet-4-20250514",
+      "api_base": "https://your-proxy.example.com",
+      "api_key_env": "PROXY_API_KEY"
+    },
+
+    "together-llama": {
+      "provider": "openai_compatible",
+      "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "api_base": "https://api.together.xyz/v1",
+      "api_key_env": "TOGETHER_API_KEY"
+    },
+
+    "ollama-local": {
+      "provider": "openai_compatible",
+      "model": "llama3",
+      "api_base": "http://localhost:11434/v1"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+[project]
+name = "text"
+version = "0.1.0"
+description = "Digital forensics text analysis platform with multi-agent team"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.15",
+    "rich>=13",
+    "pydantic>=2",
+    "google-adk>=1",
+    "litellm>=1.60",
+    "spacy>=3.8",
+    "sentence-transformers>=3",
+    "scikit-learn>=1.6",
+    "numpy>=2",
+    "aiosqlite>=0.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
+    "maturin>=1.8",
+    "ruff>=0.9",
+]
+
+[project.scripts]
+text = "text.cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/text"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.maturin]
+module-name = "text._tf_features"
