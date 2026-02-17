@@ -25,15 +25,28 @@ python -m spacy download en_core_web_sm
 ### 运行
 
 ```bash
-# 完整分析
-text analyze sample/xueqiu_cleaned_stylometry.txt --task full --llm claude
+# 完整分析（默认 rich 终端输出）
+text analyze full sample/xueqiu_cleaned_stylometry.txt --llm claude
+
+# 作者归属分析，输出 JSON 到文件
+text analyze attribution data/ --compare "alice,bob" --format json --output report.json
+
+# 作者画像
+text analyze profiling data/ --author alice
+
+# 傀儡检测
+text analyze sockpuppet data/ --suspects "alice,bob"
 
 # 仅提取特征（不调用 LLM）
-text features sample/xueqiu_cleaned_stylometry.txt --output features.json
+text extract sample/xueqiu_cleaned_stylometry.txt --output features.json
 
-# 查看可用后端与组件状态
-text backends
-text info
+# 查看组件状态 / LLM 后端
+text config info
+text config backends
+
+# 缓存管理
+text config cache status
+text config cache clear
 ```
 
 ### 测试与质量
@@ -72,11 +85,11 @@ ruff format --check src/
 
 | 模块 | 职责 |
 |------|------|
-| `cli/main.py` | Typer CLI 入口，`text analyze` / `text features` / `text backends` / `text info` |
+| `cli/main.py` | Typer CLI 入口，分组命令：`analyze`（full/attribution/profiling/sockpuppet）、`extract`、`config`（info/backends/cache） |
 | `ingest/schema.py` | Pydantic 数据模型：`TextEntry`, `AnalysisRequest`, `FeatureVector`, `ForensicReport` 等 |
 | `ingest/loader.py` | 多格式加载器（CSV/JSON/JSONL/TXT） |
 | `features/extractor.py` | 特征提取编排，协调 Rust 与 Python NLP 管道 |
-| `features/cache.py` | SQLite 特征缓存（SHA256 内容哈希去重），存储于 `~/.cache/text/` |
+| `features/cache.py` | SQLite 特征缓存（BLAKE2b 内容哈希去重），存储于 `~/.cache/text/` |
 | `llm/backend.py` | LLM API 抽象层，通过 LiteLLM 支持多供应商 |
 | `agents/orchestrator.py` | 多智能体调度器，`asyncio.gather()` 并行执行 4 个专业 Agent |
 | `agents/stylometry.py` | 文体计量学 Agent + **共享 LLM 工具函数**（`_call_llm`, `_fmt_dict`, `_parse_findings`） |
