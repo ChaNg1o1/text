@@ -35,7 +35,9 @@ def _confidence_label(score: float) -> str:
 
 
 def _format_timestamp(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    if dt.tzinfo is not None:
+        return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 class ReportRenderer:
@@ -123,6 +125,25 @@ class ReportRenderer:
                 w(f"{idx}. {rec}")
             w("")
 
+        # ---- Anomaly Samples ----
+        if report.anomaly_samples:
+            w("## 异常样本\n")
+            w(
+                f"> 以下 {len(report.anomaly_samples)} 个样本在至少一个特征维度上"
+                "偏离群体均值超过 2 个标准差，供人工校准审查。\n"
+            )
+            for sample in report.anomaly_samples:
+                dims_str = ", ".join(
+                    f"{name} (z={z:.2f})" for name, z in sorted(
+                        sample.outlier_dimensions.items(), key=lambda x: x[1], reverse=True
+                    )
+                )
+                w(f"### {sample.text_id}\n")
+                w(f"**异常维度（{len(sample.outlier_dimensions)} 项）：** {dims_str}\n")
+                w("**原文：**\n")
+                w(f"```\n{sample.content}\n```\n")
+            w("")
+
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -160,8 +181,23 @@ class ReportRenderer:
         )
 
         # ---- Agent Panels ----
+        discipline_order = [
+            "stylometry",
+            "psycholinguistics",
+            "computational_linguistics",
+            "sociolinguistics",
+        ]
+        report_by_discipline: dict[str, AgentReport] = {
+            ar.discipline: ar for ar in report.agent_reports
+        }
+        seen: set[str] = set()
+        for disc in discipline_order:
+            if disc in report_by_discipline:
+                _render_agent_rich(console, report_by_discipline[disc])
+                seen.add(disc)
         for ar in report.agent_reports:
-            _render_agent_rich(console, ar)
+            if ar.discipline not in seen:
+                _render_agent_rich(console, ar)
 
         # ---- Confidence Table ----
         if report.confidence_scores:
@@ -220,6 +256,10 @@ class ReportRenderer:
                 )
             )
 
+        # ---- Anomaly Samples ----
+        if report.anomaly_samples:
+            _render_anomaly_samples_rich(console, report)
+
     # ------------------------------------------------------------------
     # Short summary
     # ------------------------------------------------------------------
@@ -241,9 +281,13 @@ class ReportRenderer:
 
         if report.synthesis:
             # First sentence of the synthesis as a teaser.
-            first_sentence = report.synthesis.split(".")[0].strip()
+            # Support both Chinese (。) and English (.) sentence endings.
+            import re
+
+            m = re.search(r"[.。!！?？]", report.synthesis)
+            first_sentence = report.synthesis[: m.end()].strip() if m else report.synthesis[:100]
             if first_sentence:
-                parts.append(f"摘要：{first_sentence}。")
+                parts.append(f"摘要：{first_sentence}")
 
         return " | ".join(parts)
 
@@ -314,4 +358,38 @@ def _render_agent_rich(console: Console, ar: AgentReport) -> None:
             padding=(1, 2),
         )
     )
+    console.print()
+
+
+_ANOMALY_CONTENT_PREVIEW = 300
+
+
+def _render_anomaly_samples_rich(console: Console, report: ForensicReport) -> None:
+    """Render anomaly samples as a rich table + expandable content."""
+    console.print()
+
+    table = Table(
+        title=f"异常样本（共 {len(report.anomaly_samples)} 个）",
+        show_header=True,
+        header_style="bold red",
+        border_style="red",
+        show_lines=True,
+    )
+    table.add_column("样本 ID", style="bold", max_width=20)
+    table.add_column("异常维度", max_width=50)
+    table.add_column("原文预览", max_width=60)
+
+    for sample in report.anomaly_samples:
+        dims = ", ".join(
+            f"{name} [bold](z={z:.2f})[/bold]"
+            for name, z in sorted(
+                sample.outlier_dimensions.items(), key=lambda x: x[1], reverse=True
+            )
+        )
+        preview = sample.content[:_ANOMALY_CONTENT_PREVIEW]
+        if len(sample.content) > _ANOMALY_CONTENT_PREVIEW:
+            preview += "..."
+        table.add_row(sample.text_id[:16], dims, preview)
+
+    console.print(table)
     console.print()

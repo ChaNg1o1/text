@@ -8,6 +8,9 @@ mod ngram;
 mod syntactic;
 mod unicode;
 
+/// Maximum number of n-gram entries to retain per map (char / word).
+const MAX_NGRAMS: usize = 200;
+
 // ---------------------------------------------------------------------------
 // PyO3 data classes
 // ---------------------------------------------------------------------------
@@ -32,6 +35,12 @@ pub struct RustFeatures {
     pub emoji_density: f64,
     pub formality_score: f64,
     pub code_switching_ratio: f64,
+    pub brunets_w: f64,
+    pub honores_r: f64,
+    pub simpsons_d: f64,
+    pub mtld: f64,
+    pub hd_d: f64,
+    pub coleman_liau_index: f64,
 }
 
 #[pymethods]
@@ -40,7 +49,8 @@ impl RustFeatures {
         format!(
             "RustFeatures(tokens={}, ttr={:.4}, hapax={:.4}, yules_k={:.2}, avg_wl={:.2}, \
              avg_sl={:.2}, sl_var={:.2}, cjk={:.4}, emoji={:.4}, formality={:.4}, \
-             code_switch={:.4})",
+             code_switch={:.4}, brunets_w={:.2}, honores_r={:.2}, simpsons_d={:.6}, \
+             mtld={:.2}, hd_d={:.4}, coleman_liau={:.2})",
             self.token_count,
             self.type_token_ratio,
             self.hapax_legomena_ratio,
@@ -52,6 +62,12 @@ impl RustFeatures {
             self.emoji_density,
             self.formality_score,
             self.code_switching_ratio,
+            self.brunets_w,
+            self.honores_r,
+            self.simpsons_d,
+            self.mtld,
+            self.hd_d,
+            self.coleman_liau_index,
         )
     }
 
@@ -73,6 +89,12 @@ impl RustFeatures {
         dict.set_item("emoji_density", self.emoji_density)?;
         dict.set_item("formality_score", self.formality_score)?;
         dict.set_item("code_switching_ratio", self.code_switching_ratio)?;
+        dict.set_item("brunets_w", self.brunets_w)?;
+        dict.set_item("honores_r", self.honores_r)?;
+        dict.set_item("simpsons_d", self.simpsons_d)?;
+        dict.set_item("mtld", self.mtld)?;
+        dict.set_item("hd_d", self.hd_d)?;
+        dict.set_item("coleman_liau_index", self.coleman_liau_index)?;
         Ok(dict)
     }
 }
@@ -86,6 +108,11 @@ pub struct LexicalMetrics {
     pub hapax_legomena_ratio: f64,
     pub yules_k: f64,
     pub avg_word_length: f64,
+    pub brunets_w: f64,
+    pub honores_r: f64,
+    pub simpsons_d: f64,
+    pub mtld: f64,
+    pub hd_d: f64,
 }
 
 /// Unicode profile metrics returned by `unicode_profile`.
@@ -113,12 +140,19 @@ pub struct SentenceMetrics {
 
 /// Extract all features from a single text into a `RustFeatures` struct.
 fn extract_features(text: &str) -> RustFeatures {
-    let lex = lexical::compute_lexical_metrics(text);
+    // Tokenize once and share across consumers.
+    let tokens = lexical::tokenize(text);
+
+    let lex = lexical::compute_lexical_metrics_from_tokens(&tokens);
     let sent = syntactic::compute_sentence_metrics(text);
-    let uni = unicode::compute_unicode_metrics(text);
-    let (char_ng, word_ng) = ngram::extract_all_ngrams(text);
+    let uni = unicode::compute_unicode_metrics(text, &tokens);
+    let (char_ng, word_ng) = ngram::extract_all_ngrams(text, MAX_NGRAMS);
     let punct = unicode::punctuation_profile(text);
-    let func_words = lexical::function_word_frequencies(text);
+    let func_words = lexical::function_word_frequencies_from_tokens(&tokens);
+
+    // Coleman-Liau: count letters (alphanumeric chars).
+    let letter_count: usize = text.chars().filter(|c| c.is_alphanumeric()).count();
+    let cli = lexical::coleman_liau_index(letter_count, lex.token_count, sent.sentence_count);
 
     RustFeatures {
         token_count: lex.token_count,
@@ -136,6 +170,12 @@ fn extract_features(text: &str) -> RustFeatures {
         emoji_density: uni.emoji_density,
         formality_score: uni.formality_score,
         code_switching_ratio: uni.code_switching_ratio,
+        brunets_w: lex.brunets_w,
+        honores_r: lex.honores_r,
+        simpsons_d: lex.simpsons_d,
+        mtld: lex.mtld,
+        hd_d: lex.hd_d,
+        coleman_liau_index: cli,
     }
 }
 
@@ -162,10 +202,10 @@ fn extract_ngrams(text: &str, n: usize) -> HashMap<String, f64> {
     let mut result = HashMap::new();
 
     for order in 2..=n {
-        for (k, v) in ngram::char_ngrams(text, order) {
+        for (k, v) in ngram::char_ngrams(text, order, MAX_NGRAMS) {
             result.insert(format!("c{}:{}", order, k), v);
         }
-        for (k, v) in ngram::word_ngrams(text, order) {
+        for (k, v) in ngram::word_ngrams(text, order, MAX_NGRAMS) {
             result.insert(format!("w{}:{}", order, k), v);
         }
     }
@@ -183,13 +223,19 @@ fn lexical_richness(text: &str) -> LexicalMetrics {
         hapax_legomena_ratio: m.hapax_legomena_ratio,
         yules_k: m.yules_k,
         avg_word_length: m.avg_word_length,
+        brunets_w: m.brunets_w,
+        honores_r: m.honores_r,
+        simpsons_d: m.simpsons_d,
+        mtld: m.mtld,
+        hd_d: m.hd_d,
     }
 }
 
 /// Compute Unicode profile: CJK ratio, emoji density, code-switching ratio, formality score.
 #[pyfunction]
 fn unicode_profile(text: &str) -> UnicodeMetrics {
-    let m = unicode::compute_unicode_metrics(text);
+    let tokens = lexical::tokenize(text);
+    let m = unicode::compute_unicode_metrics(text, &tokens);
     UnicodeMetrics {
         cjk_ratio: m.cjk_ratio,
         emoji_density: m.emoji_density,

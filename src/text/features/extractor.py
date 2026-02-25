@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import string
 import unicodedata
@@ -26,6 +27,9 @@ from text.ingest.schema import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Maximum text length (chars) before chunking for spaCy processing.
+SPACY_CHUNK_SIZE = 50_000
 
 # ---------------------------------------------------------------------------
 # Optional Rust extension
@@ -196,6 +200,37 @@ def _python_fallback_features(text: str) -> RustFeatures:
     minority_count = token_count - cjk_token_count if dominant_is_cjk else cjk_token_count
     code_switching_ratio = minority_count / token_count if token_count > 0 else 0.0
 
+    # --- Vocabulary richness metrics ---
+
+    # Brunet's W: N^(V^-0.172)
+    brunets_w = token_count ** (unique_count ** -0.172) if unique_count > 0 else 0.0
+
+    # Honore's R: 100 * ln(N) / (1 - V1/V), V1 = hapax count
+    if unique_count > 0 and hapax != unique_count:
+        honores_r = 100.0 * math.log(token_count) / (1.0 - hapax / unique_count)
+    else:
+        honores_r = 0.0
+
+    # Simpson's D: sum(n_i*(n_i-1)) / (N*(N-1))
+    if token_count > 1:
+        numerator = sum(n_i * (n_i - 1) for n_i in freq.values())
+        simpsons_d = numerator / (token_count * (token_count - 1))
+    else:
+        simpsons_d = 0.0
+
+    # MTLD (Mean Textual Lexical Diversity): forward + backward pass, TTR threshold 0.72
+    mtld = _compute_mtld(lower_tokens, threshold=0.72)
+
+    # HD-D (Hypergeometric Distribution D) with sample size 42
+    hd_d = _compute_hd_d(freq, token_count, sample_size=42)
+
+    # Coleman-Liau Index: 0.0588*L - 0.296*S - 15.8
+    # L = avg letters per 100 words, S = avg sentences per 100 words
+    letter_count = sum(1 for ch in text if ch.isalpha())
+    letters_per_100 = (letter_count / token_count) * 100.0 if token_count > 0 else 0.0
+    sents_per_100 = (sent_count / token_count) * 100.0 if token_count > 0 else 0.0
+    coleman_liau_index = 0.0588 * letters_per_100 - 0.296 * sents_per_100 - 15.8
+
     return RustFeatures(
         token_count=token_count,
         type_token_ratio=ttr,
@@ -210,6 +245,12 @@ def _python_fallback_features(text: str) -> RustFeatures:
         emoji_density=emoji_density,
         formality_score=formality_score,
         code_switching_ratio=code_switching_ratio,
+        brunets_w=brunets_w,
+        honores_r=honores_r,
+        simpsons_d=simpsons_d,
+        mtld=mtld,
+        hd_d=hd_d,
+        coleman_liau_index=coleman_liau_index,
     )
 
 
@@ -225,6 +266,84 @@ def _compute_yules_k(freq: Counter[str], n: int) -> float:
     m2 = sum(i * i * v_i for i, v_i in spectrum.items())
     k = 10_000 * (m2 - n) / (n * n) if n > 0 else 0.0
     return max(k, 0.0)
+
+
+def _compute_mtld(tokens: list[str], threshold: float = 0.72) -> float:
+    """Compute Mean Textual Lexical Diversity (MTLD).
+
+    MTLD runs a forward and backward pass over the token list.  In each
+    pass the running TTR is tracked; every time it drops to or below
+    *threshold*, a new "factor" is counted and the TTR resets.  The final
+    partial factor is included as a proportion.  MTLD = mean of forward
+    and backward factor lengths.
+    """
+    if len(tokens) < 2:
+        return 0.0
+
+    def _one_pass(toks: list[str]) -> float:
+        factors = 0.0
+        types: set[str] = set()
+        start = 0
+        for i, tok in enumerate(toks):
+            types.add(tok)
+            ttr = len(types) / (i - start + 1)
+            if ttr <= threshold:
+                factors += 1.0
+                types = set()
+                start = i + 1
+        # partial factor
+        if start < len(toks):
+            remaining_ttr = len(types) / (len(toks) - start)
+            if remaining_ttr < 1.0:
+                factors += (1.0 - remaining_ttr) / (1.0 - threshold)
+        return len(toks) / factors if factors > 0 else float(len(toks))
+
+    forward = _one_pass(tokens)
+    backward = _one_pass(tokens[::-1])
+    return (forward + backward) / 2.0
+
+
+def _compute_hd_d(
+    freq: Counter[str], n: int, sample_size: int = 42
+) -> float:
+    """Compute HD-D (Hypergeometric Distribution D).
+
+    For each type, compute the probability that it appears at least once in
+    a random sample of *sample_size* tokens drawn without replacement from
+    the text.  HD-D is the sum of these probabilities divided by the number
+    of types — a measure of lexical diversity that is less sensitive to text
+    length than TTR.
+    """
+    if n == 0 or sample_size <= 0:
+        return 0.0
+
+    sample_size = min(sample_size, n)
+    types = list(freq.items())
+    total_prob = 0.0
+
+    for _word, count in types:
+        # P(word appears 0 times in sample) = C(n-count, sample) / C(n, sample)
+        # We compute in log space to avoid overflow with large factorials.
+        non_count = n - count
+        if non_count < sample_size:
+            # The word must appear at least once in any sample
+            contrib = 1.0
+        else:
+            # log(C(non_count, sample_size)) - log(C(n, sample_size))
+            log_p0 = (
+                _log_comb(non_count, sample_size) - _log_comb(n, sample_size)
+            )
+            contrib = 1.0 - math.exp(log_p0)
+        total_prob += contrib
+
+    return total_prob / len(types) if types else 0.0
+
+
+def _log_comb(n: int, k: int) -> float:
+    """Compute log(C(n, k)) using lgamma for numerical stability."""
+    if k < 0 or k > n:
+        return float("-inf")
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -275,11 +394,14 @@ class FeatureExtractor:
                 self._cache.get_or_compute(entry.id, entry.content, _compute)
                 for entry in entries
             ]
-            return await asyncio.gather(*tasks)
+            vectors = await asyncio.gather(*tasks)
         else:
             # No cache — compute all directly
             tasks = [self.extract(entry.content, entry.id) for entry in entries]
-            return await asyncio.gather(*tasks)
+            vectors = await asyncio.gather(*tasks)
+
+        self._compute_topics(vectors)
+        return vectors
 
     def _extract_rust_features(self, text: str) -> RustFeatures:
         """Call Rust PyO3 module. Falls back to pure Python if unavailable."""
@@ -292,6 +414,50 @@ class FeatureExtractor:
                 logger.warning("Rust extraction failed, falling back to Python: %s", exc)
 
         return _python_fallback_features(text)
+
+    def _compute_topics(self, vectors: list[FeatureVector]) -> None:
+        """Compute topic distributions over a batch of feature vectors.
+
+        Uses KMeans clustering on sentence embeddings.  Each vector's
+        topic_distribution is set to the softmax of negative Euclidean
+        distances to the cluster centroids.  Requires sklearn; silently
+        skips when unavailable or when there are too few texts.
+        """
+        embeddings: list[tuple[int, list[float]]] = []
+        for idx, vec in enumerate(vectors):
+            emb = vec.nlp_features.embedding
+            if emb:
+                embeddings.append((idx, emb))
+
+        if len(embeddings) < 5:
+            return
+
+        try:
+            import numpy as np
+            from sklearn.cluster import KMeans
+        except ImportError:
+            logger.debug("sklearn unavailable; skipping topic modeling.")
+            return
+
+        matrix = np.array([emb for _, emb in embeddings], dtype=np.float64)
+        n_texts = matrix.shape[0]
+        n_clusters = min(5, n_texts // 2)
+        if n_clusters < 2:
+            return
+
+        km = KMeans(n_clusters=n_clusters, n_init=3, random_state=42)
+        km.fit(matrix)
+        centroids = km.cluster_centers_  # (n_clusters, dim)
+
+        for row_idx, (vec_idx, _emb) in enumerate(embeddings):
+            point = matrix[row_idx]
+            # Negative squared Euclidean distances
+            neg_dists = -np.sum((centroids - point) ** 2, axis=1)
+            # Softmax
+            shifted = neg_dists - neg_dists.max()
+            exp_vals = np.exp(shifted)
+            probs = exp_vals / exp_vals.sum()
+            vectors[vec_idx].nlp_features.topic_distribution = probs.tolist()
 
     def _extract_nlp_features(self, text: str) -> NlpFeatures:
         """Run spaCy pipeline + LIWC + embeddings to produce NLP features."""
@@ -322,36 +488,14 @@ class FeatureExtractor:
         nlp = self._get_nlp()
         if nlp is not None:
             try:
-                doc = nlp(text)  # type: ignore[operator]
-
-                # POS tag distribution
-                pos_counts: dict[str, int] = {}
-                for token in doc:
-                    pos_counts[token.pos_] = pos_counts.get(token.pos_, 0) + 1
-                total_tokens = len(doc) or 1
-                pos_dist = {pos: cnt / total_tokens for pos, cnt in pos_counts.items()}
-
-                # Clause depth approximation via dependency tree depth
-                depths: list[int] = []
-                for sent in doc.sents:
-                    root = sent.root
-                    max_depth = _tree_depth(root)
-                    depths.append(max_depth)
-                clause_depth_avg = sum(depths) / len(depths) if depths else 0.0
-
-                # Sentiment approximation: use positive/negative adjective ratio
-                # (Very rough — a proper sentiment model would be better)
-                positive_adj = {"good", "great", "excellent", "wonderful", "amazing",
-                                "fantastic", "positive", "happy", "best", "beautiful"}
-                negative_adj = {"bad", "terrible", "awful", "horrible", "worst",
-                                "ugly", "negative", "sad", "poor", "disgusting"}
-                pos_count = sum(1 for t in doc if t.text.lower() in positive_adj)
-                neg_count = sum(1 for t in doc if t.text.lower() in negative_adj)
-                total_sent = pos_count + neg_count
-                if total_sent > 0:
-                    sentiment_valence = (pos_count - neg_count) / total_sent
+                if len(text) > SPACY_CHUNK_SIZE:
+                    pos_dist, clause_depth_avg, sentiment_valence = (
+                        self._process_spacy_chunked(nlp, text)
+                    )
                 else:
-                    sentiment_valence = 0.0
+                    pos_dist, clause_depth_avg, sentiment_valence = (
+                        self._process_spacy_single(nlp, text)
+                    )
 
                 # Emotional tone: proportion of affective LIWC tokens
                 emotional_tone = liwc_scores.get("affective", 0.0)
@@ -372,6 +516,108 @@ class FeatureExtractor:
             temporal_orientation=temporal,
             embedding=embedding,
         )
+
+    @staticmethod
+    def _process_spacy_single(nlp, text: str):
+        """Process text through spaCy in a single pass."""
+        doc = nlp(text)  # type: ignore[operator]
+
+        # POS tag distribution
+        pos_counts: dict[str, int] = {}
+        for token in doc:
+            pos_counts[token.pos_] = pos_counts.get(token.pos_, 0) + 1
+        total_tokens = len(doc) or 1
+        pos_dist = {pos: cnt / total_tokens for pos, cnt in pos_counts.items()}
+
+        # Clause depth approximation via dependency tree depth
+        depths: list[int] = []
+        for sent in doc.sents:
+            max_depth = _tree_depth(sent.root)
+            depths.append(max_depth)
+        clause_depth_avg = sum(depths) / len(depths) if depths else 0.0
+
+        # Sentiment approximation
+        positive_adj = {"good", "great", "excellent", "wonderful", "amazing",
+                        "fantastic", "positive", "happy", "best", "beautiful"}
+        negative_adj = {"bad", "terrible", "awful", "horrible", "worst",
+                        "ugly", "negative", "sad", "poor", "disgusting"}
+        pos_count = sum(1 for t in doc if t.text.lower() in positive_adj)
+        neg_count = sum(1 for t in doc if t.text.lower() in negative_adj)
+        total_sent = pos_count + neg_count
+        sentiment_valence = (pos_count - neg_count) / total_sent if total_sent > 0 else 0.0
+
+        return pos_dist, clause_depth_avg, sentiment_valence
+
+    @staticmethod
+    def _process_spacy_chunked(nlp, text: str):
+        """Process long text by splitting into chunks at sentence boundaries."""
+        chunks = _split_for_spacy(text, SPACY_CHUNK_SIZE)
+
+        agg_pos: dict[str, int] = {}
+        total_tokens = 0
+        all_depths: list[int] = []
+        total_pos = 0
+        total_neg = 0
+
+        positive_adj = {"good", "great", "excellent", "wonderful", "amazing",
+                        "fantastic", "positive", "happy", "best", "beautiful"}
+        negative_adj = {"bad", "terrible", "awful", "horrible", "worst",
+                        "ugly", "negative", "sad", "poor", "disgusting"}
+
+        for chunk in chunks:
+            doc = nlp(chunk)  # type: ignore[operator]
+            n_tok = len(doc)
+            total_tokens += n_tok
+
+            for token in doc:
+                agg_pos[token.pos_] = agg_pos.get(token.pos_, 0) + 1
+
+            for sent in doc.sents:
+                all_depths.append(_tree_depth(sent.root))
+
+            total_pos += sum(1 for t in doc if t.text.lower() in positive_adj)
+            total_neg += sum(1 for t in doc if t.text.lower() in negative_adj)
+
+        total_tokens = total_tokens or 1
+        pos_dist = {pos: cnt / total_tokens for pos, cnt in agg_pos.items()}
+        clause_depth_avg = sum(all_depths) / len(all_depths) if all_depths else 0.0
+        total_sent = total_pos + total_neg
+        sentiment_valence = (total_pos - total_neg) / total_sent if total_sent > 0 else 0.0
+
+        return pos_dist, clause_depth_avg, sentiment_valence
+
+
+def _split_for_spacy(text: str, max_chars: int) -> list[str]:
+    """Split text into chunks of at most *max_chars* at sentence boundaries."""
+    # Use a simple regex to find sentence boundaries.
+    parts = re.split(r"(?<=[.!?。！？])\s+", text)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        part_len = len(part)
+        if part_len > max_chars:
+            if current:
+                chunks.append(" ".join(current))
+                current = []
+                current_len = 0
+            chunks.append(part)
+            continue
+        if current_len + part_len + 1 > max_chars and current:
+            chunks.append(" ".join(current))
+            current = []
+            current_len = 0
+        current.append(part)
+        current_len += part_len + 1
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return chunks if chunks else [text]
 
 
 def _tree_depth(token) -> int:

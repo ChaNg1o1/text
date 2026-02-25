@@ -116,12 +116,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 self.SYSTEM_PROMPT, user_prompt, self.model,
                 api_base=self.api_base, api_key=self.api_key,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("PsycholinguisticsAgent LLM call failed")
             return AgentReport(
                 agent_name="psycholinguistics",
                 discipline="psycholinguistics",
-                summary="由于 LLM 调用失败，分析未完成。",
+                summary=f"由于 LLM 调用失败，分析未完成。原因：{type(exc).__name__}: {exc}",
             )
 
         findings = _parse_findings(raw_response, discipline="psycholinguistics")
@@ -152,7 +152,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             block = (
                 f"### Sample {i} (id={fv.text_id})\n"
                 f"**LIWC Dimensions:**\n"
-                f"{_fmt_dict(nlp.liwc_dimensions)}\n\n"
+                f"{_fmt_dict(nlp.liwc_dimensions, top_n=30)}\n\n"
                 f"**Sentiment & Tone:**\n"
                 f"- Sentiment valence: {nlp.sentiment_valence:.4f}\n"
                 f"- Emotional tone: {nlp.emotional_tone:.4f}\n"

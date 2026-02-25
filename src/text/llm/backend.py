@@ -13,7 +13,7 @@ import os
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import litellm
 
@@ -80,6 +80,38 @@ def load_backends_config(config_path: Path | str | None = None) -> dict[str, Cus
     return {}
 
 
+def load_provider_keys(config_path: Path | str | None = None) -> dict[str, str]:
+    """Load stored API keys for built-in providers from config file."""
+    if config_path is not None:
+        paths = [Path(config_path)]
+    else:
+        paths = _DEFAULT_CONFIG_PATHS
+
+    for p in paths:
+        if not p.is_file():
+            continue
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read backends config %s: %s", p, exc)
+            return {}
+
+        if not isinstance(raw, Mapping):
+            return {}
+
+        keys_raw = raw.get("provider_keys", {})
+        if not isinstance(keys_raw, Mapping):
+            return {}
+
+        result: dict[str, str] = {}
+        for provider, key in keys_raw.items():
+            if isinstance(provider, str) and isinstance(key, str) and key.strip():
+                result[provider.strip().lower()] = key.strip()
+        return result
+
+    return {}
+
+
 def _parse_config(path: Path) -> dict[str, CustomBackend]:
     """Parse a backends.json file into a name -> CustomBackend mapping."""
     try:
@@ -136,10 +168,14 @@ class LLMBackend:
     """
 
     MODEL_MAP: dict[str, str] = {
-        "claude": "anthropic/claude-sonnet-4-20250514",
-        "claude-opus": "anthropic/claude-opus-4-20250514",
-        "gpt4": "openai/gpt-4o",
-        "gpt4-mini": "openai/gpt-4o-mini",
+        "claude": "anthropic/claude-sonnet-4-0",
+        "claude-opus": "anthropic/claude-opus-4-1-20250805",
+        "gpt5": "openai/gpt-5.1",
+        "gpt5-mini": "openai/gpt-5-mini",
+        "gpt5-nano": "openai/gpt-5-nano",
+        # Backward-compatible aliases
+        "gpt4": "openai/gpt-5.1",
+        "gpt4-mini": "openai/gpt-5-mini",
         "local": "ollama/llama3",
     }
 
@@ -173,6 +209,7 @@ class LLMBackend:
         """
         self._api_base: str | None = None
         self._custom_backend: CustomBackend | None = None
+        self._config_path = config_path
 
         # 1. Try built-in map first.
         if backend in self.MODEL_MAP:
@@ -326,6 +363,9 @@ class LLMBackend:
 
         env_var = self._ENV_KEY_MAP[provider]
         key = os.environ.get(env_var)
+        if not key:
+            provider_keys = load_provider_keys(self._config_path)
+            key = provider_keys.get(provider)
         if not key:
             raise EnvironmentError(
                 f"No API key for provider '{provider}'. "

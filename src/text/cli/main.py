@@ -6,6 +6,8 @@ Command structure::
     text extract <input>
     text config info|backends
     text config cache status|clear
+    text serve
+    text webui
 """
 
 from __future__ import annotations
@@ -13,16 +15,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import signal
 import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Sequence
 
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from text.ingest.loader import load_from_path
@@ -56,6 +63,15 @@ config_app = typer.Typer(
     rich_markup_mode="rich",
 )
 app.add_typer(config_app)
+
+serve_app = typer.Typer(
+    name="serve",
+    help="Start the web API server",
+    no_args_is_help=False,
+    rich_markup_mode="rich",
+    invoke_without_command=True,
+)
+app.add_typer(serve_app)
 
 cache_app = typer.Typer(
     name="cache",
@@ -169,17 +185,11 @@ async def _extract_features(
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
             console=console,
             transient=True,
         ) as progress:
-            task = progress.add_task("Extracting features...", total=len(request.texts))
-            vectors: list[FeatureVector] = []
-            for entry in request.texts:
-                vec = await extractor.extract(entry.content, entry.id)
-                vectors.append(vec)
-                progress.update(task, advance=1)
+            progress.add_task("Extracting features...", total=None)
+            vectors = await extractor.extract_batch(request.texts)
 
         console.print(f"  Extracted features for [bold green]{len(vectors)}[/bold green] text(s)")
         return vectors
@@ -327,6 +337,12 @@ def _analyze(
         if not request.texts:
             console.print(f"[bold red]Error:[/bold red] No texts found for suspect(s): {suspects}")
             raise typer.Exit(code=1)
+
+    # Default output: save report to a file in the current working directory.
+    if output is None:
+        stem = input_path.stem if input_path.is_file() else input_path.name
+        ext = ".json" if fmt == "json" else ".md"
+        output = Path.cwd() / f"report_{stem}{ext}"
 
     console.print()
     try:
@@ -679,3 +695,236 @@ def cache_clear(
 
     shutil.rmtree(cache_dir)
     console.print(f"  Cleared [bold green]{size_mb:.1f} MB[/bold green] from {cache_dir}")
+
+
+# ------------------------------------------------------------------
+# serve + webui commands
+# ------------------------------------------------------------------
+
+
+def _resolve_default_web_dir() -> Path:
+    """Resolve the bundled Next.js web app directory."""
+    return Path(__file__).resolve().parents[3] / "web"
+
+
+def _browser_api_host(api_host: str) -> str:
+    """Convert wildcard bind hosts to a browser-reachable host."""
+    if api_host in {"0.0.0.0", "::"}:
+        return "127.0.0.1"
+    return api_host
+
+
+def _spawn_process(
+    cmd: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen:
+    kwargs: dict[str, object] = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(
+        list(cmd),
+        cwd=str(cwd) if cwd is not None else None,
+        env=env,
+        **kwargs,
+    )
+
+
+def _stop_process(proc: subprocess.Popen, *, name: str) -> None:
+    """Terminate a process group (or process) gracefully, then force kill if needed."""
+    if proc.poll() is not None:
+        return
+
+    def _send(sig: int) -> None:
+        try:
+            if os.name == "nt":
+                proc.terminate() if sig == signal.SIGTERM else proc.kill()
+            else:
+                os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return
+
+    _send(signal.SIGTERM)
+    try:
+        proc.wait(timeout=8)
+        return
+    except subprocess.TimeoutExpired:
+        console.print(f"[yellow]{name} did not stop in time, forcing shutdown...[/yellow]")
+
+    _send(signal.SIGKILL)
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+@serve_app.callback(invoke_without_command=True)
+def serve(
+    host: Annotated[str, typer.Option("--host", help="Bind address")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", "-p", help="Bind port")] = 8000,
+    reload: Annotated[bool, typer.Option("--reload", help="Auto-reload on code changes")] = False,
+) -> None:
+    """Start the web API server."""
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[bold red]Error:[/bold red] Web dependencies not installed. "
+            "Install with: pip install -e '.[web]'"
+        )
+        raise typer.Exit(code=1) from None
+
+    console.print(
+        Panel(
+            f"[bold]Text Forensics Web API[/bold]\n"
+            f"  Listening on http://{host}:{port}\n"
+            f"  API docs: http://{host}:{port}/docs",
+            border_style="blue",
+            padding=(0, 2),
+        )
+    )
+
+    uvicorn.run(
+        "text.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
+@app.command("webui")
+def webui(
+    api_host: Annotated[
+        str,
+        typer.Option("--api-host", help="API bind address"),
+    ] = "127.0.0.1",
+    api_port: Annotated[
+        int,
+        typer.Option("--api-port", help="API bind port"),
+    ] = 8000,
+    api_reload: Annotated[
+        bool,
+        typer.Option(
+            "--api-reload/--no-api-reload",
+            help="Enable API auto-reload on code changes",
+        ),
+    ] = False,
+    ui_host: Annotated[
+        str,
+        typer.Option("--ui-host", help="UI dev server hostname"),
+    ] = "127.0.0.1",
+    ui_port: Annotated[
+        int,
+        typer.Option("--ui-port", help="UI dev server port"),
+    ] = 3000,
+    web_dir: Annotated[
+        Optional[Path],
+        typer.Option("--web-dir", help="Path to Next.js web directory"),
+    ] = None,
+) -> None:
+    """Start API and Next.js UI together for local development."""
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError:
+        console.print(
+            "[bold red]Error:[/bold red] Web API dependencies not installed. "
+            "Install with: pip install -e '.[web]'"
+        )
+        raise typer.Exit(code=1) from None
+
+    npm_bin = shutil.which("npm")
+    if npm_bin is None:
+        console.print(
+            "[bold red]Error:[/bold red] npm not found. Install Node.js first to run the web UI."
+        )
+        raise typer.Exit(code=1)
+
+    resolved_web_dir = (web_dir or _resolve_default_web_dir()).expanduser().resolve()
+    package_json = resolved_web_dir / "package.json"
+    if not package_json.exists():
+        console.print(
+            f"[bold red]Error:[/bold red] Web directory is invalid: {resolved_web_dir}\n"
+            "Expected to find package.json there."
+        )
+        raise typer.Exit(code=1)
+
+    api_cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "text.api.app:create_app",
+        "--factory",
+        "--host",
+        api_host,
+        "--port",
+        str(api_port),
+    ]
+    if api_reload:
+        api_cmd.append("--reload")
+
+    api_origin = f"http://{_browser_api_host(api_host)}:{api_port}"
+    ui_env = os.environ.copy()
+    ui_env["TEXT_API_ORIGIN"] = api_origin
+    ui_cmd = [npm_bin, "run", "dev", "--", "--hostname", ui_host, "--port", str(ui_port)]
+
+    console.print(
+        Panel(
+            "[bold]Text Forensics WebUI[/bold]\n"
+            f"  API: http://{_browser_api_host(api_host)}:{api_port}\n"
+            f"  UI:  http://{ui_host}:{ui_port}\n"
+            f"  API docs: http://{_browser_api_host(api_host)}:{api_port}/docs\n"
+            "  Press Ctrl+C to stop both services.",
+            border_style="blue",
+            padding=(0, 2),
+        )
+    )
+
+    api_proc: subprocess.Popen | None = None
+    ui_proc: subprocess.Popen | None = None
+    exit_code = 0
+    try:
+        api_proc = _spawn_process(api_cmd)
+        time.sleep(0.8)
+        if api_proc.poll() is not None:
+            exit_code = api_proc.returncode or 1
+            console.print(
+                "[bold red]Error:[/bold red] API process exited immediately. "
+                "Check logs above for details."
+            )
+            raise typer.Exit(code=exit_code)
+
+        ui_proc = _spawn_process(ui_cmd, cwd=resolved_web_dir, env=ui_env)
+
+        while True:
+            api_rc = api_proc.poll()
+            ui_rc = ui_proc.poll()
+            if api_rc is not None:
+                exit_code = api_rc if api_rc != 0 else (ui_rc or 0)
+                if api_rc != 0:
+                    console.print(f"[bold red]API exited with code {api_rc}.[/bold red]")
+                else:
+                    console.print("[yellow]API exited; stopping UI...[/yellow]")
+                break
+            if ui_rc is not None:
+                exit_code = ui_rc if ui_rc != 0 else (api_rc or 0)
+                if ui_rc != 0:
+                    console.print(f"[bold red]UI exited with code {ui_rc}.[/bold red]")
+                else:
+                    console.print("[yellow]UI exited; stopping API...[/yellow]")
+                break
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopping webui services...[/dim]")
+        exit_code = 130
+    finally:
+        if ui_proc is not None:
+            _stop_process(ui_proc, name="UI")
+        if api_proc is not None:
+            _stop_process(api_proc, name="API")
+
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)

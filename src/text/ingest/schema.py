@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -54,6 +54,12 @@ class RustFeatures(BaseModel):
     emoji_density: float = 0.0
     formality_score: float = 0.0
     code_switching_ratio: float = 0.0
+    brunets_w: float = 0.0
+    honores_r: float = 0.0
+    simpsons_d: float = 0.0
+    mtld: float = 0.0
+    hd_d: float = 0.0
+    coleman_liau_index: float = 0.0
 
 
 class NlpFeatures(BaseModel):
@@ -77,6 +83,14 @@ class FeatureVector(BaseModel):
     content_hash: str
     rust_features: RustFeatures = Field(default_factory=RustFeatures)
     nlp_features: NlpFeatures = Field(default_factory=NlpFeatures)
+
+
+class AnomalySample(BaseModel):
+    """A statistically anomalous text sample (|z| > 2.0 in any feature dimension)."""
+
+    text_id: str
+    content: str
+    outlier_dimensions: dict[str, float] = Field(default_factory=dict)
 
 
 class AgentFinding(BaseModel):
@@ -109,4 +123,5 @@ class ForensicReport(BaseModel):
     confidence_scores: dict[str, float] = Field(default_factory=dict)
     contradictions: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.now)
+    anomaly_samples: list[AnomalySample] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))

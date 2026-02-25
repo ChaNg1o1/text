@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,51 @@ from text.ingest.schema import AnalysisRequest, TextEntry
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_EXTENSIONS = {".csv", ".json", ".jsonl", ".txt"}
+
+# Maximum characters per TextEntry for TXT files before chunking.
+MAX_ENTRY_CHARS = 8000
+
+# Maximum file size (in bytes) for a single input file.
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+
+# Sentence-ending pattern for chunking.
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?。！？])\s+")
+
+
+def load_from_path(path: Path) -> AnalysisRequest:
+    """Load from a file or directory.
+
+    If *path* is a file, delegates to ``load_from_file``.
+    If *path* is a directory, recursively discovers all supported files
+    and merges their ``TextEntry`` lists into a single ``AnalysisRequest``.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Input path not found: {path}")
+
+    if path.is_file():
+        return load_from_file(path)
+
+    # Directory: recursive scan.
+    all_entries: list[TextEntry] = []
+    file_count = 0
+    for child in sorted(path.rglob("*")):
+        if not child.is_file() or child.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+            continue
+        try:
+            req = load_from_file(child)
+            all_entries.extend(req.texts)
+            file_count += 1
+        except Exception as exc:
+            logger.warning("Skipping %s: %s", child, exc)
+
+    if not all_entries:
+        raise ValueError(f"No supported files found in directory: {path}")
+
+    logger.info(
+        "Loaded %d entries from %d files in directory: %s", len(all_entries), file_count, path
+    )
+    return AnalysisRequest(texts=all_entries)
 
 
 def _content_id(content: str) -> str:
@@ -46,6 +92,13 @@ def load_from_file(path: Path) -> AnalysisRequest:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Input file not found: {path}")
+
+    file_size = path.stat().st_size
+    if file_size > MAX_FILE_SIZE:
+        raise ValueError(
+            f"File too large ({file_size / 1024 / 1024:.1f} MB). "
+            f"Maximum supported size is {MAX_FILE_SIZE / 1024 / 1024:.0f} MB: {path}"
+        )
 
     ext = path.suffix.lower()
     if ext not in _SUPPORTED_EXTENSIONS:
@@ -173,9 +226,14 @@ def load_txt(path: Path) -> list[TextEntry]:
     """Load plain text file. Paragraphs (separated by blank lines) become entries.
 
     If no blank-line separators are found, each non-empty line becomes an entry.
+    Segments exceeding ``MAX_ENTRY_CHARS`` are further split at sentence boundaries.
     """
     path = Path(path)
-    raw = path.read_text(encoding="utf-8")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        logger.warning("File %s is not valid UTF-8; falling back to lossy decoding", path)
+        raw = path.read_bytes().decode("utf-8", errors="replace")
 
     # Try paragraph-based splitting first
     paragraphs = [p.strip() for p in raw.split("\n\n") if p.strip()]
@@ -186,8 +244,16 @@ def load_txt(path: Path) -> list[TextEntry]:
     else:
         segments = paragraphs
 
+    # Split oversized segments at sentence boundaries.
+    final_segments: list[str] = []
+    for seg in segments:
+        if len(seg) <= MAX_ENTRY_CHARS:
+            final_segments.append(seg)
+        else:
+            final_segments.extend(_chunk_text(seg, MAX_ENTRY_CHARS))
+
     entries: list[TextEntry] = []
-    for segment in segments:
+    for segment in final_segments:
         entries.append(
             TextEntry(
                 id=_content_id(segment),
@@ -198,6 +264,39 @@ def load_txt(path: Path) -> list[TextEntry]:
 
     logger.info("Loaded %d entries from TXT: %s", len(entries), path)
     return entries
+
+
+def _chunk_text(text: str, max_chars: int) -> list[str]:
+    """Split *text* into chunks of at most *max_chars*, preferring sentence boundaries."""
+    sentences = _SENTENCE_END_RE.split(text)
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        sent_len = len(sent)
+        # If a single sentence exceeds max_chars, include it as-is.
+        if sent_len > max_chars:
+            if current:
+                chunks.append(" ".join(current))
+                current = []
+                current_len = 0
+            chunks.append(sent)
+            continue
+        if current_len + sent_len + 1 > max_chars and current:
+            chunks.append(" ".join(current))
+            current = []
+            current_len = 0
+        current.append(sent)
+        current_len += sent_len + 1
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return chunks
 
 
 def load_jsonl(path: Path) -> list[TextEntry]:
@@ -217,12 +316,12 @@ def load_jsonl(path: Path) -> list[TextEntry]:
             try:
                 data = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"Invalid JSON at line {line_num} in {path}: {exc}"
-                ) from exc
+                raise ValueError(f"Invalid JSON at line {line_num} in {path}: {exc}") from exc
 
             if not isinstance(data, dict):
-                raise ValueError(f"Expected JSON object at line {line_num}, got {type(data).__name__}")
+                raise ValueError(
+                    f"Expected JSON object at line {line_num}, got {type(data).__name__}"
+                )
 
             content = data.get("content", "")
             if not data.get("id"):

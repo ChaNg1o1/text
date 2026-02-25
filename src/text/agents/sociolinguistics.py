@@ -127,12 +127,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 self.SYSTEM_PROMPT, user_prompt, self.model,
                 api_base=self.api_base, api_key=self.api_key,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("SociolinguisticsAgent LLM call failed")
             return AgentReport(
                 agent_name="sociolinguistics",
                 discipline="sociolinguistics",
-                summary="由于 LLM 调用失败，分析未完成。",
+                summary=f"由于 LLM 调用失败，分析未完成。原因：{type(exc).__name__}: {exc}",
             )
 
         findings = _parse_findings(raw_response, discipline="sociolinguistics")
@@ -177,7 +177,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 f"**Function Words (pronouns & social markers):**\n"
                 f"{_fmt_dict(rust.function_word_freq, top_n=20)}\n\n"
                 f"**Punctuation Profile:**\n"
-                f"{_fmt_dict(rust.punctuation_profile)}\n\n"
+                f"{_fmt_dict(rust.punctuation_profile, top_n=15)}\n\n"
                 f"**Top Word N-grams:**\n"
                 f"{_fmt_dict(rust.word_ngrams, top_n=15)}\n"
             )

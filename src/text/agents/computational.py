@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -10,7 +9,13 @@ import numpy as np
 
 from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
 
-from .stylometry import _call_llm, _fmt_dict, _parse_findings
+from .stylometry import (
+    MAX_AUTO_FINDINGS,
+    MAX_PROMPT_SAMPLES,
+    _call_llm,
+    _parse_findings,
+    _sample_representative,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,30 +119,44 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        self._outlier_dims: dict[str, list[tuple[str, float]]] = {}
+
+    @property
+    def outlier_dims(self) -> dict[str, list[tuple[str, float]]]:
+        """Outlier dimensions from the most recent analysis run."""
+        return self._outlier_dims
 
     async def analyze(
         self,
         features: list[FeatureVector],
         task_context: str,
+        *,
+        raw_texts: list[str] | None = None,
     ) -> AgentReport:
         """Run computational analysis, then send results to LLM for interpretation."""
-        # Phase 1: compute statistical summaries locally.
-        comp_results = self._compute_statistics(features)
+        # Phase 1: compute statistical summaries locally (uses ALL features).
+        comp_results = self._compute_statistics(features, raw_texts=raw_texts)
+        self._outlier_dims = comp_results.get("outlier_dims", {})
 
-        # Phase 2: build prompt with both raw features and computed results.
-        user_prompt = self._build_prompt(features, task_context, comp_results)
+        # Phase 2: build prompt with sampled features and computed results.
+        # For large corpora, limit per-sample blocks to avoid context overflow.
+        prompt_features = features
+        if len(features) > MAX_PROMPT_SAMPLES:
+            prompt_features = _sample_representative(features, MAX_PROMPT_SAMPLES)
+
+        user_prompt = self._build_prompt(prompt_features, task_context, comp_results)
 
         try:
             raw_response = await _call_llm(
                 self.SYSTEM_PROMPT, user_prompt, self.model,
                 api_base=self.api_base, api_key=self.api_key,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("ComputationalAgent LLM call failed")
             return AgentReport(
                 agent_name="computational",
                 discipline="computational_linguistics",
-                summary="由于 LLM 调用失败，分析未完成。",
+                summary=f"由于 LLM 调用失败，分析未完成。原因：{type(exc).__name__}: {exc}",
             )
 
         findings = _parse_findings(raw_response, discipline="computational_linguistics")
@@ -162,6 +181,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
     def _compute_statistics(
         self,
         features: list[FeatureVector],
+        raw_texts: list[str] | None = None,
     ) -> dict[str, Any]:
         """Pre-compute similarity, clustering, and anomaly data."""
         results: dict[str, Any] = {
@@ -169,6 +189,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             "similarity_matrix": None,
             "cluster_labels": None,
             "outlier_dims": {},
+            "all_text_ids": [fv.text_id for fv in features],
         }
 
         if len(features) < 2:
@@ -183,28 +204,79 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             sim_matrix = cosine_similarity(emb_matrix)
             results["similarity_matrix"] = sim_matrix
 
-            # Flag high cross-author similarity pairs.
+            # Flag high cross-author similarity pairs (capped for large corpora).
             text_ids = [fv.text_id for fv in features]
+            high_pairs: list[tuple[str, str, float]] = []
             for i in range(len(features)):
                 for j in range(i + 1, len(features)):
                     sim = float(sim_matrix[i][j])
                     if sim > 0.85:
-                        results["auto_findings"].append(
-                            AgentFinding(
-                                discipline="computational_linguistics",
-                                category="semantic_similarity",
-                                description=(
-                                    f"Very high semantic similarity ({sim:.3f}) detected "
-                                    f"between texts '{text_ids[i]}' and '{text_ids[j]}'. "
-                                    f"This exceeds the 0.85 threshold commonly used in "
-                                    f"authorship attribution and warrants further investigation."
-                                ),
-                                confidence=min(0.9, sim),
-                                evidence=[
-                                    f"cosine_similarity({text_ids[i]}, {text_ids[j]}) = {sim:.4f}"
-                                ],
-                            )
-                        )
+                        high_pairs.append((text_ids[i], text_ids[j], sim))
+
+            # Sort by similarity descending, keep top-K.
+            high_pairs.sort(key=lambda x: x[2], reverse=True)
+            for tid_a, tid_b, sim in high_pairs[:MAX_AUTO_FINDINGS]:
+                results["auto_findings"].append(
+                    AgentFinding(
+                        discipline="computational_linguistics",
+                        category="semantic_similarity",
+                        description=(
+                            f"Very high semantic similarity ({sim:.3f}) detected "
+                            f"between texts '{tid_a}' and '{tid_b}'. "
+                            f"This exceeds the 0.85 threshold commonly used in "
+                            f"authorship attribution and warrants further investigation."
+                        ),
+                        confidence=min(0.9, sim),
+                        evidence=[
+                            f"cosine_similarity({tid_a}, {tid_b}) = {sim:.4f}"
+                        ],
+                    )
+                )
+            if len(high_pairs) > MAX_AUTO_FINDINGS:
+                results["auto_findings"].append(
+                    AgentFinding(
+                        discipline="computational_linguistics",
+                        category="semantic_similarity",
+                        description=(
+                            f"共发现 {len(high_pairs)} 对高相似度文本对（> 0.85），"
+                            f"仅展示前 {MAX_AUTO_FINDINGS} 对。"
+                            f"大量高相似度对暗示语料主题或作者高度集中。"
+                        ),
+                        confidence=0.7,
+                        evidence=[f"total_high_similarity_pairs = {len(high_pairs)}"],
+                    )
+                )
+
+        # --- Burrows' Delta (Cosine Delta variant) ---
+        func_vectors = self._build_func_word_vectors(features)
+        if func_vectors is not None:
+            # Standardize: z-score each dimension
+            means = func_vectors.mean(axis=0)
+            stds = func_vectors.std(axis=0)
+            stds[stds == 0] = 1.0
+            z_func = (func_vectors - means) / stds
+            # Cosine Delta: 1 - cosine_similarity on z-scored function word vectors
+            if _HAS_SKLEARN:
+                cos_sim = cosine_similarity(z_func)
+                delta_matrix = 1.0 - cos_sim
+                results["delta_matrix"] = delta_matrix
+
+        # --- Normalized Compression Distance (NCD) ---
+        if raw_texts is not None and len(raw_texts) == len(features):
+            ncd_matrix = self._compute_ncd_matrix(raw_texts)
+            results["ncd_matrix"] = ncd_matrix
+
+        # --- Cross-entropy (char n-gram based) ---
+        if len(features) >= 3:
+            ce_matrix = self._compute_cross_entropy(features)
+            if ce_matrix is not None:
+                results["cross_entropy_matrix"] = ce_matrix
+
+        # --- Stylometric Unmasking ---
+        if _HAS_SKLEARN and len(features) >= 6:
+            unmasking_results = self._stylometric_unmasking(features)
+            if unmasking_results:
+                results["unmasking"] = unmasking_results
 
         # --- Clustering ---
         if has_embeddings and _HAS_SKLEARN and len(features) >= 3:
@@ -264,9 +336,135 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 "sentiment_valence": n.sentiment_valence,
                 "emotional_tone": n.emotional_tone,
                 "cognitive_complexity": n.cognitive_complexity,
+                "brunets_w": r.brunets_w,
+                "honores_r": r.honores_r,
+                "simpsons_d": r.simpsons_d,
+                "mtld": r.mtld,
+                "hd_d": r.hd_d,
+                "coleman_liau_index": r.coleman_liau_index,
             }
             rows.append(row)
         return rows
+
+    @staticmethod
+    def _build_func_word_vectors(features: list[FeatureVector]) -> np.ndarray | None:
+        """Build a matrix of function word frequencies for Delta computation."""
+        if not features:
+            return None
+        # Collect all function words across all texts
+        all_words: set[str] = set()
+        for fv in features:
+            all_words.update(fv.rust_features.function_word_freq.keys())
+        if len(all_words) < 10:
+            return None
+        words = sorted(all_words)
+        matrix = np.zeros((len(features), len(words)))
+        for i, fv in enumerate(features):
+            for j, w in enumerate(words):
+                matrix[i, j] = fv.rust_features.function_word_freq.get(w, 0.0)
+        return matrix
+
+    @staticmethod
+    def _compute_ncd_matrix(texts: list[str]) -> np.ndarray:
+        """Compute pairwise NCD using zlib compression."""
+        import zlib
+
+        n = len(texts)
+        compressed_sizes = [len(zlib.compress(t.encode("utf-8"), 9)) for t in texts]
+        ncd = np.zeros((n, n))
+        for i in range(n):
+            for j in range(i + 1, n):
+                combined = texts[i] + texts[j]
+                c_combined = len(zlib.compress(combined.encode("utf-8"), 9))
+                c_min = min(compressed_sizes[i], compressed_sizes[j])
+                c_max = max(compressed_sizes[i], compressed_sizes[j])
+                if c_max > 0:
+                    ncd[i][j] = (c_combined - c_min) / c_max
+                    ncd[j][i] = ncd[i][j]
+        return ncd
+
+    @staticmethod
+    def _compute_cross_entropy(features: list[FeatureVector]) -> np.ndarray | None:
+        """Compute pairwise cross-entropy using character n-gram models."""
+        n = len(features)
+        # Build char trigram probability distributions per text
+        models: list[dict[str, float]] = []
+        for fv in features:
+            trigrams = {
+                k: v for k, v in fv.rust_features.char_ngrams.items() if k.startswith("c3:")
+            }
+            if not trigrams:
+                return None
+            # Already normalized frequencies
+            models.append(trigrams)
+
+        ce = np.zeros((n, n))
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                # Cross-entropy of text j under model i
+                # H(p_j, q_i) = -sum p_j(x) * log(q_i(x))
+                h = 0.0
+                total_weight = 0.0
+                for ngram, p_j in models[j].items():
+                    q_i = models[i].get(ngram, 1e-10)  # smoothing
+                    h -= p_j * np.log(max(q_i, 1e-10))
+                    total_weight += p_j
+                ce[i][j] = h / max(total_weight, 1e-10)
+        return ce
+
+    def _stylometric_unmasking(self, features: list[FeatureVector]) -> list[dict] | None:
+        """Koppel-style unmasking: iteratively remove top features and measure accuracy decay."""
+        from sklearn.svm import LinearSVC
+
+        scalar_features = self._extract_scalar_features(features)
+        if not scalar_features or len(features) < 6:
+            return None
+
+        dim_names = sorted(scalar_features[0])
+        X = np.array([[sf[k] for k in dim_names] for sf in scalar_features])
+
+        # Group texts by author (using text_ids - split into two halves for verification)
+        n = len(features)
+        mid = n // 2
+        labels = np.array([0] * mid + [1] * (n - mid))
+
+        # Standardize
+        means = X.mean(axis=0)
+        stds = X.std(axis=0)
+        stds[stds == 0] = 1.0
+        X_std = (X - means) / stds
+
+        results: list[dict] = []
+        remaining_dims = list(range(len(dim_names)))
+        n_rounds = min(8, len(dim_names) - 2)
+
+        for round_i in range(n_rounds):
+            if len(remaining_dims) < 3:
+                break
+            X_cur = X_std[:, remaining_dims]
+            try:
+                clf = LinearSVC(max_iter=1000, dual=True)
+                clf.fit(X_cur, labels)
+                acc = clf.score(X_cur, labels)
+            except Exception:
+                break
+
+            results.append({
+                "round": round_i,
+                "n_features": len(remaining_dims),
+                "accuracy": float(acc),
+            })
+
+            # Remove the feature with highest absolute weight
+            weights = np.abs(clf.coef_[0])
+            top_idx = int(np.argmax(weights))
+            removed_dim = dim_names[remaining_dims[top_idx]]
+            results[-1]["removed_feature"] = removed_dim
+            remaining_dims.pop(top_idx)
+
+        return results
 
     # ------------------------------------------------------------------
     # Prompt construction
@@ -306,23 +504,70 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         # Similarity matrix.
         sim_matrix = comp_results.get("similarity_matrix")
         if sim_matrix is not None:
-            ids = [fv.text_id for fv in features]
-            lines = ["## Pairwise Cosine Similarity Matrix"]
-            header = "       " + "  ".join(f"{tid[:8]:>8}" for tid in ids)
-            lines.append(header)
-            for i, tid in enumerate(ids):
-                row_vals = "  ".join(f"{sim_matrix[i][j]:8.4f}" for j in range(len(ids)))
-                lines.append(f"{tid[:8]:>8}  {row_vals}")
-            sections.append("\n".join(lines))
+            all_ids = comp_results.get("all_text_ids", [fv.text_id for fv in features])
+            n_total = len(all_ids)
+
+            if n_total <= 30:
+                # Small corpus: show full matrix.
+                lines = ["## Pairwise Cosine Similarity Matrix"]
+                header = "       " + "  ".join(f"{tid[:8]:>8}" for tid in all_ids)
+                lines.append(header)
+                for i, tid in enumerate(all_ids):
+                    row_vals = "  ".join(f"{sim_matrix[i][j]:8.4f}" for j in range(n_total))
+                    lines.append(f"{tid[:8]:>8}  {row_vals}")
+                sections.append("\n".join(lines))
+            else:
+                # Large corpus: show summary statistics + top notable pairs.
+                upper_tri = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
+                lines = [
+                    "## Pairwise Cosine Similarity Summary",
+                    f"- Total pairs: {len(upper_tri)}",
+                    f"- Mean similarity: {float(upper_tri.mean()):.4f}",
+                    f"- Median similarity: {float(np.median(upper_tri)):.4f}",
+                    f"- Min: {float(upper_tri.min()):.4f}  |  Max: {float(upper_tri.max()):.4f}",
+                    f"- Pairs above 0.85: {int((upper_tri > 0.85).sum())}",
+                    f"- Pairs below 0.5: {int((upper_tri < 0.5).sum())}",
+                    "",
+                    "**Top 20 highest-similarity pairs:**",
+                ]
+                # Collect top pairs.
+                pair_sims = []
+                for i in range(n_total):
+                    for j in range(i + 1, n_total):
+                        pair_sims.append((all_ids[i], all_ids[j], float(sim_matrix[i][j])))
+                pair_sims.sort(key=lambda x: x[2], reverse=True)
+                for tid_a, tid_b, sim in pair_sims[:20]:
+                    lines.append(f"  {tid_a[:12]} <-> {tid_b[:12]}: {sim:.4f}")
+                sections.append("\n".join(lines))
 
         # Cluster labels.
         cluster_labels = comp_results.get("cluster_labels")
         if cluster_labels is not None:
-            ids = [fv.text_id for fv in features]
-            cluster_info = ", ".join(
-                f"{tid}: cluster {lbl}" for tid, lbl in zip(ids, cluster_labels)
-            )
-            sections.append(f"## DBSCAN Clustering Results\n{cluster_info}")
+            all_ids = comp_results.get("all_text_ids", [fv.text_id for fv in features])
+
+            if len(all_ids) <= 30:
+                # Small corpus: show all assignments.
+                cluster_info = ", ".join(
+                    f"{tid}: cluster {lbl}" for tid, lbl in zip(all_ids, cluster_labels)
+                )
+                sections.append(f"## DBSCAN Clustering Results\n{cluster_info}")
+            else:
+                # Large corpus: show cluster distribution summary.
+                from collections import Counter
+
+                label_counts = Counter(cluster_labels)
+                n_clusters = sum(1 for lbl in label_counts if lbl >= 0)
+                n_noise = label_counts.get(-1, 0)
+                lines = [
+                    "## DBSCAN Clustering Summary",
+                    f"- Clusters found: {n_clusters}",
+                    f"- Noise points (unclustered): {n_noise}",
+                    "- Cluster sizes:",
+                ]
+                for lbl, cnt in sorted(label_counts.items()):
+                    label_name = f"cluster {lbl}" if lbl >= 0 else "noise (-1)"
+                    lines.append(f"  {label_name}: {cnt} samples")
+                sections.append("\n".join(lines))
 
         # Outlier dimensions.
         outlier_dims = comp_results.get("outlier_dims", {})
@@ -331,6 +576,81 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             for tid, dims in outlier_dims.items():
                 dim_str = ", ".join(f"{name} (z={z:.2f})" for name, z in dims)
                 lines.append(f"- {tid}: {dim_str}")
+            sections.append("\n".join(lines))
+
+        # Delta matrix
+        delta_matrix = comp_results.get("delta_matrix")
+        if delta_matrix is not None:
+            all_ids = comp_results.get("all_text_ids", [fv.text_id for fv in features])
+            if len(all_ids) <= 30:
+                lines = ["## Burrows' Cosine Delta Distance Matrix"]
+                header = "       " + "  ".join(f"{tid[:8]:>8}" for tid in all_ids)
+                lines.append(header)
+                for i, tid in enumerate(all_ids):
+                    row_vals = "  ".join(
+                        f"{delta_matrix[i][j]:8.4f}" for j in range(len(all_ids))
+                    )
+                    lines.append(f"{tid[:8]:>8}  {row_vals}")
+                sections.append("\n".join(lines))
+            else:
+                upper_tri = delta_matrix[np.triu_indices_from(delta_matrix, k=1)]
+                lines = [
+                    "## Burrows' Cosine Delta Summary",
+                    f"- Mean distance: {float(upper_tri.mean()):.4f}",
+                    f"- Min: {float(upper_tri.min()):.4f}  |  Max: {float(upper_tri.max()):.4f}",
+                    f"- Pairs below 0.3 (same author signal): {int((upper_tri < 0.3).sum())}",
+                ]
+                sections.append("\n".join(lines))
+
+        # NCD matrix
+        ncd_matrix = comp_results.get("ncd_matrix")
+        if ncd_matrix is not None:
+            all_ids = comp_results.get("all_text_ids", [fv.text_id for fv in features])
+            upper_tri = ncd_matrix[np.triu_indices_from(ncd_matrix, k=1)]
+            lines = [
+                "## Normalized Compression Distance (NCD) Summary",
+                f"- Mean NCD: {float(upper_tri.mean()):.4f}",
+                f"- Min: {float(upper_tri.min()):.4f}  |  Max: {float(upper_tri.max()):.4f}",
+                f"- Pairs below 0.5 (high similarity): {int((upper_tri < 0.5).sum())}",
+            ]
+            # Top 10 most similar pairs by NCD
+            pair_ncds: list[tuple[str, str, float]] = []
+            for i in range(len(all_ids)):
+                for j in range(i + 1, len(all_ids)):
+                    pair_ncds.append((all_ids[i], all_ids[j], float(ncd_matrix[i][j])))
+            pair_ncds.sort(key=lambda x: x[2])
+            lines.append("**Top 10 lowest NCD pairs (most similar):**")
+            for tid_a, tid_b, d in pair_ncds[:10]:
+                lines.append(f"  {tid_a[:12]} <-> {tid_b[:12]}: {d:.4f}")
+            sections.append("\n".join(lines))
+
+        # Cross-entropy
+        ce_matrix = comp_results.get("cross_entropy_matrix")
+        if ce_matrix is not None:
+            all_ids = comp_results.get("all_text_ids", [fv.text_id for fv in features])
+            # Show summary stats (CE is asymmetric, so use all off-diagonal)
+            off_diag = ce_matrix[~np.eye(len(all_ids), dtype=bool)]
+            lines = [
+                "## Cross-Entropy (Character Trigram) Summary",
+                f"- Mean cross-entropy: {float(off_diag.mean()):.4f}",
+                f"- Min: {float(off_diag.min()):.4f}  |  Max: {float(off_diag.max()):.4f}",
+            ]
+            sections.append("\n".join(lines))
+
+        # Unmasking
+        unmasking = comp_results.get("unmasking")
+        if unmasking:
+            lines = ["## Stylometric Unmasking (Accuracy Decay Curve)"]
+            for r in unmasking:
+                removed = r.get("removed_feature", "N/A")
+                lines.append(
+                    f"- Round {r['round']}: {r['n_features']} features, "
+                    f"accuracy={r['accuracy']:.3f}, removed={removed}"
+                )
+            # Interpret: fast decay = same author, slow decay = different authors
+            if len(unmasking) >= 3:
+                decay = unmasking[0]["accuracy"] - unmasking[-1]["accuracy"]
+                lines.append(f"- Total accuracy decay: {decay:.3f}")
             sections.append("\n".join(lines))
 
         sections.append(

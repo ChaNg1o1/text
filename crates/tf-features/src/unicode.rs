@@ -72,7 +72,7 @@ pub struct UnicodeMetrics {
 }
 
 /// Compute Unicode profile metrics from the given text.
-pub fn compute_unicode_metrics(text: &str) -> UnicodeMetrics {
+pub fn compute_unicode_metrics(text: &str, tokens: &[String]) -> UnicodeMetrics {
     if text.is_empty() {
         return UnicodeMetrics {
             cjk_ratio: 0.0,
@@ -101,7 +101,7 @@ pub fn compute_unicode_metrics(text: &str) -> UnicodeMetrics {
     let emoji_density = emoji_count as f64 / total;
 
     let code_switching_ratio = compute_code_switching_ratio(&chars);
-    let formality_score = compute_formality_score(text, &chars, emoji_count);
+    let formality_score = compute_formality_score(text, &chars, emoji_count, tokens);
 
     UnicodeMetrics {
         cjk_ratio,
@@ -183,7 +183,7 @@ pub fn punctuation_profile(text: &str) -> HashMap<String, f64> {
 /// - Emoji usage (more emoji -> less formal)
 /// - Abbreviation patterns (presence of common informal markers -> less formal)
 /// - Sentence structure (longer average "segments" -> more formal)
-fn compute_formality_score(text: &str, chars: &[char], emoji_count: usize) -> f64 {
+fn compute_formality_score(text: &str, chars: &[char], emoji_count: usize, tokens: &[String]) -> f64 {
     let total = chars.len() as f64;
     if total == 0.0 {
         return 0.0;
@@ -225,7 +225,6 @@ fn compute_formality_score(text: &str, chars: &[char], emoji_count: usize) -> f6
     let word_chars: Vec<char> = chars.iter().copied().filter(|c| c.is_alphanumeric() || is_cjk(*c)).collect();
     let word_char_count = word_chars.len() as f64;
     // Rough heuristic: average "word" length above 5 is formal-ish.
-    let tokens = crate::lexical::tokenize(text);
     let avg_len = if tokens.is_empty() {
         0.0
     } else {
@@ -246,28 +245,33 @@ fn compute_formality_score(text: &str, chars: &[char], emoji_count: usize) -> f6
 mod tests {
     use super::*;
 
+    fn metrics(text: &str) -> UnicodeMetrics {
+        let tokens = crate::lexical::tokenize(text);
+        compute_unicode_metrics(text, &tokens)
+    }
+
     #[test]
     fn test_cjk_ratio_pure_cjk() {
-        let m = compute_unicode_metrics("你好世界");
+        let m = metrics("你好世界");
         assert!((m.cjk_ratio - 1.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_cjk_ratio_pure_english() {
-        let m = compute_unicode_metrics("Hello world");
+        let m = metrics("Hello world");
         assert!((m.cjk_ratio - 0.0).abs() < 1e-9);
     }
 
     #[test]
     fn test_cjk_ratio_mixed() {
         // "Hi你好" -> 4 chars, 2 CJK
-        let m = compute_unicode_metrics("Hi你好");
+        let m = metrics("Hi你好");
         assert!((m.cjk_ratio - 0.5).abs() < 1e-9);
     }
 
     #[test]
     fn test_emoji_density() {
-        let m = compute_unicode_metrics("Hello 😀😀");
+        let m = metrics("Hello 😀😀");
         // "Hello 😀😀" -> 8 chars (H,e,l,l,o, ,😀,😀), 2 emoji
         assert!(m.emoji_density > 0.0);
     }
@@ -275,13 +279,13 @@ mod tests {
     #[test]
     fn test_code_switching() {
         // "Hello你好World" -> transitions: Latin->CJK, CJK->Latin
-        let m = compute_unicode_metrics("Hello你好World");
+        let m = metrics("Hello你好World");
         assert!(m.code_switching_ratio > 0.0);
     }
 
     #[test]
     fn test_code_switching_no_switch() {
-        let m = compute_unicode_metrics("Hello world");
+        let m = metrics("Hello world");
         assert!((m.code_switching_ratio - 0.0).abs() < 1e-9);
     }
 
@@ -302,14 +306,14 @@ mod tests {
 
     #[test]
     fn test_formality_with_emoji() {
-        let formal = compute_unicode_metrics("This is a formal document with proper punctuation, structure, and vocabulary.");
-        let informal = compute_unicode_metrics("lol omg 😀😀😀 haha this is so funny!!! 🤣🤣");
+        let formal = metrics("This is a formal document with proper punctuation, structure, and vocabulary.");
+        let informal = metrics("lol omg 😀😀😀 haha this is so funny!!! 🤣🤣");
         assert!(formal.formality_score > informal.formality_score);
     }
 
     #[test]
     fn test_empty() {
-        let m = compute_unicode_metrics("");
+        let m = metrics("");
         assert_eq!(m.cjk_ratio, 0.0);
         assert_eq!(m.emoji_density, 0.0);
         assert_eq!(m.code_switching_ratio, 0.0);

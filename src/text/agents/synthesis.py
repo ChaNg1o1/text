@@ -13,7 +13,7 @@ from text.ingest.schema import (
     ForensicReport,
 )
 
-from .stylometry import _call_llm, _parse_findings
+from .stylometry import _call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,46 @@ def _coerce_to_strings(items: list) -> list[str]:
         else:
             result.append(str(item))
     return result
+
+
+def _repair_truncated_json_object(text: str) -> dict[str, Any] | None:
+    """Attempt to recover a top-level JSON object from a truncated response.
+
+    Strategy: find the last value-ending token (`"`, `]`, `}`, digit, or
+    boolean/null literal), then close any remaining open brackets/braces.
+    """
+    stripped = text.rstrip()
+    if not stripped.lstrip().startswith("{"):
+        return None
+
+    # Count unmatched braces/brackets (very rough, ignores strings).
+    open_braces = stripped.count("{") - stripped.count("}")
+    open_brackets = stripped.count("[") - stripped.count("]")
+
+    # Trim any trailing incomplete value (e.g., truncated string).
+    last_quote = stripped.rfind('"')
+    last_brace = stripped.rfind("}")
+    last_bracket = stripped.rfind("]")
+    cut = max(last_quote, last_brace, last_bracket)
+    if cut < 1:
+        return None
+
+    candidate = stripped[: cut + 1].rstrip().rstrip(",")
+
+    # Re-count after trimming.
+    open_braces = candidate.count("{") - candidate.count("}")
+    open_brackets = candidate.count("[") - candidate.count("]")
+
+    candidate += "]" * max(open_brackets, 0) + "}" * max(open_braces, 0)
+
+    try:
+        result = json.loads(candidate)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+    return None
+
 
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
@@ -144,8 +184,11 @@ should be in Chinese.
 
         try:
             raw_response = await _call_llm(
-                self.SYSTEM_PROMPT, user_prompt, self.model,
-                api_base=self.api_base, api_key=self.api_key,
+                self.SYSTEM_PROMPT,
+                user_prompt,
+                self.model,
+                api_base=self.api_base,
+                api_key=self.api_key,
             )
         except Exception:
             logger.exception("SynthesisAgent LLM call failed")
@@ -172,17 +215,33 @@ should be in Chinese.
         sections: list[str] = []
 
         # Task context.
+        text_ids = [t.id for t in request.texts]
+        authors = sorted({t.author for t in request.texts})
+
+        # Truncate long lists to avoid wasting context.
+        max_display = 30
+        id_str = (
+            ", ".join(text_ids[:max_display]) + f" ... ({len(text_ids)} total)"
+            if len(text_ids) > max_display
+            else ", ".join(text_ids)
+        )
+        author_str = (
+            ", ".join(authors[:max_display]) + f" ... ({len(authors)} total)"
+            if len(authors) > max_display
+            else ", ".join(authors)
+        )
+
         sections.append(
             f"## Analysis Task\n"
             f"- Task type: {request.task.value}\n"
             f"- Number of texts: {len(request.texts)}\n"
-            f"- Text IDs: {', '.join(t.id for t in request.texts)}\n"
-            f"- Authors claimed: {', '.join(sorted({t.author for t in request.texts}))}\n"
+            f"- Text IDs: {id_str}\n"
+            f"- Authors claimed: {author_str}\n"
         )
 
         if request.compare_groups:
             groups_str = "; ".join(
-                f"Group {i+1}: [{', '.join(g)}]" for i, g in enumerate(request.compare_groups)
+                f"Group {i + 1}: [{', '.join(g)}]" for i, g in enumerate(request.compare_groups)
             )
             sections.append(f"- Comparison groups: {groups_str}\n")
 
@@ -236,15 +295,19 @@ should be in Chinese.
         try:
             data: dict[str, Any] = json.loads(text)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse synthesis JSON; using raw text as summary")
-            return ForensicReport(
-                request=request,
-                agent_reports=agent_reports,
-                synthesis=raw[:3000],
-                confidence_scores={},
-                contradictions=[],
-                recommendations=["综合分析输出无法结构化解析，请人工审阅原始文本。"],
-            )
+            # Attempt to recover a truncated JSON object by closing open braces.
+            data = _repair_truncated_json_object(text)
+            if data is None:
+                logger.warning("Failed to parse synthesis JSON; using raw text as summary")
+                return ForensicReport(
+                    request=request,
+                    agent_reports=agent_reports,
+                    synthesis=raw[:3000],
+                    confidence_scores={},
+                    contradictions=[],
+                    recommendations=["综合分析输出无法结构化解析，请人工审阅原始文本。"],
+                )
+            logger.info("Recovered synthesis JSON from truncated response")
 
         # Extract synthesis fields.
         summary = data.get("summary", "")

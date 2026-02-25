@@ -37,7 +37,12 @@ ON CONFLICT(content_hash) DO UPDATE SET
 class FeatureCache:
     """Async SQLite-backed cache for computed feature vectors."""
 
-    def __init__(self, db_path: Path | str = ".text_cache.db") -> None:
+    DEFAULT_DB_DIR = Path.home() / ".cache" / "text"
+
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        if db_path is None:
+            self.DEFAULT_DB_DIR.mkdir(parents=True, exist_ok=True)
+            db_path = self.DEFAULT_DB_DIR / "features.db"
         self._db_path = str(db_path)
         self._db: aiosqlite.Connection | None = None
 
@@ -45,6 +50,7 @@ class FeatureCache:
         """Lazily open the database connection and ensure the table exists."""
         if self._db is None:
             self._db = await aiosqlite.connect(self._db_path)
+            await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
             await self._db.commit()
         return self._db
@@ -67,7 +73,7 @@ class FeatureCache:
         try:
             data = json.loads(row[0])
             return FeatureVector.model_validate(data)
-        except (json.JSONDecodeError, Exception) as exc:
+        except Exception as exc:
             logger.warning("Corrupted cache entry for hash %s: %s", content_hash, exc)
             return None
 
@@ -75,7 +81,9 @@ class FeatureCache:
         """Store a computed FeatureVector in the cache."""
         db = await self._ensure_db()
         data_json = feature_vector.model_dump_json()
-        await db.execute(_UPSERT_SQL, (feature_vector.content_hash, feature_vector.text_id, data_json))
+        await db.execute(
+            _UPSERT_SQL, (feature_vector.content_hash, feature_vector.text_id, data_json)
+        )
         await db.commit()
 
     async def get_or_compute(
