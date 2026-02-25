@@ -80,7 +80,7 @@ export function ConfigForm({ hasTexts, onSubmit, isSubmitting }: ConfigFormProps
       .then((res) => {
         setBackends(res.backends);
         const ready = res.backends.filter((item) => item.has_api_key);
-        const defaultBackend = ready[0]?.name ?? res.backends[0]?.name ?? "";
+        const defaultBackend = ready[0]?.name ?? "";
         if (defaultBackend) {
           form.setValue("llm_backend", defaultBackend, {
             shouldValidate: true,
@@ -158,7 +158,7 @@ export function ConfigForm({ hasTexts, onSubmit, isSubmitting }: ConfigFormProps
                       <span className="text-xs text-muted-foreground">{b.model}</span>
                       {!b.has_api_key && (
                         <span className="text-xs text-destructive">
-                          {b.name === "local" ? t("config.unavailable") : t("config.noKey")}
+                          {t("config.noKey")}
                         </span>
                       )}
                     </div>
@@ -166,7 +166,7 @@ export function ConfigForm({ hasTexts, onSubmit, isSubmitting }: ConfigFormProps
                 ))}
               </SelectContent>
             </Select>
-            {readyBackends.length === 0 && backends.length > 0 && (
+            {readyBackends.length === 0 && (
               <p className="text-xs text-destructive">{t("config.noBackend")}</p>
             )}
           </div>

@@ -123,9 +123,24 @@ export interface AnalysisSummary {
   error_message?: string;
 }
 
+export interface AnalysisPerf {
+  feature_extraction_ms?: number;
+  agent_analysis_ms?: number;
+  synthesis_ms?: number;
+  total_ms?: number;
+  rust_ms?: number;
+  spacy_ms?: number;
+  embedding_ms?: number;
+  cache_get_ms?: number;
+  cache_put_ms?: number;
+  cache_hits?: number;
+  cache_misses?: number;
+  texts_total?: number;
+}
+
 export interface AnalysisDetail extends AnalysisSummary {
   report?: ForensicReport;
-  features?: FeatureVector[];
+  perf?: AnalysisPerf;
 }
 
 export interface AnalysisListResponse {
@@ -178,22 +193,6 @@ export interface BackendTestResponse {
   success: boolean;
   detail: string;
   latency_ms?: number;
-}
-
-export interface ProviderKeyStatus {
-  provider: "openai" | "anthropic";
-  env_var: string;
-  has_api_key: boolean;
-  source: "env" | "stored" | "none";
-}
-
-export interface ProviderKeyStatusResponse {
-  providers: ProviderKeyStatus[];
-}
-
-export interface UpdateProviderKeyRequest {
-  api_key?: string;
-  clear?: boolean;
 }
 
 // SSE Events

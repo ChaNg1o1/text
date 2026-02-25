@@ -33,7 +33,7 @@ class AnalysisRequest(BaseModel):
     texts: list[TextEntry]
     task: TaskType = TaskType.FULL
     compare_groups: list[list[str]] | None = None
-    llm_backend: str = "claude"
+    llm_backend: str = "default"
 
 
 class RustFeatures(BaseModel):

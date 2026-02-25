@@ -198,15 +198,26 @@ async def _extract_features(
             await cache.close()
 
 
-def _validate_backend(llm: str, config: Path | None) -> None:
-    """Fail fast on unknown LLM backend."""
+def _resolve_backend(llm: str, config: Path | None) -> str:
+    """Resolve backend name from custom backends and fail fast on invalid names."""
     all_backends = LLMBackend.available_backends(config_path=config)
-    if llm not in all_backends and "/" not in llm:
-        valid = ", ".join(all_backends)
+    normalized = llm.strip()
+    if normalized in {"", "default"}:
+        if not all_backends:
+            console.print(
+                "[bold red]Error:[/bold red] No custom LLM backend configured. "
+                "Create one in backends.json first."
+            )
+            raise typer.Exit(code=1)
+        return all_backends[0]
+
+    if normalized not in all_backends:
+        valid = ", ".join(all_backends) or "(none)"
         console.print(
             f"[bold red]Error:[/bold red] Unknown LLM backend '{llm}'. Available: {valid}"
         )
         raise typer.Exit(code=1)
+    return normalized
 
 
 async def _run_analysis(
@@ -286,7 +297,7 @@ def _emit_report(report: ForensicReport, fmt: str, output: Path | None) -> None:
 # ------------------------------------------------------------------
 
 InputArg = Annotated[Path, typer.Argument(help="Input file or directory (CSV/JSON/TXT/JSONL)")]
-LlmOpt = Annotated[str, typer.Option("--llm", help="LLM backend name or litellm model ID")]
+LlmOpt = Annotated[str, typer.Option("--llm", help="Custom backend name (from backends.json)")]
 FormatOpt = Annotated[str, typer.Option("--format", "-f", help="Output format: rich|markdown|json")]
 OutputOpt = Annotated[
     Optional[Path], typer.Option("--output", "-o", help="Write report to file (default: terminal)")
@@ -318,11 +329,11 @@ def _analyze(
         Panel("[bold]Digital Forensics Text Analysis[/bold]", border_style="blue", padding=(0, 2))
     )
 
-    _validate_backend(llm, config)
+    resolved_backend = _resolve_backend(llm, config)
 
     request = _load_data(input_path)
     request.task = task_type
-    request.llm_backend = llm
+    request.llm_backend = resolved_backend
 
     if compare:
         request.compare_groups = [g.split(",") for g in compare]
@@ -346,7 +357,7 @@ def _analyze(
 
     console.print()
     try:
-        report = asyncio.run(_run_analysis(request, llm, no_cache, config))
+        report = asyncio.run(_run_analysis(request, resolved_backend, no_cache, config))
     except KeyboardInterrupt:
         console.print("\n[dim]分析已取消。[/dim]")
         raise typer.Exit(code=130) from None
@@ -357,7 +368,7 @@ def _analyze(
 @analyze_app.command("full")
 def analyze_full(
     input: InputArg,
-    llm: LlmOpt = "claude",
+    llm: LlmOpt = "default",
     format: FormatOpt = "rich",
     output: OutputOpt = None,
     no_cache: NoCacheOpt = False,
@@ -374,7 +385,7 @@ def analyze_attribution(
         Optional[list[str]],
         typer.Option("--compare", help="Author groups to compare (comma-separated per group)"),
     ] = None,
-    llm: LlmOpt = "claude",
+    llm: LlmOpt = "default",
     format: FormatOpt = "rich",
     output: OutputOpt = None,
     no_cache: NoCacheOpt = False,
@@ -391,7 +402,7 @@ def analyze_profiling(
         Optional[str],
         typer.Option("--author", help="Specific author to profile"),
     ] = None,
-    llm: LlmOpt = "claude",
+    llm: LlmOpt = "default",
     format: FormatOpt = "rich",
     output: OutputOpt = None,
     no_cache: NoCacheOpt = False,
@@ -408,7 +419,7 @@ def analyze_sockpuppet(
         Optional[str],
         typer.Option("--suspects", help="Comma-separated suspect author names"),
     ] = None,
-    llm: LlmOpt = "claude",
+    llm: LlmOpt = "default",
     format: FormatOpt = "rich",
     output: OutputOpt = None,
     no_cache: NoCacheOpt = False,
@@ -574,54 +585,35 @@ def config_backends(
         typer.Option("--config", help="Path to backends.json"),
     ] = None,
 ) -> None:
-    """List available LLM backends (built-in and custom)."""
-    table = Table(
-        title="Built-in Backends",
-        show_header=True,
-        header_style="bold magenta",
-    )
-    table.add_column("Name", style="bold")
-    table.add_column("Model Identifier")
-    table.add_column("Status")
-
-    for name in sorted(LLMBackend.MODEL_MAP):
-        model_id = LLMBackend.MODEL_MAP[name]
-        try:
-            _ = LLMBackend(backend=name)
-            status = "[green]ready[/green]"
-        except EnvironmentError:
-            status = "[yellow]no API key[/yellow]"
-        except Exception:
-            status = "[red]error[/red]"
-        table.add_row(name, model_id, status)
-
-    console.print(table)
-
+    """List available custom LLM backends from backends.json."""
     custom = load_backends_config(config)
-    if custom:
-        console.print()
-        ctable = Table(
-            title="Custom Backends (from backends.json)",
-            show_header=True,
-            header_style="bold cyan",
-        )
-        ctable.add_column("Name", style="bold")
-        ctable.add_column("Provider")
-        ctable.add_column("Model")
-        ctable.add_column("API Base")
-        ctable.add_column("Status")
+    ctable = Table(
+        title="Custom Backends (from backends.json)",
+        show_header=True,
+        header_style="bold cyan",
+    )
+    ctable.add_column("Name", style="bold")
+    ctable.add_column("Provider")
+    ctable.add_column("Model")
+    ctable.add_column("API Base")
+    ctable.add_column("Status")
 
-        for cname, cb in sorted(custom.items()):
-            key = cb.resolve_api_key()
-            if key:
-                cstatus = "[green]ready[/green]"
-            elif cb.api_key_env:
-                cstatus = f"[yellow]no key ({cb.api_key_env})[/yellow]"
-            else:
-                cstatus = "[yellow]no key configured[/yellow]"
-            ctable.add_row(cname, cb.provider, cb.model, cb.api_base, cstatus)
-
+    if not custom:
+        ctable.add_row("(none)", "-", "-", "-", "[yellow]not configured[/yellow]")
         console.print(ctable)
+        return
+
+    for cname, cb in sorted(custom.items()):
+        key = cb.resolve_api_key()
+        if key:
+            cstatus = "[green]ready[/green]"
+        elif cb.api_key_env:
+            cstatus = f"[yellow]no key ({cb.api_key_env})[/yellow]"
+        else:
+            cstatus = "[yellow]no key configured[/yellow]"
+        ctable.add_row(cname, cb.provider, cb.model, cb.api_base, cstatus)
+
+    console.print(ctable)
 
 
 # ------------------------------------------------------------------

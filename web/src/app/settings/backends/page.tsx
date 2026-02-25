@@ -1,13 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Loader2, Pencil, RefreshCw, Trash2, FlaskConical, PlusCircle } from "lucide-react";
+import { Loader2, Pencil, Trash2, FlaskConical, PlusCircle, Layers3, Server, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 import type {
-  BackendInfo,
   CustomBackendInfo,
-  ProviderKeyStatus,
   UpsertCustomBackendRequest,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -40,7 +38,6 @@ interface BackendFormState {
   model: string;
   apiBase: string;
   apiKey: string;
-  apiKeyEnv: string;
 }
 
 const EMPTY_FORM: BackendFormState = {
@@ -49,79 +46,30 @@ const EMPTY_FORM: BackendFormState = {
   model: "",
   apiBase: "",
   apiKey: "",
-  apiKeyEnv: "",
 };
 
 export default function BackendSettingsPage() {
   const { t } = useI18n();
-  const [runtimeBackends, setRuntimeBackends] = useState<BackendInfo[]>([]);
   const [customBackends, setCustomBackends] = useState<CustomBackendInfo[]>([]);
-  const [providerKeys, setProviderKeys] = useState<ProviderKeyStatus[]>([]);
-  const [providerKeyApiReady, setProviderKeyApiReady] = useState(true);
   const [customApiReady, setCustomApiReady] = useState(true);
-  const [providerKeyInput, setProviderKeyInput] = useState<Record<ProviderKeyStatus["provider"], string>>({
-    openai: "",
-    anthropic: "",
-  });
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [activeActionName, setActiveActionName] = useState<string | null>(null);
-  const [activeProviderAction, setActiveProviderAction] = useState<ProviderKeyStatus["provider"] | null>(null);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [clearStoredKey, setClearStoredKey] = useState(false);
   const [form, setForm] = useState<BackendFormState>({ ...EMPTY_FORM });
 
   const load = useCallback(async (showFailureToast: boolean) => {
-    const [runtimeRes, customRes, providerRes] = await Promise.allSettled([
-      api.getBackends(),
-      api.getCustomBackends(),
-      api.getProviderKeys(),
-    ]);
-
-    if (runtimeRes.status === "fulfilled") {
-      setRuntimeBackends(runtimeRes.value.backends);
-    }
-    if (customRes.status === "fulfilled") {
-      setCustomBackends(customRes.value.backends);
+    try {
+      const custom = await api.getCustomBackends();
+      setCustomBackends(custom.backends);
       setCustomApiReady(true);
-    } else if (runtimeRes.status === "fulfilled") {
-      const fallbackCustom = runtimeRes.value.backends
-        .filter((item) => item.provider !== "built-in")
-        .map<CustomBackendInfo>((item) => ({
-          name: item.name,
-          provider: item.provider,
-          model: item.model,
-          api_base: "",
-          has_api_key: item.has_api_key,
-        }));
-      setCustomBackends(fallbackCustom);
-      setCustomApiReady(false);
-    } else {
+    } catch {
       setCustomBackends([]);
       setCustomApiReady(false);
-    }
-
-    const hasOpenAi = runtimeRes.status === "fulfilled"
-      ? runtimeRes.value.backends.some((item) => item.model.startsWith("openai/") && item.has_api_key)
-      : false;
-    const hasAnthropic = runtimeRes.status === "fulfilled"
-      ? runtimeRes.value.backends.some((item) => item.model.startsWith("anthropic/") && item.has_api_key)
-      : false;
-
-    if (providerRes.status === "fulfilled") {
-      setProviderKeys(providerRes.value.providers);
-      setProviderKeyApiReady(true);
-    } else {
-      setProviderKeys([
-        { provider: "openai", env_var: "OPENAI_API_KEY", has_api_key: hasOpenAi, source: hasOpenAi ? "stored" : "none" },
-        { provider: "anthropic", env_var: "ANTHROPIC_API_KEY", has_api_key: hasAnthropic, source: hasAnthropic ? "stored" : "none" },
-      ]);
-      setProviderKeyApiReady(false);
-    }
-
-    if (runtimeRes.status === "rejected" && showFailureToast) {
-      toast.error(t("settings.backends.loadFailed"));
+      if (showFailureToast) {
+        toast.error(t("settings.backends.loadFailed"));
+      }
     }
   }, [t]);
 
@@ -144,12 +92,14 @@ export default function BackendSettingsPage() {
     () => customBackends.find((item) => item.name === editingName) ?? null,
     [customBackends, editingName],
   );
-
-  const refreshAll = async () => {
-    setIsRefreshing(true);
-    await load(true);
-    setIsRefreshing(false);
-  };
+  const readyCustomCount = useMemo(
+    () => customBackends.filter((item) => item.has_api_key).length,
+    [customBackends],
+  );
+  const providerKindCount = useMemo(
+    () => new Set(customBackends.map((item) => item.provider)).size,
+    [customBackends],
+  );
 
   const startEdit = (item: CustomBackendInfo) => {
     setEditingName(item.name);
@@ -161,7 +111,6 @@ export default function BackendSettingsPage() {
       model: item.model,
       apiBase: item.api_base,
       apiKey: "",
-      apiKeyEnv: item.api_key_env ?? "",
     });
   };
 
@@ -195,9 +144,6 @@ export default function BackendSettingsPage() {
     } else if (clearStoredKey) {
       payload.clear_api_key = true;
     }
-
-    const apiKeyEnv = form.apiKeyEnv.trim();
-    payload.api_key_env = apiKeyEnv || undefined;
 
     setIsSaving(true);
     try {
@@ -258,62 +204,11 @@ export default function BackendSettingsPage() {
     }
   };
 
-  const keyStatusLabel = (item: { has_api_key: boolean; api_key_env?: string; name?: string }) => {
+  const keyStatusLabel = (item: { has_api_key: boolean }) => {
     if (item.has_api_key) {
       return t("settings.backends.key.ready");
     }
-    if (item.name === "local") {
-      return t("settings.backends.key.unavailable");
-    }
-    if (item.api_key_env) {
-      return t("settings.backends.key.envMissing", { env: item.api_key_env });
-    }
     return t("settings.backends.key.missing");
-  };
-
-  const getProviderLabel = (provider: ProviderKeyStatus["provider"]) =>
-    provider === "openai" ? t("settings.backends.provider.openai") : t("settings.backends.provider.anthropic");
-
-  const getProviderSourceLabel = (source: ProviderKeyStatus["source"]) => {
-    if (source === "env") return t("settings.backends.keyStatus.env");
-    if (source === "stored") return t("settings.backends.keyStatus.stored");
-    return t("settings.backends.keyStatus.none");
-  };
-
-  const saveProviderKey = async (provider: ProviderKeyStatus["provider"]) => {
-    const apiKey = providerKeyInput[provider].trim();
-    if (!apiKey) {
-      toast.error(t("settings.backends.keyInputRequired"));
-      return;
-    }
-
-    setActiveProviderAction(provider);
-    try {
-      await api.updateProviderKey(provider, { api_key: apiKey });
-      setProviderKeyInput((prev) => ({ ...prev, [provider]: "" }));
-      toast.success(t("settings.backends.keySaved"), { description: getProviderLabel(provider) });
-      await load(false);
-    } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : undefined;
-      toast.error(t("settings.backends.keySaveFailed"), { description: detail });
-    } finally {
-      setActiveProviderAction(null);
-    }
-  };
-
-  const clearProviderKey = async (provider: ProviderKeyStatus["provider"]) => {
-    setActiveProviderAction(provider);
-    try {
-      await api.updateProviderKey(provider, { clear: true });
-      setProviderKeyInput((prev) => ({ ...prev, [provider]: "" }));
-      toast.success(t("settings.backends.keyCleared"), { description: getProviderLabel(provider) });
-      await load(false);
-    } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : undefined;
-      toast.error(t("settings.backends.keyClearFailed"), { description: detail });
-    } finally {
-      setActiveProviderAction(null);
-    }
   };
 
   return (
@@ -323,115 +218,31 @@ export default function BackendSettingsPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t("settings.backends.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("settings.backends.subtitle")}</p>
         </div>
-        <Button variant="outline" onClick={refreshAll} disabled={isRefreshing || isLoading}>
-          {isRefreshing ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" />
-          )}
-          {t("settings.backends.refresh")}
-        </Button>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">{t("settings.backends.runtimeTitle")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("settings.backends.table.name")}</TableHead>
-                <TableHead>{t("settings.backends.table.provider")}</TableHead>
-                <TableHead>{t("settings.backends.table.model")}</TableHead>
-                <TableHead>{t("settings.backends.table.key")}</TableHead>
-                <TableHead>{t("settings.backends.table.actions")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {runtimeBackends.map((item) => (
-                <TableRow key={`runtime-${item.name}`}>
-                  <TableCell className="font-mono text-xs">{item.name}</TableCell>
-                  <TableCell>{item.provider}</TableCell>
-                  <TableCell className="font-mono text-xs">{item.model}</TableCell>
-                  <TableCell>
-                    <Badge variant={item.has_api_key ? "default" : "secondary"}>
-                      {keyStatusLabel(item)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleTest(item.name)}
-                      disabled={activeActionName === item.name}
-                    >
-                      {activeActionName === item.name ? (
-                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <FlaskConical className="mr-1 h-3.5 w-3.5" />
-                      )}
-                      {t("settings.backends.testAction")}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">{t("settings.backends.keysTitle")}</CardTitle>
-          <p className="text-sm text-muted-foreground">{t("settings.backends.keysHint")}</p>
-          {!providerKeyApiReady && (
-            <p className="text-sm text-destructive">{t("settings.backends.keysApiUnavailable")}</p>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {providerKeys.map((item) => (
-            <div
-              key={`provider-key-${item.provider}`}
-              className="rounded-lg border p-4 space-y-3"
-            >
-              <div className="flex items-center justify-between">
-                <div className="font-medium">{getProviderLabel(item.provider)}</div>
-                <Badge variant={item.has_api_key ? "default" : "secondary"}>
-                  {getProviderSourceLabel(item.source)}
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={t("settings.backends.keyInputPlaceholder")}
-                  value={providerKeyInput[item.provider]}
-                  onChange={(event) =>
-                    setProviderKeyInput((prev) => ({ ...prev, [item.provider]: event.target.value }))
-                  }
-                />
-                <Button
-                  type="button"
-                  onClick={() => saveProviderKey(item.provider)}
-                  disabled={!providerKeyApiReady || activeProviderAction === item.provider}
-                >
-                  {activeProviderAction === item.provider ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : null}
-                  {t("settings.backends.keySetAction")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => clearProviderKey(item.provider)}
-                  disabled={!providerKeyApiReady || activeProviderAction === item.provider}
-                >
-                  {t("settings.backends.keyClearAction")}
-                </Button>
-              </div>
+        <CardContent className="grid gap-3 py-4 sm:grid-cols-3">
+          <div className="rounded-lg border border-border/70 bg-card/60 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Server className="h-3.5 w-3.5" />
+              {t("settings.backends.summary.custom")}
             </div>
-          ))}
+            <div className="mt-2 text-2xl font-semibold tabular-nums">{customBackends.length}</div>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-card/60 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              {t("settings.backends.summary.ready")}
+            </div>
+            <div className="mt-2 text-2xl font-semibold tabular-nums">{readyCustomCount}</div>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-card/60 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Layers3 className="h-3.5 w-3.5" />
+              {t("settings.backends.summary.providers")}
+            </div>
+            <div className="mt-2 text-2xl font-semibold tabular-nums">{providerKindCount}</div>
+          </div>
         </CardContent>
       </Card>
 
@@ -450,6 +261,7 @@ export default function BackendSettingsPage() {
                   <TableHead>{t("settings.backends.table.name")}</TableHead>
                   <TableHead>{t("settings.backends.table.provider")}</TableHead>
                   <TableHead>{t("settings.backends.table.model")}</TableHead>
+                  <TableHead>{t("settings.backends.table.apiBase")}</TableHead>
                   <TableHead>{t("settings.backends.table.key")}</TableHead>
                   <TableHead>{t("settings.backends.table.actions")}</TableHead>
                 </TableRow>
@@ -457,7 +269,7 @@ export default function BackendSettingsPage() {
               <TableBody>
                 {customBackends.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground">
+                    <TableCell colSpan={6} className="text-muted-foreground">
                       {t("settings.backends.empty")}
                     </TableCell>
                   </TableRow>
@@ -467,6 +279,9 @@ export default function BackendSettingsPage() {
                     <TableCell className="font-mono text-xs">{item.name}</TableCell>
                     <TableCell>{item.provider}</TableCell>
                     <TableCell className="font-mono text-xs">{item.model}</TableCell>
+                    <TableCell className="max-w-56 truncate font-mono text-xs" title={item.api_base}>
+                      {item.api_base}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={item.has_api_key ? "default" : "secondary"}>
                         {keyStatusLabel(item)}
@@ -514,7 +329,7 @@ export default function BackendSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="lg:sticky lg:top-20 lg:self-start">
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="text-lg">{t("settings.backends.form.save")}</CardTitle>
             <Button type="button" variant="outline" onClick={resetForm} disabled={!customApiReady}>
@@ -560,6 +375,7 @@ export default function BackendSettingsPage() {
               <div className="space-y-2">
                 <Label>{t("settings.backends.form.model")}</Label>
                 <Input
+                  placeholder={t("settings.backends.form.modelInputPlaceholder")}
                   value={form.model}
                   disabled={!customApiReady}
                   onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
@@ -596,16 +412,6 @@ export default function BackendSettingsPage() {
                     {t("settings.backends.form.clearStoredKey")}
                   </Button>
                 )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>{t("settings.backends.form.apiKeyEnv")}</Label>
-                <Input
-                  value={form.apiKeyEnv}
-                  disabled={!customApiReady}
-                  onChange={(event) => setForm((prev) => ({ ...prev, apiKeyEnv: event.target.value }))}
-                  placeholder="OPENAI_API_KEY"
-                />
               </div>
 
               <Button type="submit" className="w-full" disabled={!customApiReady || isSaving || isLoading}>

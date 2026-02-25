@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import numpy as np
@@ -18,8 +19,8 @@ from .stylometry import (
 )
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
+_SENTENCE_RE = re.compile(r"[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+$")
+_TOKEN_RE = re.compile(r"\b\w+\b|[\u4e00-\u9fff]", re.UNICODE)
 
 # sklearn is an optional heavy dependency; degrade gracefully.
 try:
@@ -112,7 +113,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
 
     def __init__(
         self,
-        model: str = _DEFAULT_MODEL,
+        model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
     ) -> None:
@@ -137,6 +138,20 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         # Phase 1: compute statistical summaries locally (uses ALL features).
         comp_results = self._compute_statistics(features, raw_texts=raw_texts)
         self._outlier_dims = comp_results.get("outlier_dims", {})
+        model = self.model
+        if not model:
+            findings = comp_results.get("auto_findings", [])
+            summary = (
+                "未配置 LLM 模型，仅返回本地计算发现。"
+                if findings
+                else "未配置 LLM 模型，且本地计算未产生额外发现。"
+            )
+            return AgentReport(
+                agent_name="computational",
+                discipline="computational_linguistics",
+                findings=findings,
+                summary=summary,
+            )
 
         # Phase 2: build prompt with sampled features and computed results.
         # For large corpora, limit per-sample blocks to avoid context overflow.
@@ -148,8 +163,11 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
 
         try:
             raw_response = await _call_llm(
-                self.SYSTEM_PROMPT, user_prompt, self.model,
-                api_base=self.api_base, api_key=self.api_key,
+                self.SYSTEM_PROMPT,
+                user_prompt,
+                model,
+                api_base=self.api_base,
+                api_key=self.api_key,
             )
         except Exception as exc:
             logger.exception("ComputationalAgent LLM call failed")
@@ -204,46 +222,54 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             sim_matrix = cosine_similarity(emb_matrix)
             results["similarity_matrix"] = sim_matrix
 
-            # Flag high cross-author similarity pairs (capped for large corpora).
             text_ids = [fv.text_id for fv in features]
-            high_pairs: list[tuple[str, str, float]] = []
-            for i in range(len(features)):
-                for j in range(i + 1, len(features)):
-                    sim = float(sim_matrix[i][j])
-                    if sim > 0.85:
-                        high_pairs.append((text_ids[i], text_ids[j], sim))
+            tri_i, tri_j = np.triu_indices(len(features), k=1)
+            tri_vals = sim_matrix[tri_i, tri_j]
+            high_mask = tri_vals > 0.85
+            high_count = int(np.sum(high_mask))
 
-            # Sort by similarity descending, keep top-K.
-            high_pairs.sort(key=lambda x: x[2], reverse=True)
-            for tid_a, tid_b, sim in high_pairs[:MAX_AUTO_FINDINGS]:
-                results["auto_findings"].append(
-                    AgentFinding(
-                        discipline="computational_linguistics",
-                        category="semantic_similarity",
-                        description=(
-                            f"Very high semantic similarity ({sim:.3f}) detected "
-                            f"between texts '{tid_a}' and '{tid_b}'. "
-                            f"This exceeds the 0.85 threshold commonly used in "
-                            f"authorship attribution and warrants further investigation."
-                        ),
-                        confidence=min(0.9, sim),
-                        evidence=[
-                            f"cosine_similarity({tid_a}, {tid_b}) = {sim:.4f}"
-                        ],
+            if high_count:
+                high_i = tri_i[high_mask]
+                high_j = tri_j[high_mask]
+                high_vals = tri_vals[high_mask]
+                k = min(MAX_AUTO_FINDINGS, high_count)
+                if high_count <= k:
+                    top_idx = np.arange(high_count, dtype=int)
+                else:
+                    top_idx = np.argpartition(-high_vals, k - 1)[:k]
+                top_idx = top_idx[np.argsort(-high_vals[top_idx])]
+
+                for idx in top_idx:
+                    tid_a = text_ids[int(high_i[idx])]
+                    tid_b = text_ids[int(high_j[idx])]
+                    sim = float(high_vals[idx])
+                    results["auto_findings"].append(
+                        AgentFinding(
+                            discipline="computational_linguistics",
+                            category="semantic_similarity",
+                            description=(
+                                f"Very high semantic similarity ({sim:.3f}) detected "
+                                f"between texts '{tid_a}' and '{tid_b}'. "
+                                f"This exceeds the 0.85 threshold commonly used in "
+                                f"authorship attribution and warrants further investigation."
+                            ),
+                            confidence=min(0.9, sim),
+                            evidence=[f"cosine_similarity({tid_a}, {tid_b}) = {sim:.4f}"],
+                        )
                     )
-                )
-            if len(high_pairs) > MAX_AUTO_FINDINGS:
+
+            if high_count > MAX_AUTO_FINDINGS:
                 results["auto_findings"].append(
                     AgentFinding(
                         discipline="computational_linguistics",
                         category="semantic_similarity",
                         description=(
-                            f"共发现 {len(high_pairs)} 对高相似度文本对（> 0.85），"
+                            f"共发现 {high_count} 对高相似度文本对（> 0.85），"
                             f"仅展示前 {MAX_AUTO_FINDINGS} 对。"
                             f"大量高相似度对暗示语料主题或作者高度集中。"
                         ),
                         confidence=0.7,
-                        evidence=[f"total_high_similarity_pairs = {len(high_pairs)}"],
+                        evidence=[f"total_high_similarity_pairs = {high_count}"],
                     )
                 )
 
@@ -265,12 +291,17 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         if raw_texts is not None and len(raw_texts) == len(features):
             ncd_matrix = self._compute_ncd_matrix(raw_texts)
             results["ncd_matrix"] = ncd_matrix
+            results["burstiness_by_text"] = self._compute_burstiness(
+                text_ids=[fv.text_id for fv in features],
+                texts=raw_texts,
+            )
 
         # --- Cross-entropy (char n-gram based) ---
         if len(features) >= 3:
             ce_matrix = self._compute_cross_entropy(features)
             if ce_matrix is not None:
                 results["cross_entropy_matrix"] = ce_matrix
+                results["perplexity_matrix"] = self._cross_entropy_to_perplexity(ce_matrix)
 
         # --- Stylometric Unmasking ---
         if _HAS_SKLEARN and len(features) >= 6:
@@ -370,12 +401,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         import zlib
 
         n = len(texts)
-        compressed_sizes = [len(zlib.compress(t.encode("utf-8"), 9)) for t in texts]
+        encoded = [t.encode("utf-8") for t in texts]
+        compressed_sizes = [len(zlib.compress(blob, 9)) for blob in encoded]
         ncd = np.zeros((n, n))
         for i in range(n):
             for j in range(i + 1, n):
-                combined = texts[i] + texts[j]
-                c_combined = len(zlib.compress(combined.encode("utf-8"), 9))
+                c_combined = len(zlib.compress(encoded[i] + encoded[j], 9))
                 c_min = min(compressed_sizes[i], compressed_sizes[j])
                 c_max = max(compressed_sizes[i], compressed_sizes[j])
                 if c_max > 0:
@@ -397,9 +428,11 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 return None
             # Already normalized frequencies
             models.append(trigrams)
+        model_items = [list(model.items()) for model in models]
 
         ce = np.zeros((n, n))
         for i in range(n):
+            model_i = models[i]
             for j in range(n):
                 if i == j:
                     continue
@@ -407,12 +440,86 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 # H(p_j, q_i) = -sum p_j(x) * log(q_i(x))
                 h = 0.0
                 total_weight = 0.0
-                for ngram, p_j in models[j].items():
-                    q_i = models[i].get(ngram, 1e-10)  # smoothing
+                for ngram, p_j in model_items[j]:
+                    q_i = model_i.get(ngram, 1e-10)  # smoothing
                     h -= p_j * np.log(max(q_i, 1e-10))
                     total_weight += p_j
                 ce[i][j] = h / max(total_weight, 1e-10)
         return ce
+
+    @staticmethod
+    def _cross_entropy_to_perplexity(
+        cross_entropy_matrix: np.ndarray,
+        *,
+        max_log_value: float = 30.0,
+    ) -> np.ndarray:
+        """Convert cross-entropy (nats) to perplexity with overflow protection."""
+        clipped = np.clip(cross_entropy_matrix, 0.0, max_log_value)
+        perplexity = np.exp(clipped)
+        np.fill_diagonal(perplexity, 1.0)
+        return perplexity
+
+    @staticmethod
+    def _compute_burstiness(
+        text_ids: list[str],
+        texts: list[str],
+    ) -> dict[str, dict[str, float]]:
+        """Compute per-text burstiness metrics from sentence lengths and token gaps."""
+        if len(text_ids) != len(texts):
+            return {}
+
+        results: dict[str, dict[str, float]] = {}
+        for text_id, text in zip(text_ids, texts):
+            tokens = [tok.lower() for tok in _TOKEN_RE.findall(text)]
+            sentences = [s.strip() for s in _SENTENCE_RE.findall(text) if s.strip()]
+
+            sent_lengths = np.array(
+                [len(_TOKEN_RE.findall(sentence)) for sentence in sentences if sentence.strip()],
+                dtype=float,
+            )
+            token_count = float(len(tokens))
+            sentence_count = float(len(sent_lengths))
+
+            sentence_mean = float(sent_lengths.mean()) if sent_lengths.size > 0 else 0.0
+            sentence_var = float(sent_lengths.var()) if sent_lengths.size > 1 else 0.0
+            sentence_std = float(sent_lengths.std()) if sent_lengths.size > 1 else 0.0
+            sentence_fano = sentence_var / sentence_mean if sentence_mean > 0 else 0.0
+            sentence_cv = sentence_std / sentence_mean if sentence_mean > 0 else 0.0
+
+            token_positions: dict[str, list[int]] = {}
+            for idx, tok in enumerate(tokens):
+                token_positions.setdefault(tok, []).append(idx)
+
+            weighted_cv_sum = 0.0
+            total_weight = 0.0
+            for positions in token_positions.values():
+                if len(positions) < 3:
+                    continue
+                gaps = np.diff(np.array(positions, dtype=float))
+                if gaps.size < 2:
+                    continue
+                mean_gap = float(gaps.mean())
+                if mean_gap <= 0:
+                    continue
+                gap_cv = float(gaps.std()) / mean_gap
+                if np.isfinite(gap_cv):
+                    weight = float(len(gaps))
+                    weighted_cv_sum += gap_cv * weight
+                    total_weight += weight
+
+            lexical_gap_cv = weighted_cv_sum / total_weight if total_weight > 0 else 0.0
+
+            metrics = {
+                "sentence_fano": float(max(sentence_fano, 0.0)),
+                "sentence_cv": float(max(sentence_cv, 0.0)),
+                "lexical_gap_cv": float(max(lexical_gap_cv, 0.0)),
+                "token_count": token_count,
+                "sentence_count": sentence_count,
+            }
+            # Guard against accidental NaN/Inf propagation.
+            results[text_id] = {k: float(v if np.isfinite(v) else 0.0) for k, v in metrics.items()}
+
+        return results
 
     def _stylometric_unmasking(self, features: list[FeatureVector]) -> list[dict] | None:
         """Koppel-style unmasking: iteratively remove top features and measure accuracy decay."""
@@ -451,11 +558,13 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             except Exception:
                 break
 
-            results.append({
-                "round": round_i,
-                "n_features": len(remaining_dims),
-                "accuracy": float(acc),
-            })
+            results.append(
+                {
+                    "round": round_i,
+                    "n_features": len(remaining_dims),
+                    "accuracy": float(acc),
+                }
+            )
 
             # Remove the feature with highest absolute weight
             weights = np.abs(clf.coef_[0])
@@ -587,9 +696,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 header = "       " + "  ".join(f"{tid[:8]:>8}" for tid in all_ids)
                 lines.append(header)
                 for i, tid in enumerate(all_ids):
-                    row_vals = "  ".join(
-                        f"{delta_matrix[i][j]:8.4f}" for j in range(len(all_ids))
-                    )
+                    row_vals = "  ".join(f"{delta_matrix[i][j]:8.4f}" for j in range(len(all_ids)))
                     lines.append(f"{tid[:8]:>8}  {row_vals}")
                 sections.append("\n".join(lines))
             else:
@@ -635,6 +742,58 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 f"- Mean cross-entropy: {float(off_diag.mean()):.4f}",
                 f"- Min: {float(off_diag.min()):.4f}  |  Max: {float(off_diag.max()):.4f}",
             ]
+            sections.append("\n".join(lines))
+
+        # Perplexity
+        perplexity_matrix = comp_results.get("perplexity_matrix")
+        if perplexity_matrix is not None:
+            all_ids = comp_results.get("all_text_ids", [fv.text_id for fv in features])
+            off_diag = perplexity_matrix[~np.eye(len(all_ids), dtype=bool)]
+            lines = [
+                "## Perplexity (Character Trigram) Summary",
+                f"- Mean perplexity: {float(off_diag.mean()):.4f}",
+                f"- Min: {float(off_diag.min()):.4f}  |  Max: {float(off_diag.max()):.4f}",
+            ]
+            # Perplexity is directional (model_i -> text_j), also add symmetric pair ranking.
+            pair_scores: list[tuple[str, str, float]] = []
+            for i in range(len(all_ids)):
+                for j in range(i + 1, len(all_ids)):
+                    sym = float((perplexity_matrix[i][j] + perplexity_matrix[j][i]) / 2.0)
+                    pair_scores.append((all_ids[i], all_ids[j], sym))
+            pair_scores.sort(key=lambda x: x[2])
+            lines.append("**Top 10 lowest symmetric perplexity pairs (most predictable):**")
+            for tid_a, tid_b, score in pair_scores[:10]:
+                lines.append(f"  {tid_a[:12]} <-> {tid_b[:12]}: {score:.4f}")
+            sections.append("\n".join(lines))
+
+        # Burstiness
+        burstiness = comp_results.get("burstiness_by_text")
+        if burstiness:
+            rows: list[tuple[str, float]] = []
+            for tid, metrics in burstiness.items():
+                score = (
+                    0.5 * float(metrics.get("sentence_cv", 0.0))
+                    + 0.3 * float(metrics.get("sentence_fano", 0.0))
+                    + 0.2 * float(metrics.get("lexical_gap_cv", 0.0))
+                )
+                rows.append((tid, score))
+            rows.sort(key=lambda x: x[1], reverse=True)
+
+            lines = [
+                "## Burstiness Summary",
+                "- Composite score = 0.5*sentence_cv + 0.3*sentence_fano + 0.2*lexical_gap_cv",
+                f"- Samples evaluated: {len(rows)}",
+                "**Top 10 highest-burstiness samples:**",
+            ]
+            for tid, score in rows[:10]:
+                m = burstiness.get(tid, {})
+                lines.append(
+                    "  "
+                    f"{tid[:12]}: score={score:.4f}, "
+                    f"sentence_cv={float(m.get('sentence_cv', 0.0)):.4f}, "
+                    f"sentence_fano={float(m.get('sentence_fano', 0.0)):.4f}, "
+                    f"lexical_gap_cv={float(m.get('lexical_gap_cv', 0.0)):.4f}"
+                )
             sections.append("\n".join(lines))
 
         # Unmasking

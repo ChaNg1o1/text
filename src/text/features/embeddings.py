@@ -6,6 +6,7 @@ Gracefully degrades to empty vectors when the library or model is unavailable.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import numpy as np
@@ -24,6 +25,8 @@ except ImportError:
     )
 
 _DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+_MODEL_CACHE: dict[str, Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 
 class EmbeddingEngine:
@@ -44,13 +47,25 @@ class EmbeddingEngine:
         if not _HAS_SBERT:
             return None
 
-        try:
-            self._model = SentenceTransformer(self._model_name)
-            logger.info("Loaded sentence-transformers model: %s", self._model_name)
-            return self._model
-        except Exception as exc:
-            logger.warning("Failed to load sentence-transformers model '%s': %s", self._model_name, exc)
-            return None
+        with _MODEL_CACHE_LOCK:
+            cached = _MODEL_CACHE.get(self._model_name)
+            if cached is not None:
+                self._model = cached
+                return cached
+
+            try:
+                model = SentenceTransformer(self._model_name)
+                _MODEL_CACHE[self._model_name] = model
+                self._model = model
+                logger.info("Loaded sentence-transformers model: %s", self._model_name)
+                return model
+            except Exception as exc:
+                logger.warning(
+                    "Failed to load sentence-transformers model '%s': %s",
+                    self._model_name,
+                    exc,
+                )
+                return None
 
     def embed(self, text: str) -> list[float]:
         """Compute the embedding vector for a single text.
@@ -107,3 +122,9 @@ class EmbeddingEngine:
             return 0.0
 
         return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def preload_embedding_model(model_name: str = _DEFAULT_MODEL) -> bool:
+    """Eagerly load and cache the embedding model for startup warmup."""
+    engine = EmbeddingEngine(model_name=model_name)
+    return engine._ensure_model() is not None

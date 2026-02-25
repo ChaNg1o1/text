@@ -51,7 +51,7 @@ async def create_analysis(
 
     detail = await store.get(analysis_id)
     assert detail is not None
-    return AnalysisSummary(**detail.model_dump(exclude={"report", "features"}))
+    return AnalysisSummary(**detail.model_dump(exclude={"report", "perf"}))
 
 
 async def _run_analysis_bg(

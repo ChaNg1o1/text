@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 import aiosqlite
 
@@ -51,6 +51,7 @@ class FeatureCache:
         if self._db is None:
             self._db = await aiosqlite.connect(self._db_path)
             await self._db.execute("PRAGMA journal_mode=WAL")
+            await self._db.execute("PRAGMA synchronous=NORMAL")
             await self._db.execute(_CREATE_TABLE_SQL)
             await self._db.commit()
         return self._db
@@ -77,13 +78,43 @@ class FeatureCache:
             logger.warning("Corrupted cache entry for hash %s: %s", content_hash, exc)
             return None
 
+    async def get_many(self, content_hashes: list[str]) -> dict[str, FeatureVector]:
+        """Retrieve multiple cached vectors by hash in a single query."""
+        if not content_hashes:
+            return {}
+
+        unique_hashes = list(dict.fromkeys(content_hashes))
+        placeholders = ",".join("?" for _ in unique_hashes)
+        query = (
+            "SELECT content_hash, data FROM feature_cache "
+            f"WHERE content_hash IN ({placeholders});"
+        )
+
+        db = await self._ensure_db()
+        result: dict[str, FeatureVector] = {}
+        async with db.execute(query, unique_hashes) as cursor:
+            rows = await cursor.fetchall()
+
+        for row in rows:
+            chash = str(row[0])
+            try:
+                data = json.loads(row[1])
+                result[chash] = FeatureVector.model_validate(data)
+            except Exception as exc:
+                logger.warning("Corrupted cache entry for hash %s: %s", chash, exc)
+        return result
+
     async def put(self, feature_vector: FeatureVector) -> None:
         """Store a computed FeatureVector in the cache."""
+        await self.put_many([feature_vector])
+
+    async def put_many(self, vectors: list[FeatureVector]) -> None:
+        """Store many feature vectors in the cache in a single transaction."""
+        if not vectors:
+            return
         db = await self._ensure_db()
-        data_json = feature_vector.model_dump_json()
-        await db.execute(
-            _UPSERT_SQL, (feature_vector.content_hash, feature_vector.text_id, data_json)
-        )
+        rows = [(v.content_hash, v.text_id, v.model_dump_json()) for v in vectors]
+        await db.executemany(_UPSERT_SQL, rows)
         await db.commit()
 
     async def get_or_compute(

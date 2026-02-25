@@ -40,14 +40,26 @@ export default function AnalysisDetailPage({
   const { t } = useI18n();
   const { data, isLoading, mutate } = useAnalysis(id);
   const progress = useAnalysisStore((s) => s.getProgress(id));
+  const isRunning = data?.status === "pending" || data?.status === "running";
 
-  useSSEProgress(id, data?.status);
+  const sse = useSSEProgress(id, data?.status);
 
   useEffect(() => {
-    if (progress.phase === "completed" && data?.status === "running") {
-      mutate();
+    if (
+      (progress.phase === "completed" || progress.phase === "failed") &&
+      (data?.status === "running" || data?.status === "pending")
+    ) {
+      void mutate();
     }
   }, [progress.phase, data?.status, mutate]);
+
+  useEffect(() => {
+    if (!isRunning || sse.isConnected) return;
+    const timer = setInterval(() => {
+      void mutate();
+    }, sse.retryDelayMs);
+    return () => clearInterval(timer);
+  }, [isRunning, sse.isConnected, sse.retryDelayMs, mutate]);
 
   if (isLoading) {
     return <DetailSkeleton />;
@@ -57,7 +69,6 @@ export default function AnalysisDetailPage({
     return <div className="py-12 text-center text-muted-foreground">{t("detail.notFound")}</div>;
   }
 
-  const isRunning = data.status === "pending" || data.status === "running";
   const hasReport = data.status === "completed" && data.report;
 
   return (

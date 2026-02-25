@@ -17,3 +17,5 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000"]
     db_dir: Path = Path.home() / ".cache" / "text"
     backends_config: Path = Path.home() / ".config" / "text" / "backends.json"
+    preload_embedding: bool = True
+    max_concurrent_analyses: int = 1

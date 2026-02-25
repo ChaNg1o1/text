@@ -12,8 +12,6 @@ from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
-
 
 class StylometryAgent:
     """Analyzes writing style features to build an author fingerprint."""
@@ -101,7 +99,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
 
     def __init__(
         self,
-        model: str = _DEFAULT_MODEL,
+        model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
     ) -> None:
@@ -115,13 +113,21 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         task_context: str,
     ) -> AgentReport:
         """Analyze writing style features and return findings."""
+        model = self.model
+        if not model:
+            return AgentReport(
+                agent_name="stylometry",
+                discipline="stylometry",
+                summary="未配置 LLM 模型，已跳过文体学分析。",
+            )
+
         user_prompt = self._build_prompt(features, task_context)
 
         try:
             raw_response = await _call_llm(
                 self.SYSTEM_PROMPT,
                 user_prompt,
-                self.model,
+                model,
                 api_base=self.api_base,
                 api_key=self.api_key,
             )
@@ -212,7 +218,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
 async def _call_llm(
     system_prompt: str,
     user_prompt: str,
-    model: str = _DEFAULT_MODEL,
+    model: str,
     api_base: str | None = None,
     api_key: str | None = None,
     max_retries: int = 3,

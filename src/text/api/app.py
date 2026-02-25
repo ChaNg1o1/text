@@ -32,6 +32,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except (ImportError, AttributeError):
         pass
 
+    if settings.preload_embedding:
+        try:
+            from text.features.embeddings import preload_embedding_model
+
+            preload_embedding_model()
+        except Exception:
+            # Warmup is best-effort and should never block API startup.
+            pass
+
     yield
 
     await store.close()

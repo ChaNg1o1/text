@@ -49,7 +49,7 @@ class CreateAnalysisRequest(BaseModel):
     texts: list[TextEntry]
     task: TaskType = TaskType.FULL
     compare_groups: list[list[str]] | None = None
-    llm_backend: str = "claude"
+    llm_backend: str = Field(min_length=1)
 
 
 class AnalysisSummary(BaseModel):
@@ -66,11 +66,28 @@ class AnalysisSummary(BaseModel):
     error_message: str | None = None
 
 
+class AnalysisPerf(BaseModel):
+    """Performance breakdown for a completed analysis."""
+
+    feature_extraction_ms: float | None = None
+    agent_analysis_ms: float | None = None
+    synthesis_ms: float | None = None
+    total_ms: float | None = None
+    rust_ms: float | None = None
+    spacy_ms: float | None = None
+    embedding_ms: float | None = None
+    cache_get_ms: float | None = None
+    cache_put_ms: float | None = None
+    cache_hits: int | None = None
+    cache_misses: int | None = None
+    texts_total: int | None = None
+
+
 class AnalysisDetail(AnalysisSummary):
-    """Full representation including report and features."""
+    """Full representation including report and performance breakdown."""
 
     report: ForensicReport | None = None
-    features: list[FeatureVector] | None = None
+    perf: AnalysisPerf | None = None
 
 
 class AnalysisListResponse(BaseModel):
@@ -98,7 +115,7 @@ class FeaturesResponse(BaseModel):
 class BackendInfo(BaseModel):
     name: str
     model: str
-    provider: str = "built-in"
+    provider: str = "custom"
     has_api_key: bool = False
 
 
@@ -165,30 +182,6 @@ class BackendTestResponse(BaseModel):
     success: bool
     detail: str
     latency_ms: int | None = None
-
-
-class ProviderKeyStatus(BaseModel):
-    provider: Literal["openai", "anthropic"]
-    env_var: str
-    has_api_key: bool
-    source: Literal["env", "stored", "none"]
-
-
-class ProviderKeyStatusResponse(BaseModel):
-    providers: list[ProviderKeyStatus]
-
-
-class UpdateProviderKeyRequest(BaseModel):
-    api_key: str | None = None
-    clear: bool = False
-
-    @field_validator("api_key")
-    @classmethod
-    def validate_api_key(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
 
 
 # ------------------------------------------------------------------

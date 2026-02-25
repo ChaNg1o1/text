@@ -7,10 +7,18 @@ import logging
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 
-from text.api.models import AnalysisDetail, AnalysisListResponse, AnalysisStatus, AnalysisSummary
+from text.api.models import (
+    AnalysisDetail,
+    AnalysisListResponse,
+    AnalysisPerf,
+    AnalysisStatus,
+    AnalysisSummary,
+)
+from text.ingest.schema import AnalysisRequest
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +31,7 @@ CREATE TABLE IF NOT EXISTS analyses (
     request_json    TEXT NOT NULL,
     report_json     TEXT,
     features_json   TEXT,
+    perf_json       TEXT,
     error_message   TEXT,
     text_count      INTEGER NOT NULL,
     author_count    INTEGER NOT NULL,
@@ -46,8 +55,25 @@ class AnalysisStore:
             self._db.row_factory = aiosqlite.Row
             await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
+            await self._ensure_column(self._db, table="analyses", column="perf_json", col_type="TEXT")
             await self._db.commit()
         return self._db
+
+    @staticmethod
+    async def _ensure_column(
+        db: aiosqlite.Connection,
+        *,
+        table: str,
+        column: str,
+        col_type: str,
+    ) -> None:
+        """Best-effort idempotent column migration for SQLite."""
+        async with db.execute(f"PRAGMA table_info({table})") as cur:
+            columns = await cur.fetchall()
+        existing = {str(row[1]) for row in columns}
+        if column in existing:
+            return
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type};")
 
     async def close(self) -> None:
         if self._db is not None:
@@ -97,6 +123,19 @@ class AnalysisStore:
         if row is None:
             return None
         return self._row_to_detail(row)
+
+    async def get_request(self, analysis_id: str) -> AnalysisRequest | None:
+        """Fetch and parse the original AnalysisRequest for an analysis ID."""
+        db = await self._ensure_db()
+        async with db.execute("SELECT request_json FROM analyses WHERE id = ?", (analysis_id,)) as cur:
+            row = await cur.fetchone()
+        if row is None or not row["request_json"]:
+            return None
+        try:
+            return AnalysisRequest.model_validate_json(row["request_json"])
+        except Exception:
+            logger.warning("Failed to deserialize request for analysis %s", analysis_id)
+            return None
 
     async def list(
         self,
@@ -152,6 +191,7 @@ class AnalysisStore:
         *,
         report_json: str | None = None,
         features_json: str | None = None,
+        perf_json: str | None = None,
         error_message: str | None = None,
     ) -> None:
         """Update status and optionally attach report/features/error."""
@@ -165,6 +205,9 @@ class AnalysisStore:
         if features_json is not None:
             sets.append("features_json = ?")
             params.append(features_json)
+        if perf_json is not None:
+            sets.append("perf_json = ?")
+            params.append(perf_json)
         if error_message is not None:
             sets.append("error_message = ?")
             params.append(error_message)
@@ -211,7 +254,7 @@ class AnalysisStore:
     def _row_to_detail(row: aiosqlite.Row) -> AnalysisDetail:
         from datetime import datetime, timezone
 
-        from text.ingest.schema import FeatureVector, ForensicReport
+        from text.ingest.schema import ForensicReport
 
         report = None
         if row["report_json"]:
@@ -220,14 +263,13 @@ class AnalysisStore:
             except Exception:
                 logger.warning("Failed to deserialize report for analysis %s", row["id"])
 
-        features = None
-        if row["features_json"]:
+        perf: AnalysisPerf | None = None
+        if row["perf_json"]:
             try:
-                features = [
-                    FeatureVector.model_validate(f) for f in json.loads(row["features_json"])
-                ]
+                raw_perf: dict[str, Any] = json.loads(row["perf_json"])
+                perf = AnalysisPerf.model_validate(raw_perf)
             except Exception:
-                logger.warning("Failed to deserialize features for analysis %s", row["id"])
+                logger.warning("Failed to deserialize perf for analysis %s", row["id"])
 
         return AnalysisDetail(
             id=row["id"],
@@ -244,5 +286,5 @@ class AnalysisStore:
             ),
             error_message=row["error_message"],
             report=report,
-            features=features,
+            perf=perf,
         )

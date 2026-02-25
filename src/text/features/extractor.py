@@ -8,13 +8,14 @@ models, or sentence-transformers are unavailable.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 import re
 import string
+import time
 import unicodedata
 from collections import Counter
+from typing import Callable
 
 from text.features.cache import FeatureCache
 from text.features.embeddings import EmbeddingEngine
@@ -66,7 +67,9 @@ def _get_spacy_model(name: str = "en_core_web_sm") -> object | None:
             _NLP_MODELS[name] = spacy.load(name)  # type: ignore[union-attr]
             logger.info("Loaded spaCy model: %s", name)
         except OSError:
-            logger.warning("spaCy model '%s' not found. Run: python -m spacy download %s", name, name)
+            logger.warning(
+                "spaCy model '%s' not found. Run: python -m spacy download %s", name, name
+            )
             _NLP_MODELS[name] = None
     return _NLP_MODELS[name]
 
@@ -94,21 +97,83 @@ _EMOJI_RE = re.compile(
 )
 
 # Common English function words
-_FUNCTION_WORDS = frozenset({
-    "the", "a", "an", "in", "on", "at", "to", "for", "of", "with",
-    "by", "from", "as", "is", "was", "are", "were", "be", "been",
-    "being", "have", "has", "had", "do", "does", "did", "will",
-    "would", "could", "should", "may", "might", "shall", "can",
-    "this", "that", "these", "those", "it", "its", "he", "she",
-    "they", "them", "his", "her", "their", "my", "your", "our",
-    "who", "which", "what", "where", "when", "how", "if", "but",
-    "and", "or", "not", "no", "so", "than", "too", "very",
-})
+_FUNCTION_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "as",
+        "is",
+        "was",
+        "are",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "he",
+        "she",
+        "they",
+        "them",
+        "his",
+        "her",
+        "their",
+        "my",
+        "your",
+        "our",
+        "who",
+        "which",
+        "what",
+        "where",
+        "when",
+        "how",
+        "if",
+        "but",
+        "and",
+        "or",
+        "not",
+        "no",
+        "so",
+        "than",
+        "too",
+        "very",
+    }
+)
+_PY_FALLBACK_MAX_NGRAMS = 200
 
 
 # ---------------------------------------------------------------------------
 # Pure-Python fallback for Rust features
 # ---------------------------------------------------------------------------
+
 
 def _tokenize_simple(text: str) -> list[str]:
     """Simple word tokenization via regex."""
@@ -156,9 +221,7 @@ def _python_fallback_features(text: str) -> RustFeatures:
     sent_lengths = [len(_tokenize_simple(s)) for s in sentences]
     avg_sent_len = sum(sent_lengths) / sent_count if sent_lengths else 0.0
     sent_len_var = (
-        sum((sl - avg_sent_len) ** 2 for sl in sent_lengths) / sent_count
-        if sent_count > 1
-        else 0.0
+        sum((sl - avg_sent_len) ** 2 for sl in sent_lengths) / sent_count if sent_count > 1 else 0.0
     )
 
     # Punctuation profile
@@ -203,7 +266,7 @@ def _python_fallback_features(text: str) -> RustFeatures:
     # --- Vocabulary richness metrics ---
 
     # Brunet's W: N^(V^-0.172)
-    brunets_w = token_count ** (unique_count ** -0.172) if unique_count > 0 else 0.0
+    brunets_w = token_count ** (unique_count**-0.172) if unique_count > 0 else 0.0
 
     # Honore's R: 100 * ln(N) / (1 - V1/V), V1 = hapax count
     if unique_count > 0 and hapax != unique_count:
@@ -231,6 +294,12 @@ def _python_fallback_features(text: str) -> RustFeatures:
     sents_per_100 = (sent_count / token_count) * 100.0 if token_count > 0 else 0.0
     coleman_liau_index = 0.0588 * letters_per_100 - 0.296 * sents_per_100 - 15.8
 
+    # Character and word n-grams for cross-entropy and stylometric overlap.
+    char_ngrams, word_ngrams = _extract_fallback_ngrams(
+        text,
+        max_ngrams=_PY_FALLBACK_MAX_NGRAMS,
+    )
+
     return RustFeatures(
         token_count=token_count,
         type_token_ratio=ttr,
@@ -239,6 +308,8 @@ def _python_fallback_features(text: str) -> RustFeatures:
         avg_word_length=avg_word_len,
         avg_sentence_length=avg_sent_len,
         sentence_length_variance=sent_len_var,
+        char_ngrams=char_ngrams,
+        word_ngrams=word_ngrams,
         punctuation_profile=punct_profile,
         function_word_freq=func_freq,
         cjk_ratio=cjk_ratio,
@@ -252,6 +323,77 @@ def _python_fallback_features(text: str) -> RustFeatures:
         hd_d=hd_d,
         coleman_liau_index=coleman_liau_index,
     )
+
+
+def _extract_fallback_ngrams(
+    text: str,
+    *,
+    max_ngrams: int,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Extract normalized char/word bigram+trigram maps for Python fallback."""
+    char_map: dict[str, float] = {}
+    word_map: dict[str, float] = {}
+
+    chars = [c for c in text if not c.isspace()]
+    words = _tokenize_for_word_ngrams(text)
+
+    for n in (2, 3):
+        char_map.update(_char_ngram_freq(chars, n=n, max_ngrams=max_ngrams))
+        word_map.update(_word_ngram_freq(words, n=n, max_ngrams=max_ngrams))
+
+    return char_map, word_map
+
+
+def _tokenize_for_word_ngrams(text: str) -> list[str]:
+    """Tokenization strategy that keeps CJK chars as independent tokens."""
+    tokens: list[str] = []
+    for word in _WORD_RE.findall(text):
+        current_latin: list[str] = []
+        for ch in word:
+            if _CJK_RE.fullmatch(ch):
+                if current_latin:
+                    tokens.append("".join(current_latin).lower())
+                    current_latin = []
+                tokens.append(ch)
+            else:
+                current_latin.append(ch)
+        if current_latin:
+            tokens.append("".join(current_latin).lower())
+    return tokens
+
+
+def _char_ngram_freq(
+    chars: list[str],
+    *,
+    n: int,
+    max_ngrams: int,
+) -> dict[str, float]:
+    """Build normalized char n-gram frequencies with prefixed keys."""
+    if len(chars) < n:
+        return {}
+    grams = ("".join(chars[i : i + n]) for i in range(len(chars) - n + 1))
+    counts = Counter(grams)
+    total = sum(counts.values())
+    if total <= 0:
+        return {}
+    return {f"c{n}:{gram}": cnt / total for gram, cnt in counts.most_common(max_ngrams)}
+
+
+def _word_ngram_freq(
+    tokens: list[str],
+    *,
+    n: int,
+    max_ngrams: int,
+) -> dict[str, float]:
+    """Build normalized word n-gram frequencies with prefixed keys."""
+    if len(tokens) < n:
+        return {}
+    grams = (" ".join(tokens[i : i + n]) for i in range(len(tokens) - n + 1))
+    counts = Counter(grams)
+    total = sum(counts.values())
+    if total <= 0:
+        return {}
+    return {f"w{n}:{gram}": cnt / total for gram, cnt in counts.most_common(max_ngrams)}
 
 
 def _compute_yules_k(freq: Counter[str], n: int) -> float:
@@ -303,9 +445,7 @@ def _compute_mtld(tokens: list[str], threshold: float = 0.72) -> float:
     return (forward + backward) / 2.0
 
 
-def _compute_hd_d(
-    freq: Counter[str], n: int, sample_size: int = 42
-) -> float:
+def _compute_hd_d(freq: Counter[str], n: int, sample_size: int = 42) -> float:
     """Compute HD-D (Hypergeometric Distribution D).
 
     For each type, compute the probability that it appears at least once in
@@ -330,9 +470,7 @@ def _compute_hd_d(
             contrib = 1.0
         else:
             # log(C(non_count, sample_size)) - log(C(n, sample_size))
-            log_p0 = (
-                _log_comb(non_count, sample_size) - _log_comb(n, sample_size)
-            )
+            log_p0 = _log_comb(non_count, sample_size) - _log_comb(n, sample_size)
             contrib = 1.0 - math.exp(log_p0)
         total_prob += contrib
 
@@ -359,6 +497,25 @@ class FeatureExtractor:
         self._liwc = LiwcAnalyzer()
         self._embedder = EmbeddingEngine()
         self._nlp = None  # lazy
+        self._last_perf: dict[str, float] = self._empty_perf()
+
+    @staticmethod
+    def _empty_perf() -> dict[str, float]:
+        return {
+            "rust_ms": 0.0,
+            "spacy_ms": 0.0,
+            "embedding_ms": 0.0,
+            "cache_get_ms": 0.0,
+            "cache_put_ms": 0.0,
+            "cache_hits": 0.0,
+            "cache_misses": 0.0,
+            "texts_total": 0.0,
+        }
+
+    @property
+    def last_perf(self) -> dict[str, float]:
+        """Performance counters from the latest extract/extract_batch call."""
+        return dict(self._last_perf)
 
     def _get_nlp(self):
         """Lazily load spaCy model."""
@@ -369,9 +526,15 @@ class FeatureExtractor:
     async def extract(self, text: str, text_id: str) -> FeatureVector:
         """Extract all features for a single text."""
         content_hash = FeatureCache.content_hash(text)
+        perf = self._empty_perf()
+        perf["texts_total"] = 1.0
 
+        rust_started = time.perf_counter()
         rust_feats = self._extract_rust_features(text)
-        nlp_feats = self._extract_nlp_features(text)
+        perf["rust_ms"] += (time.perf_counter() - rust_started) * 1000.0
+
+        nlp_feats = self._extract_nlp_features(text, perf=perf)
+        self._last_perf = perf
 
         return FeatureVector(
             text_id=text_id,
@@ -380,28 +543,144 @@ class FeatureExtractor:
             nlp_features=nlp_feats,
         )
 
-    async def extract_batch(self, entries: list[TextEntry]) -> list[FeatureVector]:
+    async def extract_batch(
+        self,
+        entries: list[TextEntry],
+        *,
+        progress_hook: Callable[[int, int, str], None] | None = None,
+    ) -> list[FeatureVector]:
         """Extract features for multiple texts, leveraging cache when available."""
         if not entries:
+            self._last_perf = self._empty_perf()
             return []
 
+        perf = self._empty_perf()
+        total = len(entries)
+        perf["texts_total"] = float(total)
+
+        content_hashes = [FeatureCache.content_hash(entry.content) for entry in entries]
+        cached_by_hash: dict[str, FeatureVector] = {}
         if self._cache is not None:
-            # Use cache-aware path
-            async def _compute(tid: str, content: str) -> FeatureVector:
-                return await self.extract(content, tid)
+            cache_get_started = time.perf_counter()
+            cached_by_hash = await self._cache.get_many(content_hashes)
+            perf["cache_get_ms"] = (time.perf_counter() - cache_get_started) * 1000.0
 
-            tasks = [
-                self._cache.get_or_compute(entry.id, entry.content, _compute)
-                for entry in entries
+        vectors: list[FeatureVector | None] = [None] * total
+        miss_indices: list[int] = []
+        miss_entries: list[TextEntry] = []
+        completed = 0
+
+        for idx, entry in enumerate(entries):
+            chash = content_hashes[idx]
+            cached = cached_by_hash.get(chash)
+            if cached is not None:
+                vectors[idx] = (
+                    cached if cached.text_id == entry.id else cached.model_copy(update={"text_id": entry.id})
+                )
+                perf["cache_hits"] += 1.0
+                completed += 1
+                if progress_hook is not None:
+                    progress_hook(completed, total, entry.id)
+            else:
+                miss_indices.append(idx)
+                miss_entries.append(entry)
+
+        perf["cache_misses"] = float(len(miss_indices))
+
+        computed_for_cache: list[FeatureVector] = []
+        if miss_entries:
+            miss_texts = [entry.content for entry in miss_entries]
+
+            rust_started = time.perf_counter()
+            rust_features: list[RustFeatures] = []
+            if HAS_RUST:
+                try:
+                    rust_results = rust_batch_extract(miss_texts)
+                    if len(rust_results) != len(miss_texts):
+                        raise RuntimeError(
+                            f"Rust batch_extract result length mismatch: expected {len(miss_texts)}, "
+                            f"got {len(rust_results)}"
+                        )
+                    rust_features = [RustFeatures.model_validate(item.to_dict()) for item in rust_results]
+                except Exception as exc:
+                    logger.warning("Rust batch extraction failed, falling back to Python: %s", exc)
+
+            if not rust_features:
+                rust_features = [_python_fallback_features(text) for text in miss_texts]
+            perf["rust_ms"] += (time.perf_counter() - rust_started) * 1000.0
+
+            embed_started = time.perf_counter()
+            embeddings = self._embedder.embed_batch(miss_texts)
+            if len(embeddings) != len(miss_texts):
+                logger.warning(
+                    "Embedding batch returned unexpected length (%d vs %d), using empty vectors",
+                    len(embeddings),
+                    len(miss_texts),
+                )
+                embeddings = [[] for _ in miss_texts]
+            perf["embedding_ms"] += (time.perf_counter() - embed_started) * 1000.0
+
+            tokens_per_text = [_tokenize_simple(text) for text in miss_texts]
+            liwc_scores = [self._liwc.analyze(tokens) for tokens in tokens_per_text]
+
+            # Defaults for texts where spaCy is unavailable or fails.
+            spacy_metrics: list[tuple[dict[str, float], float, float]] = [
+                ({}, 0.0, 0.0) for _ in miss_texts
             ]
-            vectors = await asyncio.gather(*tasks)
-        else:
-            # No cache — compute all directly
-            tasks = [self.extract(entry.content, entry.id) for entry in entries]
-            vectors = await asyncio.gather(*tasks)
 
-        self._compute_topics(vectors)
-        return vectors
+            nlp = self._get_nlp()
+            if nlp is not None:
+                spacy_started = time.perf_counter()
+                try:
+                    short_indices = [i for i, text in enumerate(miss_texts) if len(text) <= SPACY_CHUNK_SIZE]
+                    if short_indices:
+                        short_texts = [miss_texts[i] for i in short_indices]
+                        for rel_idx, doc in enumerate(nlp.pipe(short_texts, batch_size=16)):  # type: ignore[operator]
+                            spacy_metrics[short_indices[rel_idx]] = self._spacy_metrics_from_doc(doc)
+
+                    long_indices = [i for i, text in enumerate(miss_texts) if len(text) > SPACY_CHUNK_SIZE]
+                    for i in long_indices:
+                        spacy_metrics[i] = self._process_spacy_chunked(nlp, miss_texts[i])
+                except Exception as exc:
+                    logger.warning("spaCy batch processing failed: %s", exc)
+                finally:
+                    perf["spacy_ms"] += (time.perf_counter() - spacy_started) * 1000.0
+
+            for miss_pos, entry in enumerate(miss_entries):
+                nlp_features = self._extract_nlp_features(
+                    entry.content,
+                    tokens=tokens_per_text[miss_pos],
+                    liwc_scores=liwc_scores[miss_pos],
+                    embedding=embeddings[miss_pos],
+                    spacy_metrics=spacy_metrics[miss_pos],
+                )
+
+                feature_vector = FeatureVector(
+                    text_id=entry.id,
+                    content_hash=content_hashes[miss_indices[miss_pos]],
+                    rust_features=rust_features[miss_pos],
+                    nlp_features=nlp_features,
+                )
+                vectors[miss_indices[miss_pos]] = feature_vector
+                computed_for_cache.append(feature_vector)
+                completed += 1
+                if progress_hook is not None:
+                    progress_hook(completed, total, entry.id)
+
+            if self._cache is not None and computed_for_cache:
+                cache_put_started = time.perf_counter()
+                await self._cache.put_many(computed_for_cache)
+                perf["cache_put_ms"] += (time.perf_counter() - cache_put_started) * 1000.0
+
+        resolved_vectors: list[FeatureVector] = []
+        for idx, vec in enumerate(vectors):
+            if vec is None:
+                raise RuntimeError(f"Internal extraction error: missing vector at index {idx}")
+            resolved_vectors.append(vec)
+
+        self._compute_topics(resolved_vectors)
+        self._last_perf = perf
+        return resolved_vectors
 
     def _extract_rust_features(self, text: str) -> RustFeatures:
         """Call Rust PyO3 module. Falls back to pure Python if unavailable."""
@@ -459,12 +738,23 @@ class FeatureExtractor:
             probs = exp_vals / exp_vals.sum()
             vectors[vec_idx].nlp_features.topic_distribution = probs.tolist()
 
-    def _extract_nlp_features(self, text: str) -> NlpFeatures:
+    def _extract_nlp_features(
+        self,
+        text: str,
+        *,
+        tokens: list[str] | None = None,
+        liwc_scores: dict[str, float] | None = None,
+        embedding: list[float] | None = None,
+        spacy_metrics: tuple[dict[str, float], float, float] | None = None,
+        perf: dict[str, float] | None = None,
+    ) -> NlpFeatures:
         """Run spaCy pipeline + LIWC + embeddings to produce NLP features."""
-        tokens = _tokenize_simple(text)
+        if tokens is None:
+            tokens = _tokenize_simple(text)
 
         # LIWC analysis
-        liwc_scores = self._liwc.analyze(tokens)
+        if liwc_scores is None:
+            liwc_scores = self._liwc.analyze(tokens)
 
         # Temporal orientation (aggregate from LIWC temporal dimensions)
         temporal = {
@@ -477,7 +767,11 @@ class FeatureExtractor:
         cognitive_complexity = liwc_scores.get("cognitive", 0.0)
 
         # Embedding
-        embedding = self._embedder.embed(text)
+        if embedding is None:
+            embed_started = time.perf_counter()
+            embedding = self._embedder.embed(text)
+            if perf is not None:
+                perf["embedding_ms"] += (time.perf_counter() - embed_started) * 1000.0
 
         # spaCy-based features
         pos_dist: dict[str, float] = {}
@@ -485,16 +779,31 @@ class FeatureExtractor:
         sentiment_valence = 0.0
         emotional_tone = 0.0
 
+        if spacy_metrics is not None:
+            pos_dist, clause_depth_avg, sentiment_valence = spacy_metrics
+            emotional_tone = liwc_scores.get("affective", 0.0)
+            return NlpFeatures(
+                pos_tag_distribution=pos_dist,
+                clause_depth_avg=clause_depth_avg,
+                liwc_dimensions=liwc_scores,
+                sentiment_valence=sentiment_valence,
+                emotional_tone=emotional_tone,
+                cognitive_complexity=cognitive_complexity,
+                temporal_orientation=temporal,
+                embedding=embedding,
+            )
+
         nlp = self._get_nlp()
         if nlp is not None:
+            spacy_started = time.perf_counter()
             try:
                 if len(text) > SPACY_CHUNK_SIZE:
-                    pos_dist, clause_depth_avg, sentiment_valence = (
-                        self._process_spacy_chunked(nlp, text)
+                    pos_dist, clause_depth_avg, sentiment_valence = self._process_spacy_chunked(
+                        nlp, text
                     )
                 else:
-                    pos_dist, clause_depth_avg, sentiment_valence = (
-                        self._process_spacy_single(nlp, text)
+                    pos_dist, clause_depth_avg, sentiment_valence = self._process_spacy_single(
+                        nlp, text
                     )
 
                 # Emotional tone: proportion of affective LIWC tokens
@@ -502,6 +811,9 @@ class FeatureExtractor:
 
             except Exception as exc:
                 logger.warning("spaCy processing failed: %s", exc)
+            finally:
+                if perf is not None:
+                    perf["spacy_ms"] += (time.perf_counter() - spacy_started) * 1000.0
         else:
             # Without spaCy, still compute emotional_tone from LIWC
             emotional_tone = liwc_scores.get("affective", 0.0)
@@ -518,10 +830,8 @@ class FeatureExtractor:
         )
 
     @staticmethod
-    def _process_spacy_single(nlp, text: str):
-        """Process text through spaCy in a single pass."""
-        doc = nlp(text)  # type: ignore[operator]
-
+    def _spacy_metrics_from_doc(doc) -> tuple[dict[str, float], float, float]:
+        """Compute spaCy-dependent metrics from an already parsed Doc."""
         # POS tag distribution
         pos_counts: dict[str, int] = {}
         for token in doc:
@@ -537,16 +847,42 @@ class FeatureExtractor:
         clause_depth_avg = sum(depths) / len(depths) if depths else 0.0
 
         # Sentiment approximation
-        positive_adj = {"good", "great", "excellent", "wonderful", "amazing",
-                        "fantastic", "positive", "happy", "best", "beautiful"}
-        negative_adj = {"bad", "terrible", "awful", "horrible", "worst",
-                        "ugly", "negative", "sad", "poor", "disgusting"}
+        positive_adj = {
+            "good",
+            "great",
+            "excellent",
+            "wonderful",
+            "amazing",
+            "fantastic",
+            "positive",
+            "happy",
+            "best",
+            "beautiful",
+        }
+        negative_adj = {
+            "bad",
+            "terrible",
+            "awful",
+            "horrible",
+            "worst",
+            "ugly",
+            "negative",
+            "sad",
+            "poor",
+            "disgusting",
+        }
         pos_count = sum(1 for t in doc if t.text.lower() in positive_adj)
         neg_count = sum(1 for t in doc if t.text.lower() in negative_adj)
         total_sent = pos_count + neg_count
         sentiment_valence = (pos_count - neg_count) / total_sent if total_sent > 0 else 0.0
 
         return pos_dist, clause_depth_avg, sentiment_valence
+
+    @staticmethod
+    def _process_spacy_single(nlp, text: str):
+        """Process text through spaCy in a single pass."""
+        doc = nlp(text)  # type: ignore[operator]
+        return FeatureExtractor._spacy_metrics_from_doc(doc)
 
     @staticmethod
     def _process_spacy_chunked(nlp, text: str):
@@ -559,10 +895,30 @@ class FeatureExtractor:
         total_pos = 0
         total_neg = 0
 
-        positive_adj = {"good", "great", "excellent", "wonderful", "amazing",
-                        "fantastic", "positive", "happy", "best", "beautiful"}
-        negative_adj = {"bad", "terrible", "awful", "horrible", "worst",
-                        "ugly", "negative", "sad", "poor", "disgusting"}
+        positive_adj = {
+            "good",
+            "great",
+            "excellent",
+            "wonderful",
+            "amazing",
+            "fantastic",
+            "positive",
+            "happy",
+            "best",
+            "beautiful",
+        }
+        negative_adj = {
+            "bad",
+            "terrible",
+            "awful",
+            "horrible",
+            "worst",
+            "ugly",
+            "negative",
+            "sad",
+            "poor",
+            "disgusting",
+        }
 
         for chunk in chunks:
             doc = nlp(chunk)  # type: ignore[operator]

@@ -8,9 +8,6 @@ import type {
   CustomBackendsResponse,
   CreateAnalysisRequest,
   FeaturesResponse,
-  ProviderKeyStatus,
-  ProviderKeyStatusResponse,
-  UpdateProviderKeyRequest,
   UpsertCustomBackendRequest,
   UploadResponse,
 } from "./types";
@@ -105,12 +102,6 @@ export const api = {
   testBackend: (name: string) =>
     request<BackendTestResponse>(`/backends/${encodeURIComponent(name)}/test`, {
       method: "POST",
-    }),
-  getProviderKeys: () => request<ProviderKeyStatusResponse>("/backends/provider-keys"),
-  updateProviderKey: (provider: ProviderKeyStatus["provider"], payload: UpdateProviderKeyRequest) =>
-    request<ProviderKeyStatus>(`/backends/provider-keys/${encodeURIComponent(provider)}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
     }),
 
   // SSE URL helper

@@ -10,8 +10,6 @@ from .stylometry import _call_llm, _fmt_dict, _parse_findings
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
-
 
 class PsycholinguisticsAgent:
     """Infers psychological and cognitive traits from linguistic features."""
@@ -95,7 +93,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
 
     def __init__(
         self,
-        model: str = _DEFAULT_MODEL,
+        model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
     ) -> None:
@@ -109,11 +107,19 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         task_context: str,
     ) -> AgentReport:
         """Analyze psycholinguistic features and return findings."""
+        model = self.model
+        if not model:
+            return AgentReport(
+                agent_name="psycholinguistics",
+                discipline="psycholinguistics",
+                summary="未配置 LLM 模型，已跳过心理语言学分析。",
+            )
+
         user_prompt = self._build_prompt(features, task_context)
 
         try:
             raw_response = await _call_llm(
-                self.SYSTEM_PROMPT, user_prompt, self.model,
+                self.SYSTEM_PROMPT, user_prompt, model,
                 api_base=self.api_base, api_key=self.api_key,
             )
         except Exception as exc:

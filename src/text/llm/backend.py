@@ -1,8 +1,6 @@
 """Unified LLM backend using litellm.
 
-Supports built-in providers (Anthropic, OpenAI, Ollama) and user-defined
-backends loaded from a JSON configuration file.  Custom backends allow
-connecting to any OpenAI-compatible or Anthropic-compatible third-party API.
+Only user-defined backends from ``backends.json`` are supported.
 """
 
 from __future__ import annotations
@@ -13,7 +11,7 @@ import os
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import litellm
 
@@ -80,38 +78,6 @@ def load_backends_config(config_path: Path | str | None = None) -> dict[str, Cus
     return {}
 
 
-def load_provider_keys(config_path: Path | str | None = None) -> dict[str, str]:
-    """Load stored API keys for built-in providers from config file."""
-    if config_path is not None:
-        paths = [Path(config_path)]
-    else:
-        paths = _DEFAULT_CONFIG_PATHS
-
-    for p in paths:
-        if not p.is_file():
-            continue
-        try:
-            raw = json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to read backends config %s: %s", p, exc)
-            return {}
-
-        if not isinstance(raw, Mapping):
-            return {}
-
-        keys_raw = raw.get("provider_keys", {})
-        if not isinstance(keys_raw, Mapping):
-            return {}
-
-        result: dict[str, str] = {}
-        for provider, key in keys_raw.items():
-            if isinstance(provider, str) and isinstance(key, str) and key.strip():
-                result[provider.strip().lower()] = key.strip()
-        return result
-
-    return {}
-
-
 def _parse_config(path: Path) -> dict[str, CustomBackend]:
     """Parse a backends.json file into a name -> CustomBackend mapping."""
     try:
@@ -158,26 +124,13 @@ class LLMBackend:
     """Unified LLM interface using litellm.
 
     Wraps litellm.acompletion to provide a consistent async interface across
-    multiple providers (Anthropic, OpenAI, Ollama) with retry logic, usage
-    tracking, and friendly model name mapping.
+    user-defined providers with retry logic and usage tracking.
 
-    Custom backends from backends.json are also supported -- they are resolved
+    Backends from backends.json are resolved
     at construction time and produce the correct litellm call parameters
     (model, api_base, api_key) for OpenAI-compatible and Anthropic-compatible
     third-party APIs.
     """
-
-    MODEL_MAP: dict[str, str] = {
-        "claude": "anthropic/claude-sonnet-4-0",
-        "claude-opus": "anthropic/claude-opus-4-1-20250805",
-        "gpt5": "openai/gpt-5.1",
-        "gpt5-mini": "openai/gpt-5-mini",
-        "gpt5-nano": "openai/gpt-5-nano",
-        # Backward-compatible aliases
-        "gpt4": "openai/gpt-5.1",
-        "gpt4-mini": "openai/gpt-5-mini",
-        "local": "ollama/llama3",
-    }
 
     # Environment variable names per provider prefix
     _ENV_KEY_MAP: dict[str, str] = {
@@ -190,67 +143,60 @@ class LLMBackend:
 
     def __init__(
         self,
-        backend: str = "claude",
+        backend: str = "default",
         api_key: str | None = None,
         config_path: Path | str | None = None,
     ) -> None:
         """Initialize with backend name and optional API key.
 
         Args:
-            backend: Friendly name from MODEL_MAP, a name defined in
-                     backends.json, or a raw litellm model identifier.
+            backend: Name defined in backends.json, or ``default`` to use the
+                     first available custom backend.
             api_key: Explicit API key. Overrides all other key resolution.
             config_path: Path to a backends.json file. When None, the default
                          search paths are used.
 
         Raises:
-            ValueError: If *backend* is not recognised and cannot be used as a
-                        raw litellm identifier (heuristic: must contain a ``/``).
+            ValueError: If *backend* is not recognised.
         """
         self._api_base: str | None = None
         self._custom_backend: CustomBackend | None = None
         self._config_path = config_path
 
-        # 1. Try built-in map first.
-        if backend in self.MODEL_MAP:
-            self._model = self.MODEL_MAP[backend]
-        else:
-            # 2. Try custom backends from config file.
-            custom_backends = load_backends_config(config_path)
-            if backend in custom_backends:
-                cb = custom_backends[backend]
-                self._custom_backend = cb
-                # litellm routing: openai_compatible -> "openai/<model>"
-                #                  anthropic_compatible -> "anthropic/<model>"
-                if cb.provider == "openai_compatible":
-                    self._model = f"openai/{cb.model}"
-                elif cb.provider == "anthropic_compatible":
-                    self._model = f"anthropic/{cb.model}"
-                else:
-                    # Pass through as-is for other providers
-                    self._model = cb.model
-                self._api_base = cb.api_base
-                # Use the custom backend's resolved key unless caller overrides.
-                if api_key is None:
-                    api_key = cb.resolve_api_key()
-            elif "/" in backend:
-                # 3. Allow raw litellm identifiers like "anthropic/claude-..."
-                self._model = backend
-            else:
-                all_names = sorted(set(self.MODEL_MAP) | set(custom_backends))
+        custom_backends = load_backends_config(config_path)
+        selected_backend = backend.strip()
+        if selected_backend in {"", "default"}:
+            if not custom_backends:
                 raise ValueError(
-                    f"Unknown backend '{backend}'. Available: {', '.join(all_names)}. "
-                    "You may also pass a raw litellm model identifier containing '/'."
+                    "No custom backends configured. Add at least one backend in backends.json."
                 )
+            selected_backend = sorted(custom_backends)[0]
+
+        cb = custom_backends.get(selected_backend)
+        if cb is None:
+            all_names = sorted(custom_backends)
+            raise ValueError(
+                f"Unknown backend '{backend}'. Available: {', '.join(all_names) or '(none)'}."
+            )
+
+        self._custom_backend = cb
+        # litellm routing: openai_compatible -> "openai/<model>"
+        #                  anthropic_compatible -> "anthropic/<model>"
+        if cb.provider == "openai_compatible":
+            self._model = f"openai/{cb.model}"
+        elif cb.provider == "anthropic_compatible":
+            self._model = f"anthropic/{cb.model}"
+        else:
+            # Pass through as-is for other providers
+            self._model = cb.model
+        self._api_base = cb.api_base
+        # Use the custom backend's resolved key unless caller overrides.
+        if api_key is None:
+            api_key = cb.resolve_api_key()
 
         self._api_key = api_key
         self._usage = _UsageStats()
-        self._backend_name = backend
-
-        # Eagerly validate that an API key is available for cloud providers
-        # (skip validation for custom backends -- they handle keys themselves).
-        if self._custom_backend is None:
-            self._resolve_api_key()
+        self._backend_name = selected_backend
 
     # ------------------------------------------------------------------
     # Public API
@@ -324,9 +270,9 @@ class LLMBackend:
 
     @classmethod
     def available_backends(cls, config_path: Path | str | None = None) -> list[str]:
-        """List all available backend friendly names (built-in + custom)."""
+        """List all available custom backend names."""
         custom = load_backends_config(config_path)
-        return sorted(set(cls.MODEL_MAP) | set(custom))
+        return sorted(custom)
 
     @property
     def model(self) -> str:
@@ -363,9 +309,6 @@ class LLMBackend:
 
         env_var = self._ENV_KEY_MAP[provider]
         key = os.environ.get(env_var)
-        if not key:
-            provider_keys = load_provider_keys(self._config_path)
-            key = provider_keys.get(provider)
         if not key:
             raise EnvironmentError(
                 f"No API key for provider '{provider}'. "

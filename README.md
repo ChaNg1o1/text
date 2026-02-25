@@ -122,6 +122,14 @@ Synthesis Agent（交叉验证 · 置信度校准 · 矛盾识别）
 - Rust 工具链（[rustup.rs](https://rustup.rs)）
 - 至少一个可用的 LLM 后端
 
+推荐使用项目内虚拟环境运行，避免系统 Python（例如 3.9）导致类型语法不兼容：
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python --version  # 确认 >= 3.11
+```
+
 ### 安装
 
 ```bash
@@ -257,6 +265,10 @@ DASHSCOPE_API_KEY=sk-xxx         # 通义千问（阿里云）
 ZHIPU_API_KEY=xxx                # 智谱 GLM
 MOONSHOT_API_KEY=sk-xxx          # Moonshot Kimi
 SILICONFLOW_API_KEY=sk-xxx       # SiliconFlow
+
+# API 运行时性能配置
+TEXT_PRELOAD_EMBEDDING=true      # 启动时预热 embedding 模型（默认 true）
+TEXT_MAX_CONCURRENT_ANALYSES=1   # 最大并发分析数（默认 1，时延优先）
 ```
 
 > 也可在 `backends.json` 中直接设置 `"api_key"` 字段（不推荐提交至版本控制）。

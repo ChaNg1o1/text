@@ -12,7 +12,6 @@ def _default_document() -> dict[str, Any]:
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$comment": "Configuration file for custom LLM backends. Managed by Text web settings.",
         "backends": {},
-        "provider_keys": {},
     }
 
 
@@ -66,39 +65,6 @@ class BackendsConfigStore:
             self._write_document(document)
         return existed
 
-    def list_provider_keys(self) -> dict[str, str]:
-        """Return stored built-in provider keys (without exposing values elsewhere)."""
-        document = self._read_document()
-        keys = document.get("provider_keys")
-        if not isinstance(keys, dict):
-            return {}
-
-        result: dict[str, str] = {}
-        for provider, value in keys.items():
-            if isinstance(provider, str) and isinstance(value, str) and value.strip():
-                result[provider.strip().lower()] = value.strip()
-        return result
-
-    def set_provider_key(self, provider: str, api_key: str | None) -> None:
-        """Set or clear stored key for a built-in provider."""
-        normalized_provider = provider.strip().lower()
-        document = self._read_document()
-        keys = document.get("provider_keys")
-        if not isinstance(keys, dict):
-            keys = {}
-            document["provider_keys"] = keys
-
-        if api_key is None:
-            keys.pop(normalized_provider, None)
-        else:
-            stripped = api_key.strip()
-            if stripped:
-                keys[normalized_provider] = stripped
-            else:
-                keys.pop(normalized_provider, None)
-
-        self._write_document(document)
-
     def _read_document(self) -> dict[str, Any]:
         if not self.path.exists():
             return _default_document()
@@ -113,8 +79,6 @@ class BackendsConfigStore:
 
         if not isinstance(parsed.get("backends"), dict):
             parsed["backends"] = {}
-        if not isinstance(parsed.get("provider_keys"), dict):
-            parsed["provider_keys"] = {}
 
         return parsed
 

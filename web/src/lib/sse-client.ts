@@ -5,6 +5,7 @@ export type SSEHandler = (event: SSEEventType, data: SSEEventData) => void;
 export function createSSEClient(
   url: string,
   onEvent: SSEHandler,
+  onOpen?: () => void,
   onError?: (error: Event) => void,
 ) {
   const source = new EventSource(url);
@@ -36,6 +37,9 @@ export function createSSEClient(
 
   source.onerror = (e) => {
     onError?.(e);
+  };
+  source.onopen = () => {
+    onOpen?.();
   };
 
   return {

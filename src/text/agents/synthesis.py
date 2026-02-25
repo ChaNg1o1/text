@@ -77,10 +77,6 @@ def _repair_truncated_json_object(text: str) -> dict[str, Any] | None:
         pass
     return None
 
-
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
-
-
 class SynthesisAgent:
     """Integrates multi-disciplinary findings into a coherent forensic report."""
 
@@ -166,7 +162,7 @@ should be in Chinese.
 
     def __init__(
         self,
-        model: str = _DEFAULT_MODEL,
+        model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
     ) -> None:
@@ -180,13 +176,24 @@ should be in Chinese.
         request: AnalysisRequest,
     ) -> ForensicReport:
         """Synthesize all agent findings into a final forensic report."""
+        model = self.model
+        if not model:
+            return ForensicReport(
+                request=request,
+                agent_reports=agent_reports,
+                synthesis="未配置 LLM 模型，综合分析未执行；请先配置自定义后端。",
+                confidence_scores={},
+                contradictions=[],
+                recommendations=["请在设置页配置并选择一个可用的自定义后端后重试。"],
+            )
+
         user_prompt = self._build_prompt(agent_reports, request)
 
         try:
             raw_response = await _call_llm(
                 self.SYSTEM_PROMPT,
                 user_prompt,
-                self.model,
+                model,
                 api_base=self.api_base,
                 api_key=self.api_key,
             )

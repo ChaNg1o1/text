@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
 import numpy as np
 
 from text.ingest.schema import (
@@ -15,7 +16,7 @@ from text.ingest.schema import (
     ForensicReport,
     TaskType,
 )
-from text.llm.backend import LLMBackend, load_backends_config
+from text.llm.backend import load_backends_config
 
 from .computational import ComputationalAgent
 from .psycholinguistics import PsycholinguisticsAgent
@@ -31,16 +32,6 @@ from .synthesis import SynthesisAgent
 logger = logging.getLogger(__name__)
 
 
-def _resolve_model(llm_backend: str) -> str:
-    """Resolve a user-facing backend name to a litellm model string.
-
-    Uses the canonical mapping from LLMBackend.MODEL_MAP. If the value
-    is not found, it is passed through as-is, allowing callers to supply
-    arbitrary litellm model identifiers.
-    """
-    return LLMBackend.MODEL_MAP.get(llm_backend, llm_backend)
-
-
 class OrchestratorAgent:
     """Coordinates the multi-agent forensic analysis pipeline.
 
@@ -53,27 +44,37 @@ class OrchestratorAgent:
 
     def __init__(
         self,
-        llm_backend: str = "claude",
+        llm_backend: str = "default",
         config_path: str | None = None,
     ) -> None:
-        # Resolve model name + optional api_base/api_key for custom backends.
+        # Resolve model name + optional api_base/api_key from custom backends only.
         api_base: str | None = None
         api_key: str | None = None
 
         custom_backends = load_backends_config(config_path)
-        if llm_backend in custom_backends:
-            cb = custom_backends[llm_backend]
-            api_base = cb.api_base
-            api_key = cb.resolve_api_key()
-            # Resolve model with the same logic as LLMBackend.__init__
-            if cb.provider == "openai_compatible":
-                model = f"openai/{cb.model}"
-            elif cb.provider == "anthropic_compatible":
-                model = f"anthropic/{cb.model}"
-            else:
-                model = cb.model
+        selected_backend = llm_backend.strip()
+        if selected_backend in {"", "default"}:
+            if not custom_backends:
+                raise ValueError(
+                    "No custom backends configured. Add at least one backend in backends.json."
+                )
+            selected_backend = sorted(custom_backends)[0]
+
+        cb = custom_backends.get(selected_backend)
+        if cb is None:
+            available = ", ".join(sorted(custom_backends)) or "(none)"
+            raise ValueError(
+                f"Unknown backend '{llm_backend}'. Available custom backends: {available}."
+            )
+
+        api_base = cb.api_base
+        api_key = cb.resolve_api_key()
+        if cb.provider == "openai_compatible":
+            model = f"openai/{cb.model}"
+        elif cb.provider == "anthropic_compatible":
+            model = f"anthropic/{cb.model}"
         else:
-            model = _resolve_model(llm_backend)
+            model = cb.model
 
         agent_kwargs = {"model": model, "api_base": api_base, "api_key": api_key}
         self.stylometry = StylometryAgent(**agent_kwargs)
