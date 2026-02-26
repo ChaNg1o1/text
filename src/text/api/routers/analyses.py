@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from text.api.deps import get_store
 from text.api.models import (
@@ -15,6 +16,8 @@ from text.api.models import (
     CreateAnalysisRequest,
 )
 from text.api.services.analysis_store import AnalysisStore
+from text.api.services.analysis_task_registry import analysis_task_registry
+from text.api.services.progress_manager import progress_manager
 from text.ingest.schema import AnalysisRequest
 
 logger = logging.getLogger(__name__)
@@ -22,10 +25,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["analyses"])
 
 
+def _to_summary(detail: AnalysisDetail) -> AnalysisSummary:
+    return AnalysisSummary(**detail.model_dump(exclude={"report", "perf"}))
+
+
 @router.post("/analyses", response_model=AnalysisSummary, status_code=202)
 async def create_analysis(
     body: CreateAnalysisRequest,
-    background_tasks: BackgroundTasks,
     store: AnalysisStore = Depends(get_store),
 ) -> AnalysisSummary:
     """Create a new analysis and start background execution."""
@@ -46,12 +52,15 @@ async def create_analysis(
         author_count=len(authors),
     )
 
-    # Schedule background analysis (Phase 2 will wire AnalysisRunner here)
-    background_tasks.add_task(_run_analysis_bg, analysis_id, request, store)
+    task = asyncio.create_task(
+        _run_analysis_bg(analysis_id, request, store),
+        name=f"analysis:{analysis_id}",
+    )
+    await analysis_task_registry.register(analysis_id, task)
 
     detail = await store.get(analysis_id)
     assert detail is not None
-    return AnalysisSummary(**detail.model_dump(exclude={"report", "perf"}))
+    return _to_summary(detail)
 
 
 async def _run_analysis_bg(
@@ -59,12 +68,27 @@ async def _run_analysis_bg(
     request: AnalysisRequest,
     store: AnalysisStore,
 ) -> None:
-    """Background task placeholder -- Phase 2 replaces with AnalysisRunner."""
+    """Background task wrapper for the analysis runner."""
     try:
         from text.api.services.analysis_runner import AnalysisRunner
 
         runner = AnalysisRunner(store)
         await runner.run(analysis_id, request)
+    except asyncio.CancelledError:
+        logger.info("Analysis %s cancelled before completion", analysis_id)
+        updated = await store.update_status(
+            analysis_id,
+            AnalysisStatus.CANCELED,
+            error_message="Canceled by user",
+            only_if_current={AnalysisStatus.PENDING, AnalysisStatus.RUNNING},
+        )
+        if updated:
+            progress_manager.emit(
+                analysis_id,
+                "analysis_cancelled",
+                {"analysis_id": analysis_id, "reason": "canceled_by_user"},
+            )
+            progress_manager.complete(analysis_id)
     except ImportError:
         logger.warning("AnalysisRunner not available, marking analysis as failed")
         await store.update_status(
@@ -72,6 +96,8 @@ async def _run_analysis_bg(
             AnalysisStatus.FAILED,
             error_message="Analysis runner not available",
         )
+    finally:
+        await analysis_task_registry.discard(analysis_id)
 
 
 @router.get("/analyses", response_model=AnalysisListResponse)
@@ -103,6 +129,46 @@ async def get_analysis(
     if detail is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return detail
+
+
+@router.post("/analyses/{analysis_id}/cancel", response_model=AnalysisSummary)
+async def cancel_analysis(
+    analysis_id: str,
+    store: AnalysisStore = Depends(get_store),
+) -> AnalysisSummary:
+    """Cancel a pending/running analysis."""
+    detail = await store.get(analysis_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    if detail.status == AnalysisStatus.CANCELED:
+        return _to_summary(detail)
+
+    if detail.status in (AnalysisStatus.COMPLETED, AnalysisStatus.FAILED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot cancel analysis in '{detail.status.value}' state",
+        )
+
+    await analysis_task_registry.cancel(analysis_id)
+    updated = await store.update_status(
+        analysis_id,
+        AnalysisStatus.CANCELED,
+        error_message="Canceled by user",
+        only_if_current={AnalysisStatus.PENDING, AnalysisStatus.RUNNING},
+    )
+
+    if updated:
+        progress_manager.emit(
+            analysis_id,
+            "analysis_cancelled",
+            {"analysis_id": analysis_id, "reason": "canceled_by_user"},
+        )
+        progress_manager.complete(analysis_id)
+
+    latest = await store.get(analysis_id)
+    assert latest is not None
+    return _to_summary(latest)
 
 
 @router.delete("/analyses/{analysis_id}", status_code=204)

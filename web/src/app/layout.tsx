@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/providers/theme-provider";
 import { I18nProvider } from "@/components/providers/i18n-provider";
 import { Header } from "@/components/layout/header";
 import { PageTransition } from "@/components/layout/page-transition";
+import { RuntimeFlags } from "@/components/runtime/runtime-flags";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,6 +34,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-background`}
       >
+        <RuntimeFlags />
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <I18nProvider>
             <TooltipProvider>

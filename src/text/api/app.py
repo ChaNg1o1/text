@@ -13,6 +13,7 @@ from text.api.config import Settings
 from text.api.models import HealthResponse
 from text.api.routers import analyses, backends, features, uploads
 from text.api.services.analysis_store import AnalysisStore
+from text.api.services.analysis_task_registry import analysis_task_registry
 
 
 @asynccontextmanager
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    await analysis_task_registry.cancel_all()
     await store.close()
 
 

@@ -9,7 +9,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org)
 [![License](https://img.shields.io/badge/License-MIT-22c55e)](LICENSE)
 
-结合 Rust 高性能特征提取与 LLM 多智能体推理，为作者身份鉴定、傀儡账号检测等数字取证场景提供高置信度分析报告。
+结合 Rust 高性能特征提取与 LLM 多智能体推理，为作者身份鉴定、傀儡账号检测等数字取证场景提供高置信度分析报告
 
 </div>
 
@@ -29,10 +29,11 @@
   - [配置 LLM 后端](#配置-llm-后端)
   - [运行分析](#运行分析)
 - [CLI 参考](#cli-参考)
-- [Web 界面](#web-界面)
+- [桌面客户端](#桌面客户端)
+  - [发布交付](#发布交付)
 - [输入格式](#输入格式)
 - [配置说明](#配置说明)
-  - [LLM 后端（`backends.json`）](#llm-后端backendsjson)
+  - [LLM 后端](#llm-后端)
   - [环境变量](#环境变量)
 - [项目结构](#项目结构)
 
@@ -119,10 +120,8 @@ Synthesis Agent（交叉验证 · 置信度校准 · 矛盾识别）
 ### 前置依赖
 
 - Python ≥ 3.11
-- Rust 工具链（[rustup.rs](https://rustup.rs)）
+- Rust 工具链
 - 至少一个可用的 LLM 后端
-
-推荐使用项目内虚拟环境运行，避免系统 Python（例如 3.9）导致类型语法不兼容：
 
 ```bash
 python3.11 -m venv .venv
@@ -203,22 +202,38 @@ text
 
 ---
 
-## Web 界面
-
-项目提供 FastAPI REST API 与 Next.js 前端，可通过浏览器提交分析任务并查看报告。
+## 桌面客户端
 
 ```bash
-# 安装 API 服务依赖并启动
-pip install -e ".[web]"
-text serve --reload --port 8000
+# 安装桌面依赖（Python API + CLI）
+pip install -e ".[desktop]"
 
-# 启动前端开发服务器（另开终端）
-cd web && npm install && npm run dev
-# 访问 http://localhost:3000
+# 安装桌面客户端依赖（需要 Node.js + Rust toolchain）
+cd web && npm install
 ```
 
----
+### 发布交付
 
+```bash
+# 1) 生成 GUI 安装包
+scripts/release/build_desktop_bundle.sh
+
+# 产物目录（按平台生成）
+# macOS:   web/src-tauri/target/release/bundle/macos/*.app
+# Windows: web/src-tauri/target/release/bundle/nsis/*.exe
+# Linux:   web/src-tauri/target/release/bundle/appimage/*.AppImage
+
+```
+
+默认分发建议：
+- macOS: 交付 `text.app`（可选同时附带 `.dmg`）
+- Windows: 交付 `nsis/*.exe`
+- Linux: 交付 `*.AppImage`
+
+若开发者需要独立 CLI，可选执行：
+```bash
+python scripts/release/build_cli_binary.py
+```
 ## 输入格式
 
 | 格式 | 说明 |
@@ -233,7 +248,7 @@ cd web && npm install && npm run dev
 
 ## 配置说明
 
-### LLM 后端（`backends.json`）
+### LLM 后端
 
 ```json
 {
@@ -253,7 +268,6 @@ cd web && npm install && npm run dev
 }
 ```
 
-预置后端（见 `backends.example.json`）：DeepSeek、Qwen、GLM-4、Moonshot、Yi、Azure OpenAI、Together AI、Ollama。
 
 ### 环境变量
 
@@ -265,15 +279,13 @@ DASHSCOPE_API_KEY=sk-xxx         # 通义千问（阿里云）
 ZHIPU_API_KEY=xxx                # 智谱 GLM
 MOONSHOT_API_KEY=sk-xxx          # Moonshot Kimi
 SILICONFLOW_API_KEY=sk-xxx       # SiliconFlow
+HF_TOKEN=hf_xxx                  # Hugging Face Hub（sentence-transformers 下载加速/提额）
+# 或使用 HUGGINGFACE_HUB_TOKEN=hf_xxx
 
 # API 运行时性能配置
 TEXT_PRELOAD_EMBEDDING=true      # 启动时预热 embedding 模型（默认 true）
 TEXT_MAX_CONCURRENT_ANALYSES=1   # 最大并发分析数（默认 1，时延优先）
 ```
-
-> 也可在 `backends.json` 中直接设置 `"api_key"` 字段（不推荐提交至版本控制）。
-
----
 
 ## 项目结构
 
@@ -300,7 +312,7 @@ text/
 │   │   └── orchestrator.py       # 并行调度器
 │   ├── api/                      # FastAPI REST 服务
 │   └── report/                   # 报告渲染（Rich / JSON / Markdown）
-├── web/                          # Next.js 前端
+├── web/                          # Next.js 前端 + Tauri 客户端壳
 ├── tests/                        # pytest 测试集
 │   └── fixtures/                 # 测试样本与黄金数据
 ├── sample/                       # 示例输入文件
@@ -308,3 +320,8 @@ text/
 ├── Cargo.toml                    # Rust workspace
 └── pyproject.toml                # Python 项目配置
 ```
+<div align="center">
+
+<img src="src/text/icon/footer.png" alt="Text" style="max-width: 100%; height: auto;" />
+
+</div>

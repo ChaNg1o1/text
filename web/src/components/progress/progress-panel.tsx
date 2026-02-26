@@ -25,6 +25,7 @@ function phasePercent(phase: string): number {
     case "agent_analysis": return 50;
     case "synthesis": return 80;
     case "completed": return 100;
+    case "canceled": return 100;
     case "failed": return 100;
     default: return 0;
   }
@@ -37,7 +38,7 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
   const percent = progress.phase === "feature_extraction" && progress.featureProgress.total > 0
     ? 10 + (progress.featureProgress.completed / progress.featureProgress.total) * 10
     : phasePercent(progress.phase);
-  const isTerminal = progress.phase === "completed" || progress.phase === "failed";
+  const isTerminal = progress.phase === "completed" || progress.phase === "failed" || progress.phase === "canceled";
   const elapsedSeconds = useMemo(() => {
     if (typeof progress.durationSeconds === "number") return progress.durationSeconds;
     if (typeof progress.startedAt === "number") return Math.max(0, now - progress.startedAt);
@@ -79,6 +80,7 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
   const phaseIcon = () => {
     switch (progress.phase) {
       case "completed": return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      case "canceled": return <AlertCircle className="h-5 w-5 text-amber-600" />;
       case "failed": return <AlertCircle className="h-5 w-5 text-red-500" />;
       default: return <Loader2 className="h-5 w-5 animate-spin text-blue-500" />;
     }
@@ -194,6 +196,7 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
       {(progress.phase === "agent_analysis" ||
         progress.phase === "synthesis" ||
         progress.phase === "completed" ||
+        progress.phase === "canceled" ||
         progress.phase === "failed") && (
         <FadeIn delay={0.04}>
           <AgentStatusGrid agents={progress.agents} />

@@ -36,7 +36,7 @@ export default function NewAnalysisPage() {
       toast.success(t("analysis.startSuccess"), {
         description: `ID: ${result.id}`,
       });
-      router.push(`/analyses/${result.id}`);
+      router.push(`/analyses/detail?id=${encodeURIComponent(result.id)}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : t("analysis.startFailed");
       toast.error(t("analysis.startFailed"), { description: message });

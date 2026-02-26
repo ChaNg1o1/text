@@ -1,11 +1,14 @@
 "use client";
 
-import { use, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { useAnalysis } from "@/hooks/use-analysis";
 import { useSSEProgress } from "@/hooks/use-sse-progress";
 import { useAnalysisStore } from "@/stores/analysis-store";
-import { BarChart3, ArrowLeft, RefreshCcw, AlertTriangle } from "lucide-react";
+import { BarChart3, ArrowLeft, RefreshCcw, AlertTriangle, Loader2, Square } from "lucide-react";
+import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,22 +34,20 @@ function DetailSkeleton() {
   );
 }
 
-export default function AnalysisDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
+function AnalysisDetailContent() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id") ?? "";
   const { t } = useI18n();
   const { data, isLoading, mutate } = useAnalysis(id);
   const progress = useAnalysisStore((s) => s.getProgress(id));
+  const [isCancelling, setIsCancelling] = useState(false);
   const isRunning = data?.status === "pending" || data?.status === "running";
 
   const sse = useSSEProgress(id, data?.status);
 
   useEffect(() => {
     if (
-      (progress.phase === "completed" || progress.phase === "failed") &&
+      (progress.phase === "completed" || progress.phase === "failed" || progress.phase === "canceled") &&
       (data?.status === "running" || data?.status === "pending")
     ) {
       void mutate();
@@ -65,9 +66,30 @@ export default function AnalysisDetailPage({
     return <DetailSkeleton />;
   }
 
+  if (!id) {
+    return <div className="py-12 text-center text-muted-foreground">{t("detail.notFound")}</div>;
+  }
+
   if (!data) {
     return <div className="py-12 text-center text-muted-foreground">{t("detail.notFound")}</div>;
   }
+
+  const handleCancel = async () => {
+    if (!window.confirm(t("analysis.cancelConfirm", { id }))) {
+      return;
+    }
+
+    setIsCancelling(true);
+    try {
+      await api.cancelAnalysis(id);
+      toast.success(t("analysis.cancelled"));
+      await mutate();
+    } catch {
+      toast.error(t("analysis.cancelFailed"));
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   const hasReport = data.status === "completed" && data.report;
 
@@ -86,9 +108,19 @@ export default function AnalysisDetailPage({
               <RefreshCcw className="mr-1.5 h-4 w-4" />
               {t("common.refresh")}
             </Button>
+            {isRunning && (
+              <Button variant="outline" size="sm" onClick={handleCancel} disabled={isCancelling}>
+                {isCancelling ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Square className="mr-1.5 h-4 w-4" />
+                )}
+                {t("analysis.cancelTitle")}
+              </Button>
+            )}
             {hasReport && (
               <Button asChild variant="outline" size="sm">
-                <Link href={`/analyses/${id}/features`}>
+                <Link href={`/analyses/features?id=${encodeURIComponent(id)}`}>
                   <BarChart3 className="mr-1.5 h-4 w-4" />
                   {t("detail.features")}
                 </Link>
@@ -123,6 +155,24 @@ export default function AnalysisDetailPage({
                   <Button variant="outline" size="sm" className="mt-3" onClick={() => mutate()}>
                     {t("detail.retryRefresh")}
                   </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </FadeIn>
+      )}
+
+      {data.status === "canceled" && (
+        <FadeIn>
+          <Card className="border-amber-500/30">
+            <CardContent className="pt-5">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-700">{t("detail.canceledTitle")}</h3>
+                  <p className="mt-1 text-sm text-amber-700/90">
+                    {data.error_message ?? t("detail.canceledMessage")}
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -165,11 +215,19 @@ export default function AnalysisDetailPage({
         </StaggerItem>
       )}
 
-      {!isRunning && !hasReport && data.status !== "failed" && (
+      {!isRunning && !hasReport && data.status !== "failed" && data.status !== "canceled" && (
         <FadeIn>
           <p className="text-sm text-muted-foreground">{t("detail.waitingForReport")}</p>
         </FadeIn>
       )}
     </StaggerContainer>
+  );
+}
+
+export default function AnalysisDetailPage() {
+  return (
+    <Suspense fallback={<DetailSkeleton />}>
+      <AnalysisDetailContent />
+    </Suspense>
   );
 }

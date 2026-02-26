@@ -17,7 +17,7 @@ export function useSSEProgress(analysisId: string | undefined, status?: Analysis
   const [retryDelayMs, setRetryDelayMs] = useState<number>(RETRY_DELAYS_MS[0]);
 
   useEffect(() => {
-    if (!analysisId || status === "completed" || status === "failed") {
+    if (!analysisId || status === "completed" || status === "failed" || status === "canceled") {
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
@@ -29,37 +29,57 @@ export function useSSEProgress(analysisId: string | undefined, status?: Analysis
     }
 
     let active = true;
+    let client: ReturnType<typeof createSSEClient> | null = null;
 
-    const client = createSSEClient(
-      api.progressUrl(analysisId),
-      (event, data) => handleSSEEvent(analysisId, event, data),
-      () => {
+    const bootstrapSSE = async () => {
+      try {
+        const url = await api.progressUrl(analysisId);
         if (!active) return;
-        retryAttemptRef.current = 0;
-        setIsConnected(true);
-        setConnectedAnalysisId(analysisId);
-        setRetryDelayMs(RETRY_DELAYS_MS[0]);
-      },
-      () => {
-        if (!active) return;
-        setIsConnected(false);
-        clientRef.current?.close();
-        clientRef.current = null;
 
-        const attempt = retryAttemptRef.current;
-        const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
-        retryAttemptRef.current = attempt + 1;
+        client = createSSEClient(
+          url,
+          (event, data) => handleSSEEvent(analysisId, event, data),
+          () => {
+            if (!active) return;
+            retryAttemptRef.current = 0;
+            setIsConnected(true);
+            setConnectedAnalysisId(analysisId);
+            setRetryDelayMs(RETRY_DELAYS_MS[0]);
+          },
+          () => {
+            if (!active) return;
+            setIsConnected(false);
+            clientRef.current?.close();
+            clientRef.current = null;
+
+            const attempt = retryAttemptRef.current;
+            const delay = RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
+            retryAttemptRef.current = attempt + 1;
+            setRetryDelayMs(delay);
+
+            if (retryTimerRef.current) {
+              clearTimeout(retryTimerRef.current);
+            }
+            retryTimerRef.current = setTimeout(() => {
+              setRetryTick((v) => v + 1);
+            }, delay);
+          },
+        );
+        clientRef.current = client;
+      } catch {
+        const delay = RETRY_DELAYS_MS[Math.min(retryAttemptRef.current, RETRY_DELAYS_MS.length - 1)];
+        retryAttemptRef.current += 1;
         setRetryDelayMs(delay);
-
         if (retryTimerRef.current) {
           clearTimeout(retryTimerRef.current);
         }
         retryTimerRef.current = setTimeout(() => {
           setRetryTick((v) => v + 1);
         }, delay);
-      },
-    );
-    clientRef.current = client;
+      }
+    };
+
+    void bootstrapSSE();
 
     return () => {
       active = false;
@@ -67,14 +87,14 @@ export function useSSEProgress(analysisId: string | undefined, status?: Analysis
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
-      client.close();
+      client?.close();
       clientRef.current = null;
     };
   }, [analysisId, status, handleSSEEvent, retryTick]);
 
   return {
     isConnected:
-      !!analysisId && status !== "completed" && status !== "failed" && isConnected
+      !!analysisId && status !== "completed" && status !== "failed" && status !== "canceled" && isConnected
       && connectedAnalysisId === analysisId,
     retryDelayMs,
   };

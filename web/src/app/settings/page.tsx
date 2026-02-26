@@ -1,5 +1,14 @@
-import { redirect } from "next/navigation";
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {
-  redirect("/settings/backends");
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/settings/backends");
+  }, [router]);
+
+  return null;
 }

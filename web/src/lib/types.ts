@@ -1,6 +1,6 @@
 // Enums
 export type TaskType = "attribution" | "profiling" | "sockpuppet" | "full";
-export type AnalysisStatus = "pending" | "running" | "completed" | "failed";
+export type AnalysisStatus = "pending" | "running" | "completed" | "failed" | "canceled";
 
 // Data models
 export interface TextEntry {
@@ -205,6 +205,7 @@ export type SSEEventType =
   | "synthesis_started"
   | "synthesis_completed"
   | "analysis_completed"
+  | "analysis_cancelled"
   | "analysis_failed"
   | "log"
   | "heartbeat";

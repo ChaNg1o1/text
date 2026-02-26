@@ -49,23 +49,23 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
+  --background: oklch(0.955 0.008 232);
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
+  --card: oklch(0.975 0.006 232);
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.975 0.006 232);
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
+  --secondary: oklch(0.94 0.008 230);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
+  --muted: oklch(0.94 0.008 230);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
+  --accent: oklch(0.94 0.008 230);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  --border: oklch(0.89 0.01 230);
+  --input: oklch(0.89 0.01 230);
   --ring: oklch(0.708 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -80,27 +80,27 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  --surface-base-1: oklch(0.99 0.008 252);
-  --surface-base-2: oklch(0.985 0.012 210);
-  --surface-base-3: oklch(0.975 0.01 175);
-  --surface-depth-top: oklch(0.995 0.014 248);
-  --surface-depth-mid: oklch(0.986 0.018 210);
-  --surface-depth-bottom: oklch(0.972 0.014 168);
-  --surface-vignette: oklch(0.62 0.03 235 / 0.18);
-  --surface-glow-1: oklch(0.92 0.05 246 / 0.44);
-  --surface-glow-2: oklch(0.90 0.04 194 / 0.38);
-  --surface-glow-3: oklch(0.92 0.03 165 / 0.3);
-  --surface-noise: oklch(0.97 0.01 242 / 0.45);
-  --surface-flow-speed-a: 6s;
-  --surface-flow-speed-b: 8s;
-  --surface-flow-global-speed: 24s;
-  --surface-tone-speed: 46s;
-  --surface-tone-contrast: 1.03;
-  --surface-flow-opacity-a: 0.72;
-  --surface-flow-opacity-b: 0.58;
-  --surface-flow-scale: 1.18;
-  --surface-flow-drift-x: 380px;
-  --surface-flow-drift-y: 280px;
+  --surface-base-1: oklch(0.94 0.012 246);
+  --surface-base-2: oklch(0.918 0.02 220);
+  --surface-base-3: oklch(0.882 0.028 194);
+  --surface-depth-top: oklch(0.952 0.018 244);
+  --surface-depth-mid: oklch(0.91 0.028 216);
+  --surface-depth-bottom: oklch(0.866 0.036 194);
+  --surface-vignette: oklch(0.54 0.03 232 / 0.3);
+  --surface-glow-1: oklch(0.84 0.06 246 / 0.44);
+  --surface-glow-2: oklch(0.82 0.054 206 / 0.4);
+  --surface-glow-3: oklch(0.83 0.05 176 / 0.34);
+  --surface-noise: oklch(0.86 0.01 232 / 0.18);
+  --surface-flow-speed-a: 5.8s;
+  --surface-flow-speed-b: 7.2s;
+  --surface-flow-global-speed: 22s;
+  --surface-tone-speed: 36s;
+  --surface-tone-contrast: 1.04;
+  --surface-flow-opacity-a: 0.82;
+  --surface-flow-opacity-b: 0.66;
+  --surface-flow-scale: 1.2;
+  --surface-flow-drift-x: 400px;
+  --surface-flow-drift-y: 300px;
 }
 
 .dark {
@@ -202,14 +202,15 @@
     radial-gradient(140% 94% at 50% -20%, var(--surface-noise), transparent 78%);
   background-size: 210% 210%, 196% 196%, 120% 120%, 182% 182%, 165% 165%, 100% 100%, 140% 140%, 150% 150%;
   background-position: 0% 0%, 100% 0%, 50% 50%, 42% 100%, 50% 50%, 50% 50%, 50% 0%, 50% 0%;
-  background-blend-mode: screen, screen, normal, screen, normal, multiply, normal, normal;
-  filter: hue-rotate(0deg) contrast(var(--surface-tone-contrast));
+  background-blend-mode: screen, screen, normal, screen, normal, multiply, soft-light, normal;
+  filter: hue-rotate(0deg) saturate(0.98) brightness(0.98) contrast(var(--surface-tone-contrast));
   animation:
     surface-global-drift var(--surface-flow-global-speed) ease-in-out infinite alternate,
     surface-tone-day var(--surface-tone-speed) linear infinite;
 }
 
 .dark .app-surface-flow {
+  background-blend-mode: screen, screen, normal, screen, normal, multiply, normal, normal;
   animation:
     surface-global-drift var(--surface-flow-global-speed) ease-in-out infinite alternate,
     surface-tone-night var(--surface-tone-speed) linear infinite;
@@ -298,37 +299,37 @@
 
 @keyframes surface-tone-day {
   0% {
-    filter: hue-rotate(0deg) saturate(0.9) brightness(0.98) contrast(var(--surface-tone-contrast));
+    filter: hue-rotate(0deg) saturate(0.98) brightness(0.98) contrast(var(--surface-tone-contrast));
   }
-  24% {
-    filter: hue-rotate(-16deg) saturate(0.88) brightness(0.97) contrast(var(--surface-tone-contrast));
+  25% {
+    filter: hue-rotate(-8deg) saturate(0.96) brightness(0.97) contrast(var(--surface-tone-contrast));
   }
-  48% {
-    filter: hue-rotate(14deg) saturate(0.92) brightness(1) contrast(var(--surface-tone-contrast));
+  50% {
+    filter: hue-rotate(6deg) saturate(0.99) brightness(0.99) contrast(var(--surface-tone-contrast));
   }
-  72% {
-    filter: hue-rotate(-32deg) saturate(0.86) brightness(0.96) contrast(var(--surface-tone-contrast));
+  75% {
+    filter: hue-rotate(-12deg) saturate(0.95) brightness(0.96) contrast(var(--surface-tone-contrast));
   }
   100% {
-    filter: hue-rotate(20deg) saturate(0.91) brightness(0.99) contrast(var(--surface-tone-contrast));
+    filter: hue-rotate(10deg) saturate(0.98) brightness(0.98) contrast(var(--surface-tone-contrast));
   }
 }
 
 @keyframes surface-tone-night {
   0% {
-    filter: hue-rotate(0deg) saturate(1.04) brightness(0.94) contrast(var(--surface-tone-contrast));
+    filter: hue-rotate(0deg) saturate(1.02) brightness(0.93) contrast(var(--surface-tone-contrast));
   }
-  24% {
-    filter: hue-rotate(-22deg) saturate(1) brightness(0.91) contrast(var(--surface-tone-contrast));
+  25% {
+    filter: hue-rotate(-10deg) saturate(0.99) brightness(0.9) contrast(var(--surface-tone-contrast));
   }
-  48% {
-    filter: hue-rotate(18deg) saturate(0.96) brightness(0.9) contrast(var(--surface-tone-contrast));
+  50% {
+    filter: hue-rotate(8deg) saturate(0.97) brightness(0.89) contrast(var(--surface-tone-contrast));
   }
-  72% {
-    filter: hue-rotate(-38deg) saturate(0.92) brightness(0.88) contrast(var(--surface-tone-contrast));
+  75% {
+    filter: hue-rotate(-14deg) saturate(0.95) brightness(0.88) contrast(var(--surface-tone-contrast));
   }
   100% {
-    filter: hue-rotate(28deg) saturate(0.98) brightness(0.92) contrast(var(--surface-tone-contrast));
+    filter: hue-rotate(12deg) saturate(0.98) brightness(0.91) contrast(var(--surface-tone-contrast));
   }
 }
 
@@ -355,7 +356,14 @@
 }
 
 @media (max-width: 768px) {
-  :root,
+  :root {
+    --surface-flow-opacity-a: 0.74;
+    --surface-flow-opacity-b: 0.58;
+    --surface-flow-drift-x: 140px;
+    --surface-flow-drift-y: 98px;
+    --surface-flow-scale: 1.1;
+  }
+
   .dark {
     --surface-flow-opacity-a: 0.68;
     --surface-flow-opacity-b: 0.56;
@@ -371,7 +379,7 @@
   }
 
   .app-surface-flow {
-    animation-duration: 180s, 260s;
+    animation-duration: 180s, 280s;
     animation-timing-function: linear, linear;
   }
 
@@ -395,4 +403,19 @@
   .header-nav-link:focus-visible .header-nav-icon {
     transform: none;
   }
+}
+
+html[data-runtime="tauri"] {
+  --surface-flow-global-speed: 24s;
+  --surface-flow-speed-a: 6.2s;
+  --surface-flow-speed-b: 8.2s;
+  --surface-flow-opacity-a: 0.76;
+  --surface-flow-opacity-b: 0.62;
+  --surface-tone-speed: 42s;
+  --surface-tone-contrast: 1.03;
+}
+
+html[data-runtime="tauri"] .app-surface-flow::before,
+html[data-runtime="tauri"] .app-surface-flow::after {
+  filter: blur(14px) saturate(112%);
 }

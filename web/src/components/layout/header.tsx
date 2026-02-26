@@ -1,7 +1,6 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { LayoutGroup, motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -14,12 +13,6 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
 
 const NAV_HOVER_MS = 180;
-const NAV_PILL_TRANSITION = {
-  duration: 0.22,
-  type: "spring" as const,
-  stiffness: 420,
-  damping: 34,
-};
 const NAV_HOVER_STYLE = { "--nav-hover-ms": `${NAV_HOVER_MS}ms` } as CSSProperties;
 
 export function Header() {
@@ -62,62 +55,52 @@ export function Header() {
           />
           <span className="sr-only">{t("app.name")}</span>
         </Link>
-        <LayoutGroup id="header-nav">
-          <nav className="flex items-center gap-1">
-            {navItems.map((item) => {
-              const active = item.match(pathname);
-              return (
-                <Button
-                  key={item.href}
-                  asChild
-                  variant="ghost"
-                  size="sm"
-                  style={NAV_HOVER_STYLE}
-                  className={cn(
-                    "group/nav header-nav-link relative overflow-hidden gap-1.5",
-                    "hover:text-foreground",
-                    active ? "text-foreground ring-1 ring-border/60" : "text-muted-foreground",
-                  )}
+        <nav className="flex items-center gap-1">
+          {navItems.map((item) => {
+            const active = item.match(pathname);
+            return (
+              <Button
+                key={item.href}
+                asChild
+                variant="ghost"
+                size="sm"
+                style={NAV_HOVER_STYLE}
+                className={cn(
+                  "group/nav header-nav-link relative overflow-hidden gap-1.5",
+                  "hover:text-foreground",
+                  active ? "text-foreground ring-1 ring-border/60" : "text-muted-foreground",
+                )}
+              >
+                <Link
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  data-active={active ? "true" : undefined}
                 >
-                  <Link
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    data-active={active ? "true" : undefined}
-                  >
-                    {active &&
-                      (reducedMotion ? (
-                        <span
-                          aria-hidden="true"
-                          className="absolute inset-0 rounded-md bg-secondary/95 ring-1 ring-border/60"
-                        />
-                      ) : (
-                        <motion.span
-                          aria-hidden="true"
-                          layoutId="header-active-pill"
-                          className="absolute inset-0 rounded-md bg-secondary/95 ring-1 ring-border/60"
-                          transition={NAV_PILL_TRANSITION}
-                        />
-                      ))}
+                  {active && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute inset-0 rounded-md bg-secondary/95 ring-1 ring-border/60"
+                    />
+                  )}
 
-                    <span className="relative z-10 inline-flex items-center gap-1.5">
-                      <item.icon
-                        className={cn("header-nav-icon h-4 w-4", reducedMotion && "transform-none")}
-                      />
-                      <span
-                        className={cn(
-                          "header-nav-label",
-                          !active && "group-hover/nav:text-foreground",
-                        )}
-                      >
-                        {item.label}
-                      </span>
+                  <span className="relative z-10 inline-flex items-center gap-1.5">
+                    <item.icon
+                      className={cn("header-nav-icon h-4 w-4", reducedMotion && "transform-none")}
+                    />
+                    <span
+                      className={cn(
+                        "header-nav-label",
+                        !active && "group-hover/nav:text-foreground",
+                      )}
+                    >
+                      {item.label}
                     </span>
-                  </Link>
-                </Button>
-              );
-            })}
-          </nav>
-        </LayoutGroup>
+                  </span>
+                </Link>
+              </Button>
+            );
+          })}
+        </nav>
         <div className="ml-auto flex items-center gap-1">
           <LanguageToggle />
           <ThemeToggle />

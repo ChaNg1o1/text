@@ -7,6 +7,7 @@ export type AnalysisPhase =
   | "agent_analysis"
   | "synthesis"
   | "completed"
+  | "canceled"
   | "failed";
 
 export interface AgentProgress {
@@ -121,6 +122,10 @@ export const useAnalysisStore = create<AnalysisStore>((set, get) => ({
         case "analysis_completed":
           next.phase = "completed";
           next.durationSeconds = data.duration_seconds as number;
+          break;
+        case "analysis_cancelled":
+          next.phase = "canceled";
+          next.error = (data.reason as string) ?? "Canceled by user";
           break;
         case "analysis_failed":
           next.phase = "failed";

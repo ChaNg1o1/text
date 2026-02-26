@@ -60,6 +60,14 @@ class AnalysisRunner:
     def __init__(self, store: AnalysisStore) -> None:
         self._store = store
 
+    async def _is_canceled(self, analysis_id: str) -> bool:
+        detail = await self._store.get(analysis_id)
+        return detail is not None and detail.status == AnalysisStatus.CANCELED
+
+    async def _raise_if_canceled(self, analysis_id: str) -> None:
+        if await self._is_canceled(analysis_id):
+            raise asyncio.CancelledError("analysis canceled by user")
+
     async def run(self, analysis_id: str, request: AnalysisRequest) -> None:
         pm = progress_manager
         t0 = time.perf_counter()
@@ -70,7 +78,17 @@ class AnalysisRunner:
         semaphore = _get_analysis_semaphore()
         async with semaphore:
             try:
-                await self._store.update_status(analysis_id, AnalysisStatus.RUNNING)
+                if await self._is_canceled(analysis_id):
+                    return
+
+                started = await self._store.update_status(
+                    analysis_id,
+                    AnalysisStatus.RUNNING,
+                    only_if_current={AnalysisStatus.PENDING},
+                )
+                if not started:
+                    return
+
                 pm.emit(
                     analysis_id,
                     "analysis_started",
@@ -102,6 +120,7 @@ class AnalysisRunner:
                 feature_extraction_ms = (time.perf_counter() - features_started) * 1000.0
                 perf_summary["feature_extraction_ms"] = feature_extraction_ms
                 perf_summary.update(feature_perf)
+                await self._raise_if_canceled(analysis_id)
                 _emit_log(
                     analysis_id,
                     f"Feature extraction completed ({len(features)}/{text_count}).",
@@ -113,6 +132,7 @@ class AnalysisRunner:
                 _emit_log(analysis_id, "Agent analysis started.", source="agents")
                 report, agent_perf = await self._run_agents(analysis_id, features, request)
                 perf_summary.update(agent_perf)
+                await self._raise_if_canceled(analysis_id)
 
                 # ----- Persist results -----
                 total_ms = (time.perf_counter() - t0) * 1000.0
@@ -122,12 +142,15 @@ class AnalysisRunner:
                     if key in perf_summary:
                         perf_summary[key] = int(round(float(perf_summary[key])))
 
-                await self._store.update_status(
+                completed = await self._store.update_status(
                     analysis_id,
                     AnalysisStatus.COMPLETED,
                     report_json=report.model_dump_json(),
                     perf_json=json.dumps(perf_summary),
+                    only_if_current={AnalysisStatus.RUNNING},
                 )
+                if not completed:
+                    return
 
                 findings_total = sum(len(agent.findings) for agent in report.agent_reports)
                 _emit_log(
@@ -162,20 +185,37 @@ class AnalysisRunner:
                         "status": "completed",
                     },
                 )
+            except asyncio.CancelledError:
+                updated = await self._store.update_status(
+                    analysis_id,
+                    AnalysisStatus.CANCELED,
+                    error_message="Canceled by user",
+                    perf_json=json.dumps(perf_summary) if perf_summary else None,
+                    only_if_current={AnalysisStatus.PENDING, AnalysisStatus.RUNNING},
+                )
+                if updated:
+                    _emit_log(analysis_id, "Analysis canceled by user.", level="warning")
+                    pm.emit(
+                        analysis_id,
+                        "analysis_cancelled",
+                        {"analysis_id": analysis_id, "reason": "canceled_by_user"},
+                    )
             except Exception as exc:
                 logger.exception("Analysis %s failed", analysis_id)
                 _emit_log(analysis_id, f"Analysis failed: {exc}", level="error")
-                await self._store.update_status(
+                failed = await self._store.update_status(
                     analysis_id,
                     AnalysisStatus.FAILED,
                     error_message=str(exc),
                     perf_json=json.dumps(perf_summary) if perf_summary else None,
+                    only_if_current={AnalysisStatus.PENDING, AnalysisStatus.RUNNING},
                 )
-                pm.emit(
-                    analysis_id,
-                    "analysis_failed",
-                    {"analysis_id": analysis_id, "error": str(exc), "phase": "unknown"},
-                )
+                if failed:
+                    pm.emit(
+                        analysis_id,
+                        "analysis_failed",
+                        {"analysis_id": analysis_id, "error": str(exc), "phase": "unknown"},
+                    )
             finally:
                 pm.complete(analysis_id)
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { ArrowLeft, Loader2, BarChart3, Link2Off } from "lucide-react";
 import { api } from "@/lib/api-client";
@@ -76,17 +77,20 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
-export default function FeaturesPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
+function FeaturesPageContent() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id") ?? "";
   const { t } = useI18n();
   const { data: analysis } = useAnalysis(id);
   const { data: featuresData, isLoading } = useSWR<FeaturesResponse>(
     analysis?.status === "completed" ? `/analyses/${id}/features` : null,
     () => api.getFeatures(id),
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+      dedupingInterval: 4000,
+    },
   );
 
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
@@ -199,11 +203,25 @@ export default function FeaturesPage({
     );
   }
 
+  if (!id) {
+    return (
+      <div className="space-y-4">
+        <Button asChild variant="ghost" size="sm">
+          <Link href="/analyses">
+            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            {t("features.backToAnalysis")}
+          </Link>
+        </Button>
+        <p className="text-muted-foreground">{t("features.unavailable")}</p>
+      </div>
+    );
+  }
+
   if (!analysis || analysis.status !== "completed") {
     return (
       <div className="space-y-4">
         <Button asChild variant="ghost" size="sm">
-          <Link href={`/analyses/${id}`}>
+          <Link href={`/analyses/detail?id=${encodeURIComponent(id)}`}>
             <ArrowLeft className="mr-1.5 h-4 w-4" />
             {t("features.backToAnalysis")}
           </Link>
@@ -219,7 +237,7 @@ export default function FeaturesPage({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Button asChild variant="ghost" size="sm">
-              <Link href={`/analyses/${id}`}>
+              <Link href={`/analyses/detail?id=${encodeURIComponent(id)}`}>
                 <ArrowLeft className="mr-1.5 h-4 w-4" />
                 {t("common.back")}
               </Link>
@@ -399,5 +417,19 @@ export default function FeaturesPage({
         </div>
       )}
     </StaggerContainer>
+  );
+}
+
+export default function FeaturesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <FeaturesPageContent />
+    </Suspense>
   );
 }

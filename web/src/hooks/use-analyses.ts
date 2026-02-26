@@ -20,5 +20,12 @@ export function useAnalyses(params: UseAnalysesParams = {}) {
       task_type: params.taskType,
       search: params.search,
     }),
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+      keepPreviousData: true,
+      dedupingInterval: 4000,
+    },
   );
 }

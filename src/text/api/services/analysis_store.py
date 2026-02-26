@@ -193,7 +193,8 @@ class AnalysisStore:
         features_json: str | None = None,
         perf_json: str | None = None,
         error_message: str | None = None,
-    ) -> None:
+        only_if_current: set[AnalysisStatus] | None = None,
+    ) -> bool:
         """Update status and optionally attach report/features/error."""
         db = await self._ensure_db()
         sets = ["status = ?"]
@@ -211,13 +212,20 @@ class AnalysisStore:
         if error_message is not None:
             sets.append("error_message = ?")
             params.append(error_message)
-        if status in (AnalysisStatus.COMPLETED, AnalysisStatus.FAILED):
+        if status in (AnalysisStatus.COMPLETED, AnalysisStatus.FAILED, AnalysisStatus.CANCELED):
             sets.append("completed_at = ?")
             params.append(time.time())
 
+        where = "id = ?"
         params.append(analysis_id)
-        await db.execute(f"UPDATE analyses SET {', '.join(sets)} WHERE id = ?", params)
+        if only_if_current:
+            placeholders = ", ".join("?" for _ in only_if_current)
+            where += f" AND status IN ({placeholders})"
+            params.extend(state.value for state in sorted(only_if_current, key=lambda item: item.value))
+
+        cursor = await db.execute(f"UPDATE analyses SET {', '.join(sets)} WHERE {where}", params)
         await db.commit()
+        return cursor.rowcount > 0
 
     async def delete(self, analysis_id: str) -> bool:
         """Delete an analysis. Returns True if a row was deleted."""

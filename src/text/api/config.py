@@ -14,7 +14,12 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = 8000
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "tauri://localhost",
+        "http://tauri.localhost",
+    ]
     db_dir: Path = Path.home() / ".cache" / "text"
     backends_config: Path = Path.home() / ".config" / "text" / "backends.json"
     preload_embedding: bool = True

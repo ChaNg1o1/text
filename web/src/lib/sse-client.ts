@@ -19,6 +19,7 @@ export function createSSEClient(
     "synthesis_started",
     "synthesis_completed",
     "analysis_completed",
+    "analysis_cancelled",
     "analysis_failed",
     "log",
     "heartbeat",

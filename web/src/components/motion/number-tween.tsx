@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { animate } from "framer-motion";
 import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
 
 interface NumberTweenProps {
@@ -24,14 +23,34 @@ export function NumberTween({
   const [display, setDisplay] = useState(value);
 
   useEffect(() => {
-    const controls = animate(previous.current, value, {
-      duration: reducedMotion ? 0 : duration,
-      ease: "easeOut",
-      onUpdate: (latest) => setDisplay(latest),
-    });
+    if (reducedMotion || duration <= 0) {
+      previous.current = value;
+      const immediateFrame = window.requestAnimationFrame(() => setDisplay(value));
+      return () => window.cancelAnimationFrame(immediateFrame);
+    }
 
-    previous.current = value;
-    return () => controls.stop();
+    const start = performance.now();
+    const from = previous.current;
+    const delta = value - from;
+    const totalMs = duration * 1000;
+    let frameId = 0;
+
+    const step = (now: number) => {
+      const elapsed = now - start;
+      const raw = Math.min(elapsed / totalMs, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - raw, 3);
+      setDisplay(from + delta * eased);
+
+      if (raw < 1) {
+        frameId = window.requestAnimationFrame(step);
+      } else {
+        previous.current = value;
+      }
+    };
+
+    frameId = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frameId);
   }, [value, duration, reducedMotion]);
 
   return <span className={className}>{display.toFixed(decimals)}{suffix}</span>;

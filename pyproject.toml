@@ -24,7 +24,7 @@ dev = [
     "ruff>=0.9",
     "httpx>=0.28",
 ]
-web = [
+desktop = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "python-multipart>=0.0.18",

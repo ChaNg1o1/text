@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FilterX,
   Search,
+  Square,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAnalyses } from "@/hooks/use-analyses";
@@ -49,6 +50,7 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
   running: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
   completed: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+  canceled: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
   failed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
 };
 
@@ -109,10 +111,12 @@ export default function AnalysesPage() {
   const [taskFilter, setTaskFilter] = useState<string>("");
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const hasActiveFilters = Boolean(search || statusFilter || taskFilter);
 
-  const { data, isLoading, mutate } = useAnalyses({
+  const { data, isLoading, error, mutate } = useAnalyses({
     page,
     pageSize: 20,
     status: statusFilter || undefined,
@@ -132,6 +136,21 @@ export default function AnalysesPage() {
     } finally {
       setIsDeleting(false);
       setDeleteTarget(null);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!cancelTarget) return;
+    setIsCancelling(true);
+    try {
+      await api.cancelAnalysis(cancelTarget);
+      toast.success(t("analysis.cancelled"));
+      await mutate();
+    } catch {
+      toast.error(t("analysis.cancelFailed"));
+    } finally {
+      setIsCancelling(false);
+      setCancelTarget(null);
     }
   };
 
@@ -189,6 +208,7 @@ export default function AnalysesPage() {
                   <SelectItem value="pending">{t("status.pending")}</SelectItem>
                   <SelectItem value="running">{t("status.running")}</SelectItem>
                   <SelectItem value="completed">{t("status.completed")}</SelectItem>
+                  <SelectItem value="canceled">{t("status.canceled")}</SelectItem>
                   <SelectItem value="failed">{t("status.failed")}</SelectItem>
                 </SelectContent>
               </Select>
@@ -222,6 +242,17 @@ export default function AnalysesPage() {
       <StaggerItem>
         {isLoading ? (
           <HistorySkeleton />
+        ) : error ? (
+          <Card>
+            <CardContent className="pt-10 pb-10 text-center">
+              <p className="text-sm text-muted-foreground">
+                {t("settings.backends.loadFailed")}
+              </p>
+              <Button className="mt-4" variant="outline" size="sm" onClick={() => void mutate()}>
+                {t("detail.retryRefresh")}
+              </Button>
+            </CardContent>
+          </Card>
         ) : data?.items.length === 0 ? (
           <FadeIn>
             <Card>
@@ -247,14 +278,17 @@ export default function AnalysesPage() {
                       <TableHead>{t("analysis.table.backend")}</TableHead>
                       <TableHead>{t("analysis.table.created")}</TableHead>
                       <TableHead>{t("analysis.table.duration")}</TableHead>
-                      <TableHead className="w-20">{t("analysis.table.actions")}</TableHead>
+                      <TableHead className="w-28">{t("analysis.table.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {data?.items.map((item) => (
                       <TableRow key={item.id}>
                         <TableCell>
-                          <Link href={`/analyses/${item.id}`} className="font-mono text-sm hover:underline">
+                          <Link
+                            href={`/analyses/detail?id=${encodeURIComponent(item.id)}`}
+                            className="font-mono text-sm hover:underline"
+                          >
                             {item.id}
                           </Link>
                         </TableCell>
@@ -283,10 +317,24 @@ export default function AnalysesPage() {
                         <TableCell>
                           <div className="flex gap-1">
                             <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-                              <Link href={`/analyses/${item.id}`} aria-label={t("analysis.open") + item.id}>
+                              <Link
+                                href={`/analyses/detail?id=${encodeURIComponent(item.id)}`}
+                                aria-label={t("analysis.open") + item.id}
+                              >
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </Link>
                             </Button>
+                            {(item.status === "pending" || item.status === "running") && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-amber-600"
+                                onClick={() => setCancelTarget(item.id)}
+                                aria-label={t("analysis.cancelTitle") + item.id}
+                              >
+                                <Square className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -345,6 +393,26 @@ export default function AnalysesPage() {
             <Button variant="destructive" onClick={handleDelete} disabled={isDeleting}>
               {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t("common.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!cancelTarget} onOpenChange={() => setCancelTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("analysis.cancelTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("analysis.cancelConfirm", { id: cancelTarget ?? "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelTarget(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="destructive" onClick={handleCancel} disabled={isCancelling}>
+              {isCancelling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t("analysis.cancelTitle")}
             </Button>
           </DialogFooter>
         </DialogContent>
