@@ -24,6 +24,9 @@ Cargo.lock
 *.sqlite
 *.parquet
 features.json
+artifacts/
+artifacs/
+artifact/
 
 # Config with secrets
 backends.json
