@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS analyses (
 );
 """
 
+_SUMMARY_COLUMNS_SQL = (
+    "id, status, task_type, llm_backend, text_count, author_count, "
+    "created_at, completed_at, error_message"
+)
+
 
 class AnalysisStore:
     """Async SQLite store for analysis records, following the FeatureCache pattern."""
@@ -55,7 +60,9 @@ class AnalysisStore:
             self._db.row_factory = aiosqlite.Row
             await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
-            await self._ensure_column(self._db, table="analyses", column="perf_json", col_type="TEXT")
+            await self._ensure_column(
+                self._db, table="analyses", column="perf_json", col_type="TEXT"
+            )
             await self._db.commit()
         return self._db
 
@@ -127,7 +134,9 @@ class AnalysisStore:
     async def get_request(self, analysis_id: str) -> AnalysisRequest | None:
         """Fetch and parse the original AnalysisRequest for an analysis ID."""
         db = await self._ensure_db()
-        async with db.execute("SELECT request_json FROM analyses WHERE id = ?", (analysis_id,)) as cur:
+        async with db.execute(
+            "SELECT request_json FROM analyses WHERE id = ?", (analysis_id,)
+        ) as cur:
             row = await cur.fetchone()
         if row is None or not row["request_json"]:
             return None
@@ -170,7 +179,7 @@ class AnalysisStore:
         # Paginated results
         offset = (page - 1) * page_size
         query = f"""
-            SELECT * FROM analyses {where}
+            SELECT {_SUMMARY_COLUMNS_SQL} FROM analyses {where}
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
         """
@@ -221,7 +230,9 @@ class AnalysisStore:
         if only_if_current:
             placeholders = ", ".join("?" for _ in only_if_current)
             where += f" AND status IN ({placeholders})"
-            params.extend(state.value for state in sorted(only_if_current, key=lambda item: item.value))
+            params.extend(
+                state.value for state in sorted(only_if_current, key=lambda item: item.value)
+            )
 
         cursor = await db.execute(f"UPDATE analyses SET {', '.join(sets)} WHERE {where}", params)
         await db.commit()
