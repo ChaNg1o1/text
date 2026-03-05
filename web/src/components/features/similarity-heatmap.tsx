@@ -20,18 +20,34 @@ interface SimilarityHeatmapProps {
   }) => void;
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
+interface NormalizedEmbedding {
+  vector: number[] | null;
+  length: number;
+}
+
+function normalizeEmbedding(embedding: number[]): NormalizedEmbedding {
+  if (embedding.length === 0) return { vector: null, length: 0 };
+  let sumSquares = 0;
+  for (let i = 0; i < embedding.length; i++) {
+    sumSquares += embedding[i] * embedding[i];
   }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
+  const magnitude = Math.sqrt(sumSquares);
+  if (magnitude === 0) return { vector: null, length: embedding.length };
+
+  const vector = new Array<number>(embedding.length);
+  for (let i = 0; i < embedding.length; i++) {
+    vector[i] = embedding[i] / magnitude;
+  }
+  return { vector, length: embedding.length };
+}
+
+function cosineSimilarityNormalized(a: NormalizedEmbedding, b: NormalizedEmbedding): number {
+  if (a.length === 0 || a.length !== b.length || a.vector === null || b.vector === null) return 0;
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a.vector[i] * b.vector[i];
+  }
+  return dot;
 }
 
 function heatColor(value: number): string {
@@ -50,19 +66,26 @@ export function SimilarityHeatmap({
   onSelectPair,
 }: SimilarityHeatmapProps) {
   const { t } = useI18n();
+  const selectedAuthorSet = useMemo(
+    () => (selectedAuthors.length === 0 ? null : new Set(selectedAuthors)),
+    [selectedAuthors],
+  );
   const filtered = useMemo(() => {
-    if (selectedAuthors.length === 0) return features;
-    return features.filter((fv) => selectedAuthors.includes(authorMap[fv.text_id] ?? "unknown"));
-  }, [features, authorMap, selectedAuthors]);
+    if (selectedAuthorSet === null) return features;
+    return features.filter((fv) => selectedAuthorSet.has(authorMap[fv.text_id] ?? "unknown"));
+  }, [features, authorMap, selectedAuthorSet]);
 
   const matrix = useMemo(() => {
     const n = Math.min(filtered.length, 50);
     const items = filtered.slice(0, n);
-    const result: number[][] = [];
+    const normalizedEmbeddings = items.map((item) => normalizeEmbedding(item.nlp_features.embedding));
+    const result: number[][] = Array.from({ length: n }, () => Array(n).fill(0));
     for (let i = 0; i < n; i++) {
-      result[i] = [];
-      for (let j = 0; j < n; j++) {
-        result[i][j] = cosineSimilarity(items[i].nlp_features.embedding, items[j].nlp_features.embedding);
+      result[i][i] = normalizedEmbeddings[i].vector === null ? 0 : 1;
+      for (let j = i + 1; j < n; j++) {
+        const score = cosineSimilarityNormalized(normalizedEmbeddings[i], normalizedEmbeddings[j]);
+        result[i][j] = score;
+        result[j][i] = score;
       }
     }
     return { items, matrix: result };
