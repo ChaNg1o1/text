@@ -11,6 +11,8 @@ from text.ingest.schema import (
     AgentReport,
     AnalysisRequest,
     ForensicReport,
+    PersonaDimension,
+    PersonaProfile,
 )
 
 from .stylometry import _call_llm
@@ -76,6 +78,15 @@ def _repair_truncated_json_object(text: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         pass
     return None
+
+
+def _clamp_float(value: Any, low: float, high: float, default: float) -> float:
+    """Best-effort float coercion with clamping."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return min(high, max(low, v))
 
 class SynthesisAgent:
     """Integrates multi-disciplinary findings into a coherent forensic report."""
@@ -144,6 +155,17 @@ Provide your synthesis as a JSON object with the following fields:
 - "confidence_scores": object -- { "conclusion_name": float } for each major conclusion
 - "contradictions": array of strings -- each describing a specific inter-agent disagreement
 - "recommendations": array of strings -- actionable next steps for the investigator
+- "persona_profiles": array of profile objects (can be empty for non-profiling tasks), each with:
+  - "subject": string -- who the profile is about (e.g., "overall", author ID/name, or a group)
+  - "summary": string -- concise profile summary
+  - "overall_confidence": float (0.0-1.0)
+  - "dimensions": array of dimension objects, each with:
+    - "key": string (stable identifier, e.g. "communication_style")
+    - "label": string (human-readable title)
+    - "score": float (0-100)
+    - "confidence": float (0.0-1.0)
+    - "evidence_spans": array of strings (evidence excerpts or feature references)
+    - "counter_evidence": array of strings (opposing/uncertain signals)
 - "findings": array of finding objects, each with:
   - "category": one of "attribution", "profiling", "sockpuppet", "methodology", "limitation"
   - "description": string
@@ -325,6 +347,50 @@ should be in Chinese.
         contradictions = _coerce_to_strings(data.get("contradictions", []))
         recommendations = _coerce_to_strings(data.get("recommendations", []))
 
+        # Parse structured persona profiles if present.
+        persona_profiles: list[PersonaProfile] = []
+        raw_profiles = data.get("persona_profiles", [])
+        if isinstance(raw_profiles, list):
+            for profile in raw_profiles:
+                if not isinstance(profile, dict):
+                    continue
+                subject = str(profile.get("subject", "")).strip() or "overall"
+                summary_text = str(profile.get("summary", "")).strip()
+                overall_conf_raw = profile.get("overall_confidence", None)
+                overall_conf = None
+                if overall_conf_raw is not None:
+                    overall_conf = _clamp_float(overall_conf_raw, 0.0, 1.0, 0.5)
+
+                dimensions: list[PersonaDimension] = []
+                raw_dimensions = profile.get("dimensions", [])
+                if isinstance(raw_dimensions, list):
+                    for dim in raw_dimensions:
+                        if not isinstance(dim, dict):
+                            continue
+                        key = str(dim.get("key", "")).strip() or "unknown"
+                        label = str(dim.get("label", "")).strip() or key
+                        dimensions.append(
+                            PersonaDimension(
+                                key=key,
+                                label=label,
+                                score=_clamp_float(dim.get("score"), 0.0, 100.0, 50.0),
+                                confidence=_clamp_float(dim.get("confidence"), 0.0, 1.0, 0.5),
+                                evidence_spans=_coerce_to_strings(dim.get("evidence_spans", [])),
+                                counter_evidence=_coerce_to_strings(
+                                    dim.get("counter_evidence", [])
+                                ),
+                            )
+                        )
+
+                persona_profiles.append(
+                    PersonaProfile(
+                        subject=subject,
+                        summary=summary_text,
+                        dimensions=dimensions,
+                        overall_confidence=overall_conf,
+                    )
+                )
+
         # Parse nested findings if present.
         synthesis_findings: list[AgentFinding] = []
         for item in data.get("findings", []):
@@ -359,4 +425,5 @@ should be in Chinese.
             confidence_scores=confidence_scores,
             contradictions=contradictions,
             recommendations=recommendations,
+            persona_profiles=persona_profiles,
         )

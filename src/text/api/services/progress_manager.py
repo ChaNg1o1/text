@@ -33,13 +33,21 @@ class SSEEvent:
 class ProgressManager:
     """Fan-out event bus backed by asyncio.Queue per subscriber."""
 
-    def __init__(self, history_size: int = 512, queue_size: int = 512) -> None:
+    def __init__(
+        self,
+        history_size: int = 512,
+        queue_size: int = 512,
+        drop_log_every: int = 100,
+    ) -> None:
         # analysis_id -> list of subscriber queues
         self._subscribers: dict[str, list[asyncio.Queue[SSEEvent | None]]] = {}
         # analysis_id -> recent event history (for late subscribers)
         self._history: dict[str, deque[SSEEvent]] = {}
+        # analysis_id -> dropped event count (queue full)
+        self._dropped_events: dict[str, int] = {}
         self._history_size = max(1, history_size)
         self._queue_size = max(1, queue_size)
+        self._drop_log_every = max(1, drop_log_every)
         self._lock = Lock()
 
     def emit(self, analysis_id: str, event: str, data: dict[str, Any] | None = None) -> None:
@@ -53,11 +61,23 @@ class ProgressManager:
             history.append(sse)
             subscribers = list(self._subscribers.get(analysis_id, []))
 
+        dropped = 0
         for queue in subscribers:
             try:
                 queue.put_nowait(sse)
             except asyncio.QueueFull:
-                logger.warning("Dropping SSE event for analysis %s (queue full)", analysis_id)
+                dropped += 1
+
+        if dropped > 0:
+            with self._lock:
+                dropped_total = self._dropped_events.get(analysis_id, 0) + dropped
+                self._dropped_events[analysis_id] = dropped_total
+            if dropped_total == 1 or dropped_total % self._drop_log_every == 0:
+                logger.warning(
+                    "Dropping SSE events for analysis %s (queue full, dropped_total=%d)",
+                    analysis_id,
+                    dropped_total,
+                )
 
     async def subscribe(
         self,
@@ -69,15 +89,20 @@ class ProgressManager:
         queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue(maxsize=self._queue_size)
         with self._lock:
             self._subscribers.setdefault(analysis_id, []).append(queue)
-            for event in self._history.get(analysis_id, ()):
-                try:
-                    queue.put_nowait(event)
-                except asyncio.QueueFull:
-                    logger.warning(
-                        "Replay queue full for analysis %s; dropping oldest replay events",
-                        analysis_id,
-                    )
-                    break
+            history = self._history.get(analysis_id, ())
+            if len(history) > self._queue_size:
+                logger.warning(
+                    "Replay history exceeds queue size for analysis %s; "
+                    "replaying only the latest %d events",
+                    analysis_id,
+                    self._queue_size,
+                )
+                replay_events = list(history)[-self._queue_size :]
+            else:
+                replay_events = list(history)
+
+            for event in replay_events:
+                queue.put_nowait(event)
         try:
             while True:
                 try:
@@ -106,12 +131,19 @@ class ProgressManager:
             subscribers = list(self._subscribers.get(analysis_id, []))
             self._subscribers.pop(analysis_id, None)
             self._history.pop(analysis_id, None)
+            self._dropped_events.pop(analysis_id, None)
 
         for queue in subscribers:
-            try:
-                queue.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
+            # Ensure end-of-stream is delivered even when the queue is full.
+            while True:
+                try:
+                    queue.put_nowait(None)
+                    break
+                except asyncio.QueueFull:
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
 
 
 # Module-level singleton

@@ -351,6 +351,7 @@ class LLMBackend:
                 litellm.ServiceUnavailableError,
                 litellm.Timeout,
                 litellm.InternalServerError,
+                litellm.APIConnectionError,
             ) as exc:
                 last_exc = exc
                 if attempt < self._MAX_RETRIES:
@@ -377,8 +378,11 @@ class LLMBackend:
                 ) from exc
 
         # All retries exhausted.
+        if last_exc is None:
+            raise RuntimeError(f"LLM request failed after {self._MAX_RETRIES} retries")
         raise RuntimeError(
-            f"LLM request failed after {self._MAX_RETRIES} retries"
+            f"LLM request failed after {self._MAX_RETRIES} retries: "
+            f"{type(last_exc).__name__}: {last_exc}"
         ) from last_exc
 
     def _record_usage(self, response: litellm.ModelResponse) -> None:

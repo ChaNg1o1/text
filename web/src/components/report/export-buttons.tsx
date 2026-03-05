@@ -72,7 +72,7 @@ function reportToMarkdown(report: ForensicReport): string {
 export function ExportButtons({ report, analysisId }: ExportButtonsProps) {
   const { t } = useI18n();
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
       <Button
         variant="outline"
         size="sm"

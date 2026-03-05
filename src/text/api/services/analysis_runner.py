@@ -146,6 +146,7 @@ class AnalysisRunner:
                     analysis_id,
                     AnalysisStatus.COMPLETED,
                     report_json=report.model_dump_json(),
+                    features_json=await self._serialize_features(features),
                     perf_json=json.dumps(perf_summary),
                     only_if_current={AnalysisStatus.RUNNING},
                 )
@@ -258,6 +259,20 @@ class AnalysisRunner:
             await cache.close()
 
         return features, extractor.last_perf
+
+    @staticmethod
+    async def _serialize_features(features: list[FeatureVector]) -> str | None:
+        """Serialize feature vectors in a worker thread to avoid blocking the event loop."""
+        if not features:
+            return None
+
+        try:
+            return await asyncio.to_thread(
+                lambda: json.dumps([fv.model_dump() for fv in features], ensure_ascii=False)
+            )
+        except Exception:
+            logger.warning("Failed to serialize features for persistence", exc_info=True)
+            return None
 
     async def _run_agents(
         self,

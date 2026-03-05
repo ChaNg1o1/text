@@ -82,7 +82,7 @@ function FeaturesPageContent() {
   const id = searchParams.get("id") ?? "";
   const { t } = useI18n();
   const { data: analysis } = useAnalysis(id);
-  const { data: featuresData, isLoading } = useSWR<FeaturesResponse>(
+  const { data: featuresData, isLoading, error, mutate } = useSWR<FeaturesResponse>(
     analysis?.status === "completed" ? `/analyses/${id}/features` : null,
     () => api.getFeatures(id),
     {
@@ -227,6 +227,25 @@ function FeaturesPageContent() {
           </Link>
         </Button>
         <p className="text-muted-foreground">{t("features.unavailable")}</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    const message = error instanceof Error ? error.message : t("features.loadFailed");
+    return (
+      <div className="space-y-4">
+        <Button asChild variant="ghost" size="sm">
+          <Link href={`/analyses/detail?id=${encodeURIComponent(id)}`}>
+            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            {t("features.backToAnalysis")}
+          </Link>
+        </Button>
+        <p className="text-muted-foreground">{t("features.loadFailed")}</p>
+        <p className="text-xs text-muted-foreground">{message}</p>
+        <Button variant="outline" size="sm" onClick={() => void mutate()}>
+          {t("common.refresh")}
+        </Button>
       </div>
     );
   }

@@ -7,15 +7,17 @@ import { AlertTriangle, Lightbulb } from "lucide-react";
 import Markdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { cn } from "@/lib/utils";
 
 interface SynthesisPanelProps {
   report: ForensicReport;
+  className?: string;
 }
 
-export function SynthesisPanel({ report }: SynthesisPanelProps) {
+export function SynthesisPanel({ report, className }: SynthesisPanelProps) {
   const { t } = useI18n();
   return (
-    <Card>
+    <Card className={cn("h-full", className)}>
       <CardHeader>
         <CardTitle className="text-lg">{t("report.synthesis")}</CardTitle>
       </CardHeader>

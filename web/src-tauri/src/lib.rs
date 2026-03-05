@@ -56,6 +56,16 @@ fn backend_binary_filename() -> &'static str {
 
 fn resolve_backend_binary<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PathBuf, String> {
     let filename = backend_binary_filename();
+    let dev_candidate = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("bin")
+        .join(filename);
+
+    // In `tauri dev`, prefer the workspace copy over any `target/debug/bin` copy.
+    // This avoids stale/corrupted debug artifacts and keeps sidecar behavior
+    // aligned with the latest rebuilt binary.
+    if cfg!(debug_assertions) && dev_candidate.exists() {
+        return Ok(dev_candidate);
+    }
 
     let resource_candidate = app
         .path()
@@ -67,9 +77,6 @@ fn resolve_backend_binary<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Resul
         return Ok(resource_candidate);
     }
 
-    let dev_candidate = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("bin")
-        .join(filename);
     if dev_candidate.exists() {
         return Ok(dev_candidate);
     }
@@ -113,7 +120,17 @@ fn wait_until_ready(child: &mut Child, port: u16) -> Result<(), String> {
 
     loop {
         if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!("Embedded backend exited early: {status}"));
+            let mut detail = format!("Embedded backend exited early: {status}");
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                if status.signal() == Some(9) {
+                    detail.push_str(
+                        " (SIGKILL). On macOS this usually indicates AMFI rejected the sidecar code signature.",
+                    );
+                }
+            }
+            return Err(detail);
         }
 
         if health_check(port) {
@@ -130,23 +147,209 @@ fn wait_until_ready(child: &mut Child, port: u16) -> Result<(), String> {
     }
 }
 
-fn spawn_backend<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<BackendRuntime, String> {
-    let port = find_free_port()?;
-    let backend_binary = resolve_backend_binary(app)?;
-    let api_origin = format!("http://127.0.0.1:{port}");
+fn sidecar_debug_enabled() -> bool {
+    std::env::var("TEXT_TAURI_DEBUG_SIDECAR")
+        .map(|raw| {
+            let value = raw.trim().to_ascii_lowercase();
+            !(value.is_empty() || value == "0" || value == "false" || value == "off")
+        })
+        .unwrap_or(false)
+}
 
-    let mut command = Command::new(&backend_binary);
+fn dev_backend_mode() -> String {
+    std::env::var("TEXT_TAURI_DEV_BACKEND")
+        .unwrap_or_else(|_| "auto".to_string())
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn repo_root_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+}
+
+fn apply_backend_process_env(command: &mut Command, port: u16, debug_sidecar: bool) {
+    let log_level = if debug_sidecar { "debug" } else { "warning" };
+    let access_log = if debug_sidecar { "1" } else { "0" };
     command
         .env("TEXT_HOST", "127.0.0.1")
         .env("TEXT_PORT", port.to_string())
         .env("TEXT_PRELOAD_EMBEDDING", "false")
-        .env("TEXT_API_LOG_LEVEL", "warning")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .env("TEXT_API_LOG_LEVEL", log_level)
+        .env("TEXT_API_ACCESS_LOG", access_log);
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Failed to start embedded backend '{}': {e}", backend_binary.display()))?;
+    if debug_sidecar {
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dev_venv_python(repo_root: &Path) -> PathBuf {
+    repo_root.join(".venv").join("bin").join("python")
+}
+
+#[cfg(target_os = "windows")]
+fn dev_venv_python(repo_root: &Path) -> PathBuf {
+    repo_root.join(".venv").join("Scripts").join("python.exe")
+}
+
+fn try_spawn_dev_source_backend(
+    port: u16,
+    debug_sidecar: bool,
+) -> Result<Option<BackendRuntime>, String> {
+    if !cfg!(debug_assertions) {
+        return Ok(None);
+    }
+
+    let mode = dev_backend_mode();
+    if mode == "binary" {
+        return Ok(None);
+    }
+
+    let repo_root = repo_root_dir();
+    let entry = repo_root
+        .join("scripts")
+        .join("release")
+        .join("text_api_entry.py");
+    if !entry.exists() {
+        let detail = format!("Dev backend entry not found at '{}'", entry.display());
+        if mode == "python" {
+            return Err(detail);
+        }
+        return Ok(None);
+    }
+
+    let mut launchers: Vec<Command> = Vec::new();
+    let venv_python = dev_venv_python(&repo_root);
+    if venv_python.exists() {
+        let mut cmd = Command::new(venv_python);
+        cmd.arg(&entry);
+        launchers.push(cmd);
+    }
+
+    let mut uv_cmd = Command::new("uv");
+    uv_cmd.arg("run").arg("python").arg(&entry);
+    launchers.push(uv_cmd);
+
+    let mut last_error: Option<String> = None;
+    for mut command in launchers {
+        command.current_dir(&repo_root);
+        apply_backend_process_env(&mut command, port, debug_sidecar);
+        match command.spawn() {
+            Ok(mut child) => match wait_until_ready(&mut child, port) {
+                Ok(()) => {
+                    let api_origin = format!("http://127.0.0.1:{port}");
+                    if debug_sidecar {
+                        eprintln!("Started dev source backend at {api_origin}");
+                    }
+                    return Ok(Some(BackendRuntime::new(api_origin, child)));
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                }
+            },
+            Err(err) => {
+                last_error = Some(format!("Failed to spawn dev backend process: {err}"));
+            }
+        }
+    }
+
+    if mode == "python" {
+        return Err(last_error.unwrap_or_else(|| "Unknown dev backend launch error".to_string()));
+    }
+
+    if debug_sidecar {
+        if let Some(detail) = last_error {
+            eprintln!(
+                "Dev source backend launch failed, falling back to bundled sidecar: {detail}"
+            );
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_macos_codesign(path: &Path) -> Result<(), String> {
+    let verify = Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict", "--verbose=1"])
+        .arg(path)
+        .output()
+        .map_err(|e| {
+            format!(
+                "Failed to run codesign verification for '{}': {e}",
+                path.display()
+            )
+        })?;
+    if verify.status.success() {
+        return Ok(());
+    }
+
+    let resign = Command::new("/usr/bin/codesign")
+        .args(["--force", "--sign", "-", "--timestamp=none"])
+        .arg(path)
+        .output()
+        .map_err(|e| {
+            format!(
+                "Failed to run codesign ad-hoc signing for '{}': {e}",
+                path.display()
+            )
+        })?;
+    if !resign.status.success() {
+        return Err(format!(
+            "macOS sidecar signature is invalid and automatic re-signing failed for '{}': {}",
+            path.display(),
+            String::from_utf8_lossy(&resign.stderr).trim()
+        ));
+    }
+
+    let reverify = Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict", "--verbose=1"])
+        .arg(path)
+        .output()
+        .map_err(|e| {
+            format!(
+                "Failed to re-run codesign verification for '{}': {e}",
+                path.display()
+            )
+        })?;
+    if !reverify.status.success() {
+        return Err(format!(
+            "macOS sidecar signature re-verification failed for '{}': {}",
+            path.display(),
+            String::from_utf8_lossy(&reverify.stderr).trim()
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_macos_codesign(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn spawn_backend<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<BackendRuntime, String> {
+    let port = find_free_port()?;
+    let debug_sidecar = sidecar_debug_enabled();
+
+    if let Some(runtime) = try_spawn_dev_source_backend(port, debug_sidecar)? {
+        return Ok(runtime);
+    }
+
+    let backend_binary = resolve_backend_binary(app)?;
+    ensure_macos_codesign(&backend_binary)?;
+    let api_origin = format!("http://127.0.0.1:{port}");
+
+    let mut command = Command::new(&backend_binary);
+    apply_backend_process_env(&mut command, port, debug_sidecar);
+
+    let mut child = command.spawn().map_err(|e| {
+        format!(
+            "Failed to start embedded backend '{}': {e}",
+            backend_binary.display()
+        )
+    })?;
 
     wait_until_ready(&mut child, port)?;
     Ok(BackendRuntime::new(api_origin, child))

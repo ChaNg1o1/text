@@ -6,6 +6,7 @@ from .psycholinguistics import PsycholinguisticsAgent
 from .sociolinguistics import SociolinguisticsAgent
 from .stylometry import StylometryAgent
 from .synthesis import SynthesisAgent
+from .taste import build_taste_outputs
 
 __all__ = [
     "ComputationalAgent",
@@ -14,4 +15,5 @@ __all__ = [
     "SociolinguisticsAgent",
     "StylometryAgent",
     "SynthesisAgent",
+    "build_taste_outputs",
 ]

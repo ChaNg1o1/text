@@ -33,29 +33,41 @@ export function ReportHeader({ analysis }: ReportHeaderProps) {
 
   return (
     <Card>
-      <CardContent className="flex flex-wrap items-center gap-4 pt-6">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-lg font-bold">{analysis.id}</span>
-          <Badge className={STATUS_STYLES[analysis.status] ?? ""}>{t(`status.${analysis.status}`)}</Badge>
-          <Badge variant="outline" className="capitalize">{t(`task.${analysis.task_type}`)}</Badge>
-        </div>
-        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground ml-auto">
-          <span className="flex items-center gap-1">
-            <FileText className="h-4 w-4" />
-            <NumberTween value={analysis.text_count} /> {t("report.textCountSuffix")}
-          </span>
-          <span className="flex items-center gap-1">
-            <Users className="h-4 w-4" />
-            <NumberTween value={analysis.author_count} /> {t("report.authorCountSuffix")}
-          </span>
-          <span className="flex items-center gap-1"><Cpu className="h-4 w-4" />{analysis.llm_backend}</span>
-          <span className="flex items-center gap-1"><Calendar className="h-4 w-4" />{new Date(analysis.created_at).toLocaleString()}</span>
-          {duration && (
-            <span className="flex items-center gap-1">
-              <Clock className="h-4 w-4" />
-              <NumberTween value={Number(duration)} decimals={1} suffix="s" />
-            </span>
-          )}
+      <CardContent className="pt-6">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="max-w-full truncate font-mono text-lg font-bold">{analysis.id}</span>
+              <Badge className={STATUS_STYLES[analysis.status] ?? ""}>{t(`status.${analysis.status}`)}</Badge>
+              <Badge variant="outline" className="capitalize">{t(`task.${analysis.task_type}`)}</Badge>
+            </div>
+          </div>
+          <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2 xl:grid-cols-3">
+            <div className="flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1.5">
+              <FileText className="h-4 w-4 shrink-0" />
+              <span className="truncate"><NumberTween value={analysis.text_count} /> {t("report.textCountSuffix")}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1.5">
+              <Users className="h-4 w-4 shrink-0" />
+              <span className="truncate"><NumberTween value={analysis.author_count} /> {t("report.authorCountSuffix")}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1.5">
+              <Cpu className="h-4 w-4 shrink-0" />
+              <span className="truncate">{analysis.llm_backend}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1.5 sm:col-span-2 xl:col-span-2">
+              <Calendar className="h-4 w-4 shrink-0" />
+              <span className="truncate">{new Date(analysis.created_at).toLocaleString()}</span>
+            </div>
+            {duration && (
+              <div className="flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1.5">
+                <Clock className="h-4 w-4 shrink-0" />
+                <span className="truncate">
+                  <NumberTween value={Number(duration)} decimals={1} suffix="s" />
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>

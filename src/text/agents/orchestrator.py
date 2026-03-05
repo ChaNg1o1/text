@@ -28,6 +28,7 @@ from .stylometry import (
     _sample_representative,
 )
 from .synthesis import SynthesisAgent
+from .taste import build_taste_outputs
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,8 @@ class OrchestratorAgent:
         prompt_features = features
         if len(features) > MAX_PROMPT_SAMPLES:
             author_map = {t.id: t.author for t in request.texts}
-            task_context += "\n\n" + _build_corpus_summary(features, author_map)
+            corpus_summary = await asyncio.to_thread(_build_corpus_summary, features, author_map)
+            task_context += "\n\n" + corpus_summary
             prompt_features = _sample_representative(features, MAX_PROMPT_SAMPLES)
             logger.info(
                 "Large corpus (%d samples): using %d representative samples for agent prompts",
@@ -137,7 +139,7 @@ class OrchestratorAgent:
         )
 
         # --- Phase 1.5: temporal drift detection (needs timestamps) ---
-        drift_findings = self._detect_temporal_drift(features, request)
+        drift_findings = await asyncio.to_thread(self._detect_temporal_drift, features, request)
         if drift_findings:
             # Inject into computational agent's report.
             for ar in agent_reports:
@@ -150,6 +152,10 @@ class OrchestratorAgent:
 
         # --- Phase 3: attach anomaly samples with original text ---
         report.anomaly_samples = self._collect_anomaly_samples(request)
+        report.taste_assessment, report.insights = build_taste_outputs(
+            report.agent_reports,
+            report.contradictions,
+        )
 
         return report
 

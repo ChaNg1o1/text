@@ -22,6 +22,7 @@ import { AgentSection } from "@/components/report/agent-section";
 import { SynthesisPanel } from "@/components/report/synthesis-panel";
 import { AnomalyTable } from "@/components/report/anomaly-table";
 import { ExportButtons } from "@/components/report/export-buttons";
+import { ReportQaPanel } from "@/components/report/report-qa-panel";
 import { useI18n } from "@/components/providers/i18n-provider";
 
 function DetailSkeleton() {
@@ -38,7 +39,7 @@ function AnalysisDetailContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
   const { t } = useI18n();
-  const { data, isLoading, mutate } = useAnalysis(id);
+  const { data, error, isLoading, mutate } = useAnalysis(id);
   const progress = useAnalysisStore((s) => s.getProgress(id));
   const [isCancelling, setIsCancelling] = useState(false);
   const isRunning = data?.status === "pending" || data?.status === "running";
@@ -67,7 +68,57 @@ function AnalysisDetailContent() {
   }
 
   if (!id) {
-    return <div className="py-12 text-center text-muted-foreground">{t("detail.notFound")}</div>;
+    return (
+      <div className="py-12 text-center">
+        <p className="text-muted-foreground">{t("detail.notFound")}</p>
+        <Button asChild variant="ghost" size="sm" className="mt-3">
+          <Link href="/analyses">
+            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            {t("features.backToAnalysis")}
+          </Link>
+        </Button>
+      </div>
+    );
+  }
+
+  if (error) {
+    const maybeStatus =
+      typeof (error as { status?: unknown }).status === "number"
+        ? ((error as { status: number }).status)
+        : null;
+    if (maybeStatus === 404) {
+      return (
+        <div className="py-12 text-center">
+          <p className="text-muted-foreground">{t("detail.notFound")}</p>
+          <Button asChild variant="ghost" size="sm" className="mt-3">
+            <Link href="/analyses">
+              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              {t("features.backToAnalysis")}
+            </Link>
+          </Button>
+        </div>
+      );
+    }
+
+    const message = error instanceof Error ? error.message : t("detail.loadFailed");
+    return (
+      <div className="py-12 text-center">
+        <p className="text-muted-foreground">{t("detail.loadFailed")}</p>
+        <p className="mt-1 text-xs text-muted-foreground/80">{message}</p>
+        <div className="mt-3 flex items-center justify-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => mutate()}>
+            <RefreshCcw className="mr-1.5 h-4 w-4" />
+            {t("detail.retryRefresh")}
+          </Button>
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/analyses">
+              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              {t("features.backToAnalysis")}
+            </Link>
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   if (!data) {
@@ -96,14 +147,14 @@ function AnalysisDetailContent() {
   return (
     <StaggerContainer className="space-y-6" delayChildren={0.04} staggerChildren={0.05}>
       <StaggerItem>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Button asChild variant="ghost" size="sm">
             <Link href="/analyses">
               <ArrowLeft className="mr-1.5 h-4 w-4" />
               {t("common.back")}
             </Link>
           </Button>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
             <Button variant="ghost" size="sm" onClick={() => mutate()}>
               <RefreshCcw className="mr-1.5 h-4 w-4" />
               {t("common.refresh")}
@@ -183,7 +234,7 @@ function AnalysisDetailContent() {
       {hasReport && data.report && (
         <StaggerItem>
           <Tabs defaultValue="synthesis" className="space-y-4">
-            <TabsList>
+            <TabsList className="w-full justify-start overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-fit">
               <TabsTrigger value="synthesis">{t("detail.tab.synthesis")}</TabsTrigger>
               <TabsTrigger value="agents">{t("detail.tab.agents")}</TabsTrigger>
               {data.report.anomaly_samples.length > 0 && (
@@ -192,7 +243,7 @@ function AnalysisDetailContent() {
             </TabsList>
 
             <TabsContent value="synthesis" className="space-y-4 mt-1">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid items-stretch gap-4 md:grid-cols-3">
                 <div className="md:col-span-2">
                   <SynthesisPanel report={data.report} />
                 </div>
@@ -212,6 +263,12 @@ function AnalysisDetailContent() {
               </TabsContent>
             )}
           </Tabs>
+        </StaggerItem>
+      )}
+
+      {hasReport && data.report && (
+        <StaggerItem>
+          <ReportQaPanel analysisId={id} report={data.report} />
         </StaggerItem>
       )}
 

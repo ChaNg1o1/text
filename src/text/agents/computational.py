@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -135,8 +136,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         raw_texts: list[str] | None = None,
     ) -> AgentReport:
         """Run computational analysis, then send results to LLM for interpretation."""
-        # Phase 1: compute statistical summaries locally (uses ALL features).
-        comp_results = self._compute_statistics(features, raw_texts=raw_texts)
+        # Phase 1: run CPU-heavy statistical summaries off the event loop.
+        comp_results = await asyncio.to_thread(
+            self._compute_statistics,
+            features,
+            raw_texts=raw_texts,
+        )
         self._outlier_dims = comp_results.get("outlier_dims", {})
         model = self.model
         if not model:

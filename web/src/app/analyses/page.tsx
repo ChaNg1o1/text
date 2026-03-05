@@ -123,6 +123,7 @@ export default function AnalysesPage() {
     taskType: taskFilter || undefined,
     search: search || undefined,
   });
+  const hasStaleData = Boolean(error && data);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -242,12 +243,15 @@ export default function AnalysesPage() {
       <StaggerItem>
         {isLoading ? (
           <HistorySkeleton />
-        ) : error ? (
+        ) : error && !data ? (
           <Card>
             <CardContent className="pt-10 pb-10 text-center">
               <p className="text-sm text-muted-foreground">
-                {t("settings.backends.loadFailed")}
+                {t("analysis.loadFailed")}
               </p>
+              {error instanceof Error && (
+                <p className="mt-1 text-xs text-muted-foreground/80">{error.message}</p>
+              )}
               <Button className="mt-4" variant="outline" size="sm" onClick={() => void mutate()}>
                 {t("detail.retryRefresh")}
               </Button>
@@ -266,6 +270,18 @@ export default function AnalysesPage() {
           </FadeIn>
         ) : (
           <>
+            {hasStaleData && (
+              <Card className="border-amber-400/40">
+                <CardContent className="pt-4 pb-4">
+                  <p className="text-sm text-muted-foreground">
+                    {t("analysis.loadFailed")}
+                  </p>
+                  {error instanceof Error && (
+                    <p className="mt-1 text-xs text-muted-foreground/80">{error.message}</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardContent className="pt-6">
                 <Table>

@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import text.api.deps as deps
 from text.api.config import Settings
 from text.api.models import HealthResponse
-from text.api.routers import analyses, backends, features, uploads
+from text.api.routers import analyses, backends, features, observability, qa, uploads
 from text.api.services.analysis_store import AnalysisStore
 from text.api.services.analysis_task_registry import analysis_task_registry
+from text.api.services.observability import ObservabilityRegistry, http_observability_middleware
 
 
 @asynccontextmanager
@@ -24,6 +25,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Ensure the DB is ready
     await store._ensure_db()
     deps._store = store
+    deps._observability = ObservabilityRegistry(
+        enabled=settings.observability_enabled,
+        slow_request_ms=settings.observability_slow_request_ms,
+        event_limit=settings.observability_event_limit,
+    )
+    app.state.observability = deps._observability
 
     # Initialise progress manager if available
     try:
@@ -46,6 +53,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await analysis_task_registry.cancel_all()
     await store.close()
+    deps._store = None
+    deps._observability = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -68,12 +77,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.middleware("http")(http_observability_middleware)
 
     # Routers
     app.include_router(uploads.router)
     app.include_router(analyses.router)
     app.include_router(backends.router)
     app.include_router(features.router)
+    app.include_router(observability.router)
+    app.include_router(qa.router)
 
     # SSE progress router (optional, Phase 2)
     try:

@@ -8,6 +8,7 @@ models, or sentence-transformers are unavailable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -15,6 +16,7 @@ import string
 import time
 import unicodedata
 from collections import Counter
+from threading import Lock
 from typing import Callable
 
 from text.features.cache import FeatureCache
@@ -56,6 +58,7 @@ except ImportError:
     logger.debug("spaCy not installed; NLP features will be limited.")
 
 _NLP_MODELS: dict[str, object | None] = {}
+_SPACY_PIPE_LOCK = Lock()
 
 
 def _get_spacy_model(name: str = "en_core_web_sm") -> object | None:
@@ -595,7 +598,7 @@ class FeatureExtractor:
             rust_features: list[RustFeatures] = []
             if HAS_RUST:
                 try:
-                    rust_results = rust_batch_extract(miss_texts)
+                    rust_results = await asyncio.to_thread(rust_batch_extract, miss_texts)
                     if len(rust_results) != len(miss_texts):
                         raise RuntimeError(
                             f"Rust batch_extract result length mismatch: expected {len(miss_texts)}, "
@@ -606,11 +609,13 @@ class FeatureExtractor:
                     logger.warning("Rust batch extraction failed, falling back to Python: %s", exc)
 
             if not rust_features:
-                rust_features = [_python_fallback_features(text) for text in miss_texts]
+                rust_features = await asyncio.to_thread(
+                    lambda: [_python_fallback_features(text) for text in miss_texts]
+                )
             perf["rust_ms"] += (time.perf_counter() - rust_started) * 1000.0
 
             embed_started = time.perf_counter()
-            embeddings = self._embedder.embed_batch(miss_texts)
+            embeddings = await asyncio.to_thread(self._embedder.embed_batch, miss_texts)
             if len(embeddings) != len(miss_texts):
                 logger.warning(
                     "Embedding batch returned unexpected length (%d vs %d), using empty vectors",
@@ -620,8 +625,12 @@ class FeatureExtractor:
                 embeddings = [[] for _ in miss_texts]
             perf["embedding_ms"] += (time.perf_counter() - embed_started) * 1000.0
 
-            tokens_per_text = [_tokenize_simple(text) for text in miss_texts]
-            liwc_scores = [self._liwc.analyze(tokens) for tokens in tokens_per_text]
+            tokens_per_text = await asyncio.to_thread(
+                lambda: [_tokenize_simple(text) for text in miss_texts]
+            )
+            liwc_scores = await asyncio.to_thread(
+                lambda: [self._liwc.analyze(tokens) for tokens in tokens_per_text]
+            )
 
             # Defaults for texts where spaCy is unavailable or fails.
             spacy_metrics: list[tuple[dict[str, float], float, float]] = [
@@ -632,15 +641,11 @@ class FeatureExtractor:
             if nlp is not None:
                 spacy_started = time.perf_counter()
                 try:
-                    short_indices = [i for i, text in enumerate(miss_texts) if len(text) <= SPACY_CHUNK_SIZE]
-                    if short_indices:
-                        short_texts = [miss_texts[i] for i in short_indices]
-                        for rel_idx, doc in enumerate(nlp.pipe(short_texts, batch_size=16)):  # type: ignore[operator]
-                            spacy_metrics[short_indices[rel_idx]] = self._spacy_metrics_from_doc(doc)
-
-                    long_indices = [i for i, text in enumerate(miss_texts) if len(text) > SPACY_CHUNK_SIZE]
-                    for i in long_indices:
-                        spacy_metrics[i] = self._process_spacy_chunked(nlp, miss_texts[i])
+                    spacy_metrics = await asyncio.to_thread(
+                        self._extract_spacy_metrics_batch,
+                        nlp,
+                        miss_texts,
+                    )
                 except Exception as exc:
                     logger.warning("spaCy batch processing failed: %s", exc)
                 finally:
@@ -678,7 +683,7 @@ class FeatureExtractor:
                 raise RuntimeError(f"Internal extraction error: missing vector at index {idx}")
             resolved_vectors.append(vec)
 
-        self._compute_topics(resolved_vectors)
+        await asyncio.to_thread(self._compute_topics, resolved_vectors)
         self._last_perf = perf
         return resolved_vectors
 
@@ -941,6 +946,32 @@ class FeatureExtractor:
         sentiment_valence = (total_pos - total_neg) / total_sent if total_sent > 0 else 0.0
 
         return pos_dist, clause_depth_avg, sentiment_valence
+
+    @staticmethod
+    def _extract_spacy_metrics_batch(
+        nlp,
+        texts: list[str],
+    ) -> list[tuple[dict[str, float], float, float]]:
+        """Compute spaCy metrics for a batch of texts.
+
+        This helper is intentionally synchronous and executed inside
+        ``asyncio.to_thread`` so large corpora won't block the API loop.
+        """
+        metrics: list[tuple[dict[str, float], float, float]] = [({}, 0.0, 0.0) for _ in texts]
+        # The same cached spaCy model can be shared across analyses.
+        # Guard against concurrent access from worker threads.
+        with _SPACY_PIPE_LOCK:
+            short_indices = [i for i, text in enumerate(texts) if len(text) <= SPACY_CHUNK_SIZE]
+            if short_indices:
+                short_texts = [texts[i] for i in short_indices]
+                for rel_idx, doc in enumerate(nlp.pipe(short_texts, batch_size=16)):  # type: ignore[operator]
+                    metrics[short_indices[rel_idx]] = FeatureExtractor._spacy_metrics_from_doc(doc)
+
+            long_indices = [i for i, text in enumerate(texts) if len(text) > SPACY_CHUNK_SIZE]
+            for i in long_indices:
+                metrics[i] = FeatureExtractor._process_spacy_chunked(nlp, texts[i])
+
+        return metrics
 
 
 def _split_for_spacy(text: str, max_chars: int) -> list[str]:

@@ -1,7 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Loader2, Pencil, Trash2, FlaskConical, PlusCircle, Layers3, Server, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  Loader2,
+  Pencil,
+  Trash2,
+  FlaskConical,
+  PlusCircle,
+  Layers3,
+  Server,
+  ShieldCheck,
+  RefreshCcw,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 import type {
@@ -58,17 +68,30 @@ export default function BackendSettingsPage() {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [clearStoredKey, setClearStoredKey] = useState(false);
   const [form, setForm] = useState<BackendFormState>({ ...EMPTY_FORM });
+  const hasLoadedOnceRef = useRef(false);
 
   const load = useCallback(async (showFailureToast: boolean) => {
-    try {
-      const custom = await api.getCustomBackends();
-      setCustomBackends(custom.backends);
-      setCustomApiReady(true);
-    } catch {
-      setCustomBackends([]);
-      setCustomApiReady(false);
-      if (showFailureToast) {
-        toast.error(t("settings.backends.loadFailed"));
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const custom = await api.getCustomBackends();
+        setCustomBackends(custom.backends);
+        setCustomApiReady(true);
+        hasLoadedOnceRef.current = true;
+        return;
+      } catch {
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+          continue;
+        }
+        // Keep previously loaded list when transient calls fail while analysis is busy.
+        if (!hasLoadedOnceRef.current) {
+          setCustomBackends([]);
+          setCustomApiReady(false);
+        }
+        if (showFailureToast) {
+          toast.error(t("settings.backends.loadFailed"));
+        }
       }
     }
   }, [t]);
@@ -218,6 +241,19 @@ export default function BackendSettingsPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t("settings.backends.title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("settings.backends.subtitle")}</p>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void load(true)}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCcw className="mr-2 h-4 w-4" />
+          )}
+          {t("settings.backends.refresh")}
+        </Button>
       </div>
 
       <Card>

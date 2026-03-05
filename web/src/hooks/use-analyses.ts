@@ -1,5 +1,5 @@
 import useSWR from "swr";
-import { api } from "@/lib/api-client";
+import { ApiError, api } from "@/lib/api-client";
 import type { AnalysisListResponse } from "@/lib/types";
 
 interface UseAnalysesParams {
@@ -23,7 +23,17 @@ export function useAnalyses(params: UseAnalysesParams = {}) {
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
-      shouldRetryOnError: false,
+      shouldRetryOnError: (error: unknown) => {
+        if (error instanceof ApiError) {
+          if (error.status === 400 || error.status === 422) {
+            return false;
+          }
+          return error.status === 408 || error.status >= 500;
+        }
+        return true;
+      },
+      errorRetryCount: 3,
+      errorRetryInterval: 2500,
       keepPreviousData: true,
       dedupingInterval: 4000,
     },

@@ -18,7 +18,7 @@ from text.api.models import (
     AnalysisStatus,
     AnalysisSummary,
 )
-from text.ingest.schema import AnalysisRequest
+from text.ingest.schema import AnalysisRequest, FeatureVector
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,17 @@ class AnalysisStore:
             row = await cur.fetchone()
         if row is None:
             return None
-        return self._row_to_detail(row)
+        detail, backfilled_report = self._row_to_detail(row)
+        if backfilled_report and detail.report is not None:
+            try:
+                await db.execute(
+                    "UPDATE analyses SET report_json = ? WHERE id = ?",
+                    (detail.report.model_dump_json(), analysis_id),
+                )
+                await db.commit()
+            except Exception:
+                logger.warning("Failed to persist backfilled report for analysis %s", analysis_id)
+        return detail
 
     async def get_request(self, analysis_id: str) -> AnalysisRequest | None:
         """Fetch and parse the original AnalysisRequest for an analysis ID."""
@@ -145,6 +155,32 @@ class AnalysisStore:
         except Exception:
             logger.warning("Failed to deserialize request for analysis %s", analysis_id)
             return None
+
+    async def get_features(self, analysis_id: str) -> list[FeatureVector] | None:
+        """Fetch and parse cached feature vectors for an analysis ID."""
+        db = await self._ensure_db()
+        async with db.execute("SELECT features_json FROM analyses WHERE id = ?", (analysis_id,)) as cur:
+            row = await cur.fetchone()
+        if row is None or not row["features_json"]:
+            return None
+        try:
+            raw_items = json.loads(row["features_json"])
+            if not isinstance(raw_items, list):
+                return None
+            return [FeatureVector.model_validate(item) for item in raw_items]
+        except Exception:
+            logger.warning("Failed to deserialize features for analysis %s", analysis_id)
+            return None
+
+    async def update_features(self, analysis_id: str, features_json: str) -> bool:
+        """Persist serialized feature vectors without mutating analysis status."""
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "UPDATE analyses SET features_json = ? WHERE id = ?",
+            (features_json, analysis_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
     async def list(
         self,
@@ -270,15 +306,35 @@ class AnalysisStore:
         )
 
     @staticmethod
-    def _row_to_detail(row: aiosqlite.Row) -> AnalysisDetail:
+    def _row_to_detail(row: aiosqlite.Row) -> tuple[AnalysisDetail, bool]:
         from datetime import datetime, timezone
 
         from text.ingest.schema import ForensicReport
 
         report = None
+        report_backfilled = False
         if row["report_json"]:
             try:
                 report = ForensicReport.model_validate_json(row["report_json"])
+                if report.taste_assessment is None or not report.insights:
+                    try:
+                        from text.agents.taste import build_taste_outputs
+
+                        assessment, insights = build_taste_outputs(
+                            report.agent_reports,
+                            report.contradictions,
+                        )
+                        if report.taste_assessment is None and assessment is not None:
+                            report.taste_assessment = assessment
+                            report_backfilled = True
+                        if not report.insights:
+                            report.insights = insights
+                            report_backfilled = len(insights) > 0 or report_backfilled
+                    except Exception:
+                        logger.warning(
+                            "Failed to backfill taste insights for analysis %s",
+                            row["id"],
+                        )
             except Exception:
                 logger.warning("Failed to deserialize report for analysis %s", row["id"])
 
@@ -290,20 +346,23 @@ class AnalysisStore:
             except Exception:
                 logger.warning("Failed to deserialize perf for analysis %s", row["id"])
 
-        return AnalysisDetail(
-            id=row["id"],
-            status=AnalysisStatus(row["status"]),
-            task_type=row["task_type"],
-            llm_backend=row["llm_backend"],
-            text_count=row["text_count"],
-            author_count=row["author_count"],
-            created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc),
-            completed_at=(
-                datetime.fromtimestamp(row["completed_at"], tz=timezone.utc)
-                if row["completed_at"]
-                else None
+        return (
+            AnalysisDetail(
+                id=row["id"],
+                status=AnalysisStatus(row["status"]),
+                task_type=row["task_type"],
+                llm_backend=row["llm_backend"],
+                text_count=row["text_count"],
+                author_count=row["author_count"],
+                created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc),
+                completed_at=(
+                    datetime.fromtimestamp(row["completed_at"], tz=timezone.utc)
+                    if row["completed_at"]
+                    else None
+                ),
+                error_message=row["error_message"],
+                report=report,
+                perf=perf,
             ),
-            error_message=row["error_message"],
-            report=report,
-            perf=perf,
+            report_backfilled,
         )

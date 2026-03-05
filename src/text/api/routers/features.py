@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from text.api.deps import get_store
@@ -23,6 +25,10 @@ async def get_features(
     if detail.status not in (AnalysisStatus.COMPLETED,):
         raise HTTPException(status_code=409, detail="Analysis not yet completed")
 
+    cached = await store.get_features(analysis_id)
+    if cached is not None:
+        return FeaturesResponse(analysis_id=analysis_id, features=cached)
+
     request = await store.get_request(analysis_id)
     if request is None:
         raise HTTPException(status_code=500, detail="Analysis request payload unavailable")
@@ -36,5 +42,12 @@ async def get_features(
         features = await extractor.extract_batch(request.texts)
     finally:
         await cache.close()
+
+    try:
+        serialized = json.dumps([fv.model_dump() for fv in features], ensure_ascii=False)
+        await store.update_features(analysis_id, serialized)
+    except Exception:
+        # Persistence is best-effort; endpoint should still return data.
+        pass
 
     return FeaturesResponse(analysis_id=analysis_id, features=features)

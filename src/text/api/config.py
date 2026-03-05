@@ -24,3 +24,6 @@ class Settings(BaseSettings):
     backends_config: Path = Path.home() / ".config" / "text" / "backends.json"
     preload_embedding: bool = True
     max_concurrent_analyses: int = 1
+    observability_enabled: bool = True
+    observability_slow_request_ms: float = 1200.0
+    observability_event_limit: int = 200

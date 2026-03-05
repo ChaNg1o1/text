@@ -114,6 +114,51 @@ class AgentReport(BaseModel):
     raw_llm_response: str | None = None
 
 
+class PersonaDimension(BaseModel):
+    """A single interpretable personality/profile dimension."""
+
+    key: str
+    label: str
+    score: float = Field(ge=0.0, le=100.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    evidence_spans: list[str] = Field(default_factory=list)
+    counter_evidence: list[str] = Field(default_factory=list)
+
+
+class PersonaProfile(BaseModel):
+    """A profile for one subject (author/group/overall corpus)."""
+
+    subject: str
+    summary: str = ""
+    dimensions: list[PersonaDimension] = Field(default_factory=list)
+    overall_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class InsightItem(BaseModel):
+    """A structured insight item with traceable evidence and taste score."""
+
+    rank: int = Field(ge=1)
+    discipline: str
+    category: str
+    insight: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    taste_score: float = Field(ge=0.0, le=100.0)
+    dimension_scores: dict[str, float] = Field(default_factory=dict)
+    supporting_disciplines: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TasteAssessment(BaseModel):
+    """Corpus-level taste scoring summary."""
+
+    overall_score: float = Field(ge=0.0, le=100.0)
+    dimension_scores: dict[str, float] = Field(default_factory=dict)
+    strengths: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    methodology: str = ""
+
+
 class ForensicReport(BaseModel):
     """Final synthesized forensic report."""
 
@@ -123,5 +168,8 @@ class ForensicReport(BaseModel):
     confidence_scores: dict[str, float] = Field(default_factory=dict)
     contradictions: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
+    persona_profiles: list[PersonaProfile] = Field(default_factory=list)
     anomaly_samples: list[AnomalySample] = Field(default_factory=list)
+    insights: list[InsightItem] = Field(default_factory=list)
+    taste_assessment: TasteAssessment | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))

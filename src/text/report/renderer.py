@@ -9,7 +9,13 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
-from text.ingest.schema import AgentReport, ForensicReport
+from text.ingest.schema import (
+    AgentReport,
+    ForensicReport,
+    InsightItem,
+    PersonaProfile,
+    TasteAssessment,
+)
 
 
 def _confidence_color(score: float) -> str:
@@ -118,11 +124,23 @@ class ReportRenderer:
                 w(f"| {dim} | {score:.2f} | {_confidence_label(score)} |")
             w("")
 
+        # ---- Taste Scoring & Insights ----
+        if report.taste_assessment:
+            _render_taste_md(lines, report.taste_assessment)
+        if report.insights:
+            _render_insights_md(lines, report.insights)
+
         # ---- Recommendations ----
         if report.recommendations:
             w("## 建议\n")
             for idx, rec in enumerate(report.recommendations, 1):
                 w(f"{idx}. {rec}")
+            w("")
+
+        if report.persona_profiles:
+            w("## 人物侧写\n")
+            for profile in report.persona_profiles:
+                _render_persona_md(lines, profile)
             w("")
 
         # ---- Anomaly Samples ----
@@ -221,6 +239,11 @@ class ReportRenderer:
             console.print(table)
             console.print()
 
+        if report.taste_assessment:
+            _render_taste_rich(console, report.taste_assessment)
+        if report.insights:
+            _render_insights_rich(console, report.insights)
+
         # ---- Synthesis ----
         if report.synthesis:
             console.print(
@@ -256,6 +279,9 @@ class ReportRenderer:
                 )
             )
 
+        if report.persona_profiles:
+            _render_persona_rich(console, report.persona_profiles)
+
         # ---- Anomaly Samples ----
         if report.anomaly_samples:
             _render_anomaly_samples_rich(console, report)
@@ -278,6 +304,8 @@ class ReportRenderer:
         if report.confidence_scores:
             avg = sum(report.confidence_scores.values()) / len(report.confidence_scores)
             parts.append(f"平均置信度：{avg:.2f}")
+        if report.taste_assessment is not None:
+            parts.append(f"品味分：{report.taste_assessment.overall_score:.1f}/100")
 
         if report.synthesis:
             # First sentence of the synthesis as a teaser.
@@ -358,6 +386,194 @@ def _render_agent_rich(console: Console, ar: AgentReport) -> None:
             padding=(1, 2),
         )
     )
+
+
+def _render_persona_md(lines: list[str], profile: PersonaProfile) -> None:
+    """Append markdown section for a persona profile."""
+    lines.append(f"### {profile.subject}\n")
+    if profile.summary:
+        lines.append(profile.summary)
+        lines.append("")
+    if profile.overall_confidence is not None:
+        lines.append(f"- **总体置信度：** {profile.overall_confidence:.2f}")
+    if not profile.dimensions:
+        lines.append("- *暂无维度数据*")
+        lines.append("")
+        return
+
+    lines.append("| 维度 | 分数 | 置信度 |")
+    lines.append("|------|-----:|------:|")
+    for dim in profile.dimensions:
+        lines.append(f"| {dim.label} | {dim.score:.1f} | {dim.confidence:.2f} |")
+        if dim.evidence_spans:
+            lines.append(f"- 证据：{'; '.join(dim.evidence_spans[:3])}")
+        if dim.counter_evidence:
+            lines.append(f"- 反证：{'; '.join(dim.counter_evidence[:2])}")
+    lines.append("")
+
+
+def _render_persona_rich(console: Console, profiles: list[PersonaProfile]) -> None:
+    """Render persona profiles with compact rich tables."""
+    for profile in profiles:
+        table = Table(
+            title=f"人物侧写：{profile.subject}",
+            show_header=True,
+            header_style="bold cyan",
+            border_style="dim",
+        )
+        table.add_column("维度", style="bold")
+        table.add_column("分数", justify="right")
+        table.add_column("置信度", justify="right")
+        table.add_column("证据")
+        table.add_column("反证")
+
+        if profile.dimensions:
+            for dim in profile.dimensions:
+                table.add_row(
+                    dim.label,
+                    f"{dim.score:.1f}",
+                    f"{dim.confidence:.2f}",
+                    "; ".join(dim.evidence_spans[:2]) or "-",
+                    "; ".join(dim.counter_evidence[:2]) or "-",
+                )
+        else:
+            table.add_row("暂无维度数据", "-", "-", "-", "-")
+
+        if profile.summary:
+            console.print(
+                Panel(
+                    Markdown(profile.summary),
+                    title=f"[bold cyan]人物侧写摘要：{profile.subject}[/bold cyan]",
+                    border_style="cyan",
+                    padding=(1, 2),
+                )
+            )
+        table.caption = (
+            f"总体置信度：{profile.overall_confidence:.2f}"
+            if profile.overall_confidence is not None
+            else ""
+        )
+        console.print(table)
+        console.print()
+    console.print()
+
+
+def _render_taste_md(lines: list[str], taste: TasteAssessment) -> None:
+    """Append markdown section for corpus-level taste assessment."""
+    lines.append("## 品味量化（Taste）\n")
+    lines.append(f"- **总体品味分：** {taste.overall_score:.1f} / 100")
+    if taste.methodology:
+        lines.append(f"- **评分方法：** {taste.methodology}")
+    lines.append("")
+
+    if taste.dimension_scores:
+        lines.append("| 维度 | 分数 |")
+        lines.append("|------|-----:|")
+        for key, value in sorted(taste.dimension_scores.items(), key=lambda kv: kv[1], reverse=True):
+            lines.append(f"| {key} | {value:.1f} |")
+        lines.append("")
+
+    if taste.strengths:
+        lines.append("**优势维度：**")
+        for item in taste.strengths:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if taste.risks:
+        lines.append("**风险维度：**")
+        for item in taste.risks:
+            lines.append(f"- {item}")
+        lines.append("")
+
+
+def _render_insights_md(lines: list[str], insights: list[InsightItem]) -> None:
+    """Append markdown section for ranked insights."""
+    lines.append("## 高质量洞见（Top Insights）\n")
+    for item in insights:
+        lines.append(
+            f"### #{item.rank} {item.category} "
+            f"（Taste={item.taste_score:.1f}，置信度={item.confidence:.2f}）\n"
+        )
+        lines.append(item.insight)
+        lines.append("")
+        lines.append(f"- 学科来源：{item.discipline}")
+        if item.supporting_disciplines:
+            lines.append(f"- 交叉支持：{', '.join(item.supporting_disciplines)}")
+        if item.dimension_scores:
+            dims_str = ", ".join(
+                f"{name}={score:.1f}" for name, score in sorted(
+                    item.dimension_scores.items(), key=lambda kv: kv[1], reverse=True
+                )
+            )
+            lines.append(f"- 维度评分：{dims_str}")
+        if item.evidence:
+            lines.append("- 证据：")
+            for ev in item.evidence:
+                lines.append(f"  - {ev}")
+        lines.append("")
+
+
+def _render_taste_rich(console: Console, taste: TasteAssessment) -> None:
+    """Render corpus-level taste summary with rich tables."""
+    table = Table(
+        title=f"品味量化总览（Overall: {taste.overall_score:.1f}/100）",
+        show_header=True,
+        header_style="bold cyan",
+        border_style="cyan",
+    )
+    table.add_column("维度", style="bold")
+    table.add_column("分数", justify="right")
+    for key, value in sorted(taste.dimension_scores.items(), key=lambda kv: kv[1], reverse=True):
+        table.add_row(key, f"{value:.1f}")
+    console.print(table)
+
+    notes: list[str] = []
+    if taste.strengths:
+        notes.append("**优势**")
+        notes.extend(f"- {item}" for item in taste.strengths)
+    if taste.risks:
+        notes.append("**风险**")
+        notes.extend(f"- {item}" for item in taste.risks)
+    if taste.methodology:
+        notes.append(f"**方法**\n- {taste.methodology}")
+    if notes:
+        console.print(
+            Panel(
+                Markdown("\n".join(notes)),
+                title="[bold cyan]Taste 说明[/bold cyan]",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+    console.print()
+
+
+def _render_insights_rich(console: Console, insights: list[InsightItem]) -> None:
+    """Render top insights as a compact rich table."""
+    table = Table(
+        title=f"高质量洞见（Top {len(insights)}）",
+        show_header=True,
+        header_style="bold green",
+        border_style="green",
+        show_lines=True,
+    )
+    table.add_column("Rank", justify="right")
+    table.add_column("Taste", justify="right")
+    table.add_column("置信度", justify="right")
+    table.add_column("学科")
+    table.add_column("类别")
+    table.add_column("洞见", max_width=70)
+
+    for item in insights:
+        table.add_row(
+            str(item.rank),
+            f"{item.taste_score:.1f}",
+            f"{item.confidence:.2f}",
+            item.discipline,
+            item.category,
+            item.insight,
+        )
+    console.print(table)
     console.print()
 
 

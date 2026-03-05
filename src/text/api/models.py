@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -151,7 +152,27 @@ class UpsertCustomBackendRequest(BaseModel):
         normalized = value.strip()
         if not normalized.startswith(("http://", "https://")):
             raise ValueError("api_base must start with http:// or https://")
-        return normalized
+        parts = urlsplit(normalized)
+        if not parts.netloc:
+            raise ValueError("api_base must include a host")
+
+        path = (parts.path or "").rstrip("/")
+        # Common misconfiguration: users paste full completions path.
+        for suffix in (
+            "/chat/completions",
+            "/v1/chat/completions",
+            "/messages",
+            "/v1/messages",
+            "/completions",
+            "/v1/completions",
+        ):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+        if path != "/":
+            path = path.rstrip("/")
+
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
 
     @field_validator("model")
     @classmethod
@@ -183,6 +204,49 @@ class BackendTestResponse(BaseModel):
     success: bool
     detail: str
     latency_ms: int | None = None
+
+
+# ------------------------------------------------------------------
+# Observability
+# ------------------------------------------------------------------
+
+
+class HttpRequestEvent(BaseModel):
+    timestamp: float
+    request_id: str
+    method: str
+    path: str
+    route: str
+    status_code: int
+    duration_ms: float
+    client_ip: str | None = None
+
+
+class RouteObservabilityStats(BaseModel):
+    method: str
+    route: str
+    count: int
+    error_count: int
+    avg_ms: float
+    max_ms: float
+    p95_ms: float | None = None
+    last_status_code: int | None = None
+
+
+class ObservabilitySnapshot(BaseModel):
+    enabled: bool
+    uptime_s: float
+    in_flight: int
+    total_requests: int
+    success_requests: int
+    client_error_requests: int
+    server_error_requests: int
+    slow_requests: int
+    slow_request_threshold_ms: float
+    routes: list[RouteObservabilityStats]
+    recent_requests: list[HttpRequestEvent]
+    recent_errors: list[HttpRequestEvent]
+    recent_slow_requests: list[HttpRequestEvent]
 
 
 # ------------------------------------------------------------------

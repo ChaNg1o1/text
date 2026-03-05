@@ -78,6 +78,43 @@ export interface AgentReport {
   raw_llm_response?: string;
 }
 
+export interface PersonaDimension {
+  key: string;
+  label: string;
+  score: number;
+  confidence: number;
+  evidence_spans: string[];
+  counter_evidence: string[];
+}
+
+export interface PersonaProfile {
+  subject: string;
+  summary: string;
+  dimensions: PersonaDimension[];
+  overall_confidence?: number;
+}
+
+export interface InsightItem {
+  rank: number;
+  discipline: string;
+  category: string;
+  insight: string;
+  confidence: number;
+  taste_score: number;
+  dimension_scores: Record<string, number>;
+  supporting_disciplines: string[];
+  evidence: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface TasteAssessment {
+  overall_score: number;
+  dimension_scores: Record<string, number>;
+  strengths: string[];
+  risks: string[];
+  methodology: string;
+}
+
 export interface ForensicReport {
   request: AnalysisRequest;
   agent_reports: AgentReport[];
@@ -85,7 +122,10 @@ export interface ForensicReport {
   confidence_scores: Record<string, number>;
   contradictions: string[];
   recommendations: string[];
+  persona_profiles: PersonaProfile[];
   anomaly_samples: AnomalySample[];
+  insights?: InsightItem[];
+  taste_assessment?: TasteAssessment;
   created_at: string;
 }
 
