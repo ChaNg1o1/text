@@ -379,23 +379,22 @@
   }
 
   .app-surface-flow {
-    animation-duration: 180s, 280s;
-    animation-timing-function: linear, linear;
+    animation: none;
+    filter: hue-rotate(0deg) saturate(0.95) brightness(0.98) contrast(var(--surface-tone-contrast));
   }
 
   .app-surface-flow::before,
   .app-surface-flow::after {
-    animation-timing-function: linear;
+    animation: none;
+    transform: none;
   }
 
   .app-surface-flow::before {
-    animation-duration: 120s;
-    opacity: calc(var(--surface-flow-opacity-a) * 0.68);
+    opacity: calc(var(--surface-flow-opacity-a) * 0.36);
   }
 
   .app-surface-flow::after {
-    animation-duration: 160s;
-    opacity: calc(var(--surface-flow-opacity-b) * 0.6);
+    opacity: calc(var(--surface-flow-opacity-b) * 0.32);
   }
 
   .header-nav-link .header-nav-icon,
