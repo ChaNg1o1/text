@@ -12,6 +12,9 @@ from text.ingest.schema import (
     AgentFinding,
     AgentReport,
     AnalysisRequest,
+    ConclusionGrade,
+    ReportConclusion,
+    ResultRecord,
     ForensicReport,
     TaskType,
     TextEntry,
@@ -42,7 +45,27 @@ def _create_analysis(store, status: AnalysisStatus, with_report: bool = False) -
     if with_report:
         report = ForensicReport(
             request=request,
-            synthesis="综合结论：文本风格存在高度一致性。",
+            summary="综合结论：文本风格存在高度一致性。",
+            conclusions=[
+                ReportConclusion(
+                    key="verification",
+                    task=TaskType.VERIFICATION,
+                    statement="当前证据支持目标文本与已知作者 alice 的写作指纹一致。",
+                    grade=ConclusionGrade.MODERATE_SUPPORT,
+                    score=1.1,
+                    score_type="log10_lr",
+                    evidence_ids=["ev_0001"],
+                )
+            ],
+            results=[
+                ResultRecord(
+                    key="deterministic_result",
+                    title="Verification 确定性结果",
+                    body="log10(LR)=1.10",
+                    evidence_ids=["ev_0001"],
+                    interpretive_opinion=False,
+                )
+            ],
             agent_reports=[
                 AgentReport(
                     agent_name="computational",
@@ -59,7 +82,7 @@ def _create_analysis(store, status: AnalysisStatus, with_report: bool = False) -
                     ],
                 )
             ],
-            recommendations=["建议复核账户之间的行为链路。"],
+            limitations=["建议复核账户之间的行为链路。"],
         )
         report_json = report.model_dump_json()
 
@@ -156,3 +179,50 @@ def test_given_completed_analysis_when_requesting_qa_stream_then_returns_stream_
         completed_payload = next(payload for name, payload in events if name == "qa_completed")
         assert completed_payload["analysis_id"] == analysis_id
         assert completed_payload["answer"] == "这是流式回答示例。"
+
+
+def test_given_completed_analysis_when_requesting_qa_suggestions_then_returns_llm_generated_items(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+
+    class _FakeLLMBackend:
+        def __init__(self, backend: str, config_path=None) -> None:
+            self.backend = backend
+            self.config_path = config_path
+
+        async def complete(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            assert "suggestions" in system_prompt
+            assert "Need exactly 3 short questions." in user_prompt
+            return json.dumps(
+                {
+                    "suggestions": [
+                        "先用最简单的话告诉我，这次结论到底说明了什么？",
+                        "如果只看最关键依据，应该先看哪几条？",
+                        "这份结果最可能在哪些地方出错？",
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+    import text.api.routers.qa as qa_router
+
+    monkeypatch.setattr(qa_router, "LLMBackend", _FakeLLMBackend)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id, _ = _create_analysis(deps._store, AnalysisStatus.COMPLETED, with_report=True)
+
+        response = client.post(
+            f"/api/v1/analyses/{analysis_id}/qa/suggestions",
+            json={"count": 3, "exclude": ["不要重复这句"]},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["suggestions"] == [
+            "先用最简单的话告诉我，这次结论到底说明了什么？",
+            "如果只看最关键依据，应该先看哪几条？",
+            "这份结果最可能在哪些地方出错？",
+        ]

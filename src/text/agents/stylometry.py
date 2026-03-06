@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import json
+from datetime import datetime, timezone
+import hashlib
 import logging
-from typing import Any
+import time
 
 import litellm
 
-from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
+from text.app_settings import apply_prompt_override
+from text.ingest.schema import AgentFinding, AgentReport, FeatureVector, LLMCallRecord
+from text.llm.cache import get_cached_response, store_cached_response
+
+from .json_utils import parse_json_array_loose
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +107,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
+        prompt_override: str | None = None,
     ) -> None:
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        self.prompt_override = prompt_override
 
     async def analyze(
         self,
@@ -124,12 +131,13 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         user_prompt = self._build_prompt(features, task_context)
 
         try:
-            raw_response = await _call_llm(
-                self.SYSTEM_PROMPT,
+            raw_response, llm_call = await _call_llm(
+                apply_prompt_override(self.SYSTEM_PROMPT, self.prompt_override),
                 user_prompt,
                 model,
                 api_base=self.api_base,
                 api_key=self.api_key,
+                agent_name="stylometry",
             )
         except Exception as exc:
             logger.exception("StylometryAgent LLM call failed")
@@ -148,6 +156,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             findings=findings,
             summary=summary,
             raw_llm_response=raw_response,
+            llm_call=llm_call,
         )
 
     # ------------------------------------------------------------------
@@ -223,12 +232,35 @@ async def _call_llm(
     api_key: str | None = None,
     max_retries: int = 3,
     max_tokens: int = 8192,
-) -> str:
+    agent_name: str | None = None,
+) -> tuple[str, LLMCallRecord]:
     """Call an LLM via litellm and return the text response.
 
     Retries on transient errors with exponential backoff.
     """
     import asyncio as _asyncio
+
+    temperature = 0.0
+    prompt_hash = hashlib.sha256(
+        f"{system_prompt}\n\n{user_prompt}".encode("utf-8")
+    ).hexdigest()
+    cache_key = hashlib.sha256(
+        f"{model}|{api_base or ''}|{temperature}|{max_tokens}|{prompt_hash}".encode("utf-8")
+    ).hexdigest()
+    cached = get_cached_response(cache_key)
+    if cached is not None:
+        response_hash = hashlib.sha256(cached.response_text.encode("utf-8")).hexdigest()
+        return cached.response_text, LLMCallRecord(
+            agent=agent_name or "unknown",
+            model_id=model,
+            timestamp=datetime.now(tz=timezone.utc),
+            prompt_hash=prompt_hash,
+            response_hash=response_hash,
+            token_count_in=cached.prompt_tokens,
+            token_count_out=cached.completion_tokens,
+            temperature=temperature,
+            cache_hit=True,
+        )
 
     kwargs: dict = {
         "model": model,
@@ -236,7 +268,7 @@ async def _call_llm(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.3,
+        "temperature": temperature,
         "max_tokens": max_tokens,
     }
     if api_base:
@@ -248,7 +280,32 @@ async def _call_llm(
     for attempt in range(1, max_retries + 1):
         try:
             response = await litellm.acompletion(**kwargs)
-            return response.choices[0].message.content
+            text = response.choices[0].message.content or ""
+            usage = getattr(response, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) or None
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) or None
+            store_cached_response(
+                cache_key,
+                model_id=model,
+                temperature=temperature,
+                prompt_hash=prompt_hash,
+                response_text=text,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                created_at=time.time(),
+            )
+            response_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            return text, LLMCallRecord(
+                agent=agent_name or "unknown",
+                model_id=model,
+                timestamp=datetime.now(tz=timezone.utc),
+                prompt_hash=prompt_hash,
+                response_hash=response_hash,
+                token_count_in=prompt_tokens,
+                token_count_out=completion_tokens,
+                temperature=temperature,
+                cache_hit=False,
+            )
         except (
             litellm.RateLimitError,
             litellm.ServiceUnavailableError,
@@ -273,75 +330,36 @@ async def _call_llm(
     raise last_exc  # type: ignore[misc]
 
 
-def _repair_truncated_json_array(text: str) -> list[dict[str, Any]] | None:
-    """Attempt to recover complete items from a truncated JSON array.
-
-    When an LLM response is cut off mid-JSON (e.g., due to max_tokens),
-    this function tries to find the last complete ``}`` boundary, close
-    the array, and parse the salvageable portion.
-    """
-    stripped = text.rstrip()
-    if not stripped.lstrip().startswith("["):
-        return None
-
-    # Walk backwards to find the last complete object boundary.
-    last_brace = stripped.rfind("}")
-    if last_brace < 0:
-        return None
-
-    candidate = stripped[: last_brace + 1].rstrip().rstrip(",") + "]"
-    try:
-        result = json.loads(candidate)
-        if isinstance(result, list) and len(result) > 0:
-            return result
-    except json.JSONDecodeError:
-        pass
-    return None
-
-
 def _parse_findings(
     raw: str,
     discipline: str,
 ) -> list[AgentFinding]:
     """Best-effort parse of LLM JSON response into AgentFinding objects."""
-    # Strip markdown fences if present.
-    text = raw.strip()
-    if text.startswith("```"):
-        first_newline = text.index("\n")
-        last_fence = text.rfind("```")
-        text = text[first_newline + 1 : last_fence].strip()
-
-    items: list[dict[str, Any]] | None = None
-    truncated = False
-
-    try:
-        items = json.loads(text)
-    except json.JSONDecodeError:
-        # Attempt to recover complete objects from a truncated JSON array.
-        items = _repair_truncated_json_array(text)
-        if items is not None:
-            truncated = True
-            logger.info(
-                "Recovered %d complete findings from truncated JSON for %s agent",
-                len(items),
-                discipline,
+    parse_result = parse_json_array_loose(raw)
+    if parse_result is None:
+        logger.warning("Failed to parse LLM response as JSON for %s agent", discipline)
+        raw_excerpt = raw.strip()[:500]
+        return [
+            AgentFinding(
+                discipline=discipline,
+                category="unparsed",
+                description=(
+                    "模型返回内容未能稳定解析为结构化 JSON，以下为原始响应片段：\n"
+                    f"{raw_excerpt}"
+                ),
+                confidence=0.3,
+                evidence=["结构化解析失败，已回退展示原始文本片段。"],
             )
-        else:
-            logger.warning(
-                "Failed to parse LLM response as JSON for %s agent",
-                discipline,
-            )
-            return [
-                AgentFinding(
-                    discipline=discipline,
-                    category="unparsed",
-                    description=raw[:500],
-                    confidence=0.3,
-                    evidence=[
-                        "Raw LLM response could not be parsed as structured JSON.",
-                    ],
-                )
-            ]
+        ]
+
+    items = parse_result.value
+    if parse_result.recovered:
+        logger.info(
+            "Recovered %d findings from non-standard JSON for %s agent (truncated=%s)",
+            len(items),
+            discipline,
+            parse_result.truncated,
+        )
 
     findings: list[AgentFinding] = []
     for item in items:
@@ -359,7 +377,7 @@ def _parse_findings(
         except (ValueError, TypeError):
             logger.warning("Skipping malformed finding item in %s agent", discipline)
 
-    if truncated and findings:
+    if parse_result.truncated and findings:
         findings.append(
             AgentFinding(
                 discipline=discipline,

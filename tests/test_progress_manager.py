@@ -60,3 +60,25 @@ async def test_progress_manager_emits_heartbeat_for_idle_streams() -> None:
     finally:
         pm.complete(analysis_id)
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_progress_manager_can_skip_replay_history_for_snapshot_hydration() -> None:
+    pm = ProgressManager()
+    analysis_id = "analysis-no-replay"
+
+    pm.emit(analysis_id, "analysis_started", {"analysis_id": analysis_id})
+    pm.emit(analysis_id, "log", {"message": "already persisted"})
+
+    stream = pm.subscribe(analysis_id, replay_history=False)
+    try:
+        next_event = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        pm.emit(analysis_id, "log", {"message": "live only"})
+
+        event = await asyncio.wait_for(next_event, timeout=0.2)
+        assert event.event == "log"
+        assert event.data["message"] == "live only"
+    finally:
+        pm.complete(analysis_id)
+        await stream.aclose()

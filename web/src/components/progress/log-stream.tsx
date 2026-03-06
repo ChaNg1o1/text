@@ -15,6 +15,7 @@ interface LogEntry {
 
 interface LogStreamProps {
   logs: LogEntry[];
+  isLiveConnected?: boolean;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -24,7 +25,7 @@ const LEVEL_COLORS: Record<string, string> = {
   debug: "text-gray-400",
 };
 
-export function LogStream({ logs }: LogStreamProps) {
+export function LogStream({ logs, isLiveConnected = false }: LogStreamProps) {
   const { t } = useI18n();
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -45,20 +46,26 @@ export function LogStream({ logs }: LogStreamProps) {
           className="h-48 rounded-md bg-black/95 p-3 font-mono text-xs"
           aria-label={t("progress.logs")}
         >
-          {logs.map((log, i) => (
-            <div key={i} className="flex gap-2 leading-relaxed">
-              <span className="text-gray-500 shrink-0">
-                {new Date(log.timestamp * 1000).toLocaleTimeString()}
-              </span>
-              <span className={`shrink-0 uppercase w-12 ${LEVEL_COLORS[log.level] ?? "text-gray-400"}`}>
-                {log.level}
-              </span>
-              {log.source && (
-                <span className="text-cyan-400 shrink-0">[{log.source}]</span>
-              )}
-              <span className="text-gray-200">{log.message}</span>
+          {logs.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-center text-xs text-gray-400">
+              {isLiveConnected ? t("progress.logsEmpty") : t("progress.logsWaiting")}
             </div>
-          ))}
+          ) : (
+            logs.map((log, i) => (
+              <div key={i} className="flex gap-2 leading-relaxed">
+                <span className="text-gray-500 shrink-0">
+                  {new Date(log.timestamp * 1000).toLocaleTimeString()}
+                </span>
+                <span className={`shrink-0 uppercase w-12 ${LEVEL_COLORS[log.level] ?? "text-gray-400"}`}>
+                  {log.level}
+                </span>
+                {log.source && (
+                  <span className="text-cyan-400 shrink-0">[{log.source}]</span>
+                )}
+                <span className="text-gray-200">{log.message}</span>
+              </div>
+            ))
+          )}
           <div ref={bottomRef} />
         </ScrollArea>
       </CardContent>

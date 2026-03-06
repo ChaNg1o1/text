@@ -4,16 +4,77 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+import hashlib
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+PIPELINE_VERSION = "text-v0.2.0"
+DEFAULT_THRESHOLD_PROFILE_VERSION = "default-v1"
 
 
 class TaskType(str, Enum):
-    ATTRIBUTION = "attribution"
+    VERIFICATION = "verification"
+    CLOSED_SET_ID = "closed_set_id"
+    OPEN_SET_ID = "open_set_id"
+    CLUSTERING = "clustering"
     PROFILING = "profiling"
     SOCKPUPPET = "sockpuppet"
     FULL = "full"
+
+
+class ConclusionGrade(str, Enum):
+    STRONG_SUPPORT = "strong_support"
+    MODERATE_SUPPORT = "moderate_support"
+    INCONCLUSIVE = "inconclusive"
+    MODERATE_AGAINST = "moderate_against"
+    STRONG_AGAINST = "strong_against"
+
+
+class ArtifactKind(str, Enum):
+    RAW_TEXT = "raw_text"
+    FILE_EXPORT = "file_export"
+    SCREENSHOT_OCR = "screenshot_ocr"
+    TRANSCRIPT = "transcript"
+    MANUAL_ENTRY = "manual_entry"
+
+
+class DerivationKind(str, Enum):
+    ORIGINAL = "original"
+    NORMALIZED = "normalized"
+    OCR = "ocr"
+    TRANSCRIBED = "transcribed"
+    MANUAL_ENTRY = "manual_entry"
+
+
+class CaseMetadata(BaseModel):
+    case_id: str | None = None
+    client: str | None = None
+    analyst: str | None = None
+    notes: str | None = None
+
+
+class TaskParams(BaseModel):
+    questioned_text_ids: list[str] = Field(default_factory=list)
+    reference_author_ids: list[str] = Field(default_factory=list)
+    candidate_author_ids: list[str] = Field(default_factory=list)
+    cluster_text_ids: list[str] = Field(default_factory=list)
+    subject_ids: list[str] = Field(default_factory=list)
+    account_ids: list[str] = Field(default_factory=list)
+    top_k: int = Field(default=3, ge=1, le=20)
+
+
+class ArtifactRecord(BaseModel):
+    artifact_id: str
+    kind: ArtifactKind
+    sha256: str
+    byte_count: int = Field(ge=0)
+    source_name: str
+    acquisition_timestamp: datetime | None = None
+    operator: str | None = None
+    transform_chain: list[str] = Field(default_factory=list)
+    notes: str | None = None
 
 
 class TextEntry(BaseModel):
@@ -25,6 +86,35 @@ class TextEntry(BaseModel):
     timestamp: datetime | None = None
     source: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    artifact_id: str | None = None
+    content_sha256: str | None = None
+    derivation_kind: DerivationKind = DerivationKind.ORIGINAL
+
+    @model_validator(mode="after")
+    def ensure_content_hash(self) -> "TextEntry":
+        if not self.content_sha256:
+            self.content_sha256 = sha256_text(self.content)
+        return self
+
+
+class ActivityEvent(BaseModel):
+    event_id: str
+    account_id: str
+    event_type: str
+    occurred_at: datetime
+    thread_id: str | None = None
+    topic: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionEdge(BaseModel):
+    source_account_id: str
+    target_account_id: str
+    relation_type: str
+    weight: float = Field(default=1.0, ge=0.0)
+    first_seen_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalysisRequest(BaseModel):
@@ -32,8 +122,28 @@ class AnalysisRequest(BaseModel):
 
     texts: list[TextEntry]
     task: TaskType = TaskType.FULL
-    compare_groups: list[list[str]] | None = None
+    task_params: TaskParams = Field(default_factory=TaskParams)
     llm_backend: str = "default"
+    case_metadata: CaseMetadata | None = None
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
+    activity_events: list[ActivityEvent] = Field(default_factory=list)
+    interaction_edges: list[InteractionEdge] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_task_requirements(self) -> "AnalysisRequest":
+        params = self.task_params
+        if self.task == TaskType.VERIFICATION:
+            _require(params.questioned_text_ids, "task_params.questioned_text_ids")
+            _require(params.reference_author_ids, "task_params.reference_author_ids")
+        elif self.task == TaskType.CLOSED_SET_ID:
+            _require(params.questioned_text_ids, "task_params.questioned_text_ids")
+            _require(params.candidate_author_ids, "task_params.candidate_author_ids")
+        elif self.task == TaskType.OPEN_SET_ID:
+            _require(params.questioned_text_ids, "task_params.questioned_text_ids")
+            _require(params.candidate_author_ids, "task_params.candidate_author_ids")
+        elif self.task == TaskType.SOCKPUPPET:
+            _require(params.account_ids, "task_params.account_ids")
+        return self
 
 
 class RustFeatures(BaseModel):
@@ -86,7 +196,7 @@ class FeatureVector(BaseModel):
 
 
 class AnomalySample(BaseModel):
-    """A statistically anomalous text sample (|z| > 2.0 in any feature dimension)."""
+    """A statistically anomalous text sample."""
 
     text_id: str
     content: str
@@ -102,6 +212,19 @@ class AgentFinding(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    opinion_kind: Literal["deterministic_evidence", "interpretive_opinion"] = "interpretive_opinion"
+
+
+class LLMCallRecord(BaseModel):
+    agent: str
+    model_id: str
+    timestamp: datetime
+    prompt_hash: str
+    response_hash: str
+    token_count_in: int | None = None
+    token_count_out: int | None = None
+    temperature: float | None = None
+    cache_hit: bool = False
 
 
 class AgentReport(BaseModel):
@@ -112,64 +235,137 @@ class AgentReport(BaseModel):
     findings: list[AgentFinding] = Field(default_factory=list)
     summary: str = ""
     raw_llm_response: str | None = None
+    llm_call: LLMCallRecord | None = None
 
 
-class PersonaDimension(BaseModel):
-    """A single interpretable personality/profile dimension."""
+class EvidenceItem(BaseModel):
+    evidence_id: str
+    label: str
+    summary: str
+    source_text_ids: list[str] = Field(default_factory=list)
+    excerpts: list[str] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
+    provenance_refs: list[str] = Field(default_factory=list)
+    interpretive_opinion: bool = False
 
+
+class ReportConclusion(BaseModel):
+    key: str
+    task: TaskType
+    statement: str
+    grade: ConclusionGrade
+    score: float | None = None
+    score_type: str | None = None
+    subject: str | None = None
+    evidence_ids: list[str] = Field(default_factory=list)
+    counter_evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReportMaterial(BaseModel):
+    artifact_id: str
+    source_name: str
+    sha256: str
+    byte_count: int = Field(ge=0)
+    text_ids: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class MethodRecord(BaseModel):
+    key: str
+    title: str
+    description: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    threshold_profile_version: str | None = None
+
+
+class ResultRecord(BaseModel):
+    key: str
+    title: str
+    body: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    interpretive_opinion: bool = False
+    supporting_agents: list[str] = Field(default_factory=list)
+
+
+class WritingProfileDimension(BaseModel):
     key: str
     label: str
     score: float = Field(ge=0.0, le=100.0)
     confidence: float = Field(ge=0.0, le=1.0)
+    dimension_type: Literal["observable", "speculative"] = "observable"
     evidence_spans: list[str] = Field(default_factory=list)
     counter_evidence: list[str] = Field(default_factory=list)
 
 
-class PersonaProfile(BaseModel):
-    """A profile for one subject (author/group/overall corpus)."""
-
+class WritingProfile(BaseModel):
     subject: str
     summary: str = ""
-    dimensions: list[PersonaDimension] = Field(default_factory=list)
-    overall_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    dimensions: list[WritingProfileDimension] = Field(default_factory=list)
 
 
-class InsightItem(BaseModel):
-    """A structured insight item with traceable evidence and taste score."""
-
-    rank: int = Field(ge=1)
-    discipline: str
-    category: str
-    insight: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    taste_score: float = Field(ge=0.0, le=100.0)
-    dimension_scores: dict[str, float] = Field(default_factory=dict)
-    supporting_disciplines: list[str] = Field(default_factory=list)
-    evidence: list[str] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+class ReproducibilityInfo(BaseModel):
+    report_sha256: str | None = None
+    request_fingerprint: str | None = None
+    pipeline_version: str = PIPELINE_VERSION
+    rust_feature_version: str = "unknown"
+    python_feature_version: str = "unknown"
+    threshold_profile_version: str = DEFAULT_THRESHOLD_PROFILE_VERSION
+    prompt_template_version: str = "v1"
+    model_id: str | None = None
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    parameter_snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
-class TasteAssessment(BaseModel):
-    """Corpus-level taste scoring summary."""
+class ProvenanceRecord(BaseModel):
+    report_id: str
+    input_manifest: list[ArtifactRecord] = Field(default_factory=list)
+    pipeline_version: str = PIPELINE_VERSION
+    feature_extractor_version: dict[str, str] = Field(default_factory=dict)
+    threshold_profile_version: str = DEFAULT_THRESHOLD_PROFILE_VERSION
+    llm_calls: list[LLMCallRecord] = Field(default_factory=list)
+    report_sha256: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    operator: str | None = None
 
-    overall_score: float = Field(ge=0.0, le=100.0)
-    dimension_scores: dict[str, float] = Field(default_factory=dict)
-    strengths: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-    methodology: str = ""
+
+class AppendixItem(BaseModel):
+    key: str
+    title: str
+    content: str
 
 
 class ForensicReport(BaseModel):
     """Final synthesized forensic report."""
 
     request: AnalysisRequest
-    agent_reports: list[AgentReport] = Field(default_factory=list)
-    synthesis: str = ""
-    confidence_scores: dict[str, float] = Field(default_factory=dict)
-    contradictions: list[str] = Field(default_factory=list)
-    recommendations: list[str] = Field(default_factory=list)
-    persona_profiles: list[PersonaProfile] = Field(default_factory=list)
+    summary: str = ""
+    conclusions: list[ReportConclusion] = Field(default_factory=list)
+    materials: list[ReportMaterial] = Field(default_factory=list)
+    methods: list[MethodRecord] = Field(default_factory=list)
+    results: list[ResultRecord] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    reproducibility: ReproducibilityInfo = Field(default_factory=ReproducibilityInfo)
+    appendix: list[AppendixItem] = Field(default_factory=list)
+    provenance: ProvenanceRecord | None = None
+    writing_profiles: list[WritingProfile] = Field(default_factory=list)
+    evidence_items: list[EvidenceItem] = Field(default_factory=list)
     anomaly_samples: list[AnomalySample] = Field(default_factory=list)
-    insights: list[InsightItem] = Field(default_factory=list)
-    taste_assessment: TasteAssessment | None = None
+    agent_reports: list[AgentReport] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def request_fingerprint(request: AnalysisRequest) -> str:
+    payload = request.model_dump_json(exclude_none=True, exclude={"llm_backend"})
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _require(value: list[str], field_name: str) -> None:
+    if value:
+        return
+    raise ValueError(f"{field_name} is required for the selected task")

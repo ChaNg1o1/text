@@ -3,14 +3,14 @@
 import { useCallback, useRef, useState } from "react";
 import { Upload, FileText, X, Loader2, FolderOpen } from "lucide-react";
 import { api } from "@/lib/api-client";
-import type { TextEntry } from "@/lib/types";
+import type { UploadResponse } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/components/providers/i18n-provider";
 
 interface UploadZoneProps {
-  onUpload: (texts: TextEntry[]) => void;
+  onUpload: (payload: UploadResponse) => void;
 }
 
 const SUPPORTED_EXTENSIONS = [".csv", ".json", ".jsonl", ".txt"];
@@ -68,7 +68,15 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
         setError(t("upload.unsupportedFiles"));
         setSelectionLabel(null);
         setPreview(null);
-        onUpload([]);
+        onUpload({
+          texts: [],
+          artifacts: [],
+          activity_events: [],
+          interaction_edges: [],
+          text_count: 0,
+          author_count: 0,
+          authors: [],
+        });
         return;
       }
 
@@ -84,7 +92,7 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
           authorCount: result.author_count,
           authors: result.authors,
         });
-        onUpload(result.texts);
+        onUpload(result);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : t("upload.failed");
         setError(message);
@@ -119,7 +127,15 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
     setSelectionLabel(null);
     setPreview(null);
     setError(null);
-    onUpload([]);
+    onUpload({
+      texts: [],
+      artifacts: [],
+      activity_events: [],
+      interaction_edges: [],
+      text_count: 0,
+      author_count: 0,
+      authors: [],
+    });
     if (inputRef.current) inputRef.current.value = "";
     if (folderInputRef.current) folderInputRef.current.value = "";
   };

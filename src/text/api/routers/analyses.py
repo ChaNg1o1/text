@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,11 +14,12 @@ from text.api.models import (
     AnalysisStatus,
     AnalysisSummary,
     CreateAnalysisRequest,
+    RetryAnalysisRequest,
 )
 from text.api.services.analysis_store import AnalysisStore
-from text.api.services.analysis_task_registry import analysis_task_registry
 from text.api.services.progress_manager import progress_manager
-from text.ingest.schema import AnalysisRequest
+from text.decision import default_threshold_profile
+from text.ingest.schema import AnalysisRequest, request_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,45 @@ router = APIRouter(prefix="/api/v1", tags=["analyses"])
 
 def _to_summary(detail: AnalysisDetail) -> AnalysisSummary:
     return AnalysisSummary(**detail.model_dump(exclude={"report", "perf"}))
+
+
+async def _enqueue_analysis_request(
+    request: AnalysisRequest,
+    *,
+    store: AnalysisStore,
+) -> AnalysisSummary:
+    authors = sorted({t.author for t in request.texts})
+
+    analysis_id = await store.create(
+        request_json=request.model_dump_json(),
+        task_type=request.task.value,
+        llm_backend=request.llm_backend,
+        text_count=len(request.texts),
+        author_count=len(authors),
+    )
+
+    dedupe_key = hashlib.sha256(
+        (
+            f"{request_fingerprint(request)}|"
+            f"{default_threshold_profile().version}|"
+            f"{request.llm_backend}"
+        ).encode("utf-8")
+    ).hexdigest()
+    await store.enqueue_job(analysis_id, dedupe_key)
+
+    progress_manager.emit(
+        analysis_id,
+        "analysis_started",
+        {
+            "analysis_id": analysis_id,
+            "status": AnalysisStatus.PENDING.value,
+            "queued": True,
+        },
+    )
+
+    detail = await store.get(analysis_id)
+    assert detail is not None
+    return _to_summary(detail)
 
 
 @router.post("/analyses", response_model=AnalysisSummary, status_code=202)
@@ -39,65 +79,14 @@ async def create_analysis(
     request = AnalysisRequest(
         texts=body.texts,
         task=body.task,
-        compare_groups=body.compare_groups,
+        task_params=body.task_params,
         llm_backend=body.llm_backend,
+        case_metadata=body.case_metadata,
+        artifacts=body.artifacts,
+        activity_events=body.activity_events,
+        interaction_edges=body.interaction_edges,
     )
-    authors = sorted({t.author for t in request.texts})
-
-    analysis_id = await store.create(
-        request_json=request.model_dump_json(),
-        task_type=request.task.value,
-        llm_backend=request.llm_backend,
-        text_count=len(request.texts),
-        author_count=len(authors),
-    )
-
-    task = asyncio.create_task(
-        _run_analysis_bg(analysis_id, request, store),
-        name=f"analysis:{analysis_id}",
-    )
-    await analysis_task_registry.register(analysis_id, task)
-
-    detail = await store.get(analysis_id)
-    assert detail is not None
-    return _to_summary(detail)
-
-
-async def _run_analysis_bg(
-    analysis_id: str,
-    request: AnalysisRequest,
-    store: AnalysisStore,
-) -> None:
-    """Background task wrapper for the analysis runner."""
-    try:
-        from text.api.services.analysis_runner import AnalysisRunner
-
-        runner = AnalysisRunner(store)
-        await runner.run(analysis_id, request)
-    except asyncio.CancelledError:
-        logger.info("Analysis %s cancelled before completion", analysis_id)
-        updated = await store.update_status(
-            analysis_id,
-            AnalysisStatus.CANCELED,
-            error_message="Canceled by user",
-            only_if_current={AnalysisStatus.PENDING, AnalysisStatus.RUNNING},
-        )
-        if updated:
-            progress_manager.emit(
-                analysis_id,
-                "analysis_cancelled",
-                {"analysis_id": analysis_id, "reason": "canceled_by_user"},
-            )
-            progress_manager.complete(analysis_id)
-    except ImportError:
-        logger.warning("AnalysisRunner not available, marking analysis as failed")
-        await store.update_status(
-            analysis_id,
-            AnalysisStatus.FAILED,
-            error_message="Analysis runner not available",
-        )
-    finally:
-        await analysis_task_registry.discard(analysis_id)
+    return await _enqueue_analysis_request(request, store=store)
 
 
 @router.get("/analyses", response_model=AnalysisListResponse)
@@ -150,13 +139,13 @@ async def cancel_analysis(
             detail=f"Cannot cancel analysis in '{detail.status.value}' state",
         )
 
-    await analysis_task_registry.cancel(analysis_id)
     updated = await store.update_status(
         analysis_id,
         AnalysisStatus.CANCELED,
         error_message="Canceled by user",
         only_if_current={AnalysisStatus.PENDING, AnalysisStatus.RUNNING},
     )
+    await store.cancel_job(analysis_id)
 
     if updated:
         progress_manager.emit(
@@ -180,3 +169,22 @@ async def delete_analysis(
     deleted = await store.delete(analysis_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Analysis not found")
+
+
+@router.post("/analyses/{analysis_id}/retry", response_model=AnalysisSummary, status_code=202)
+async def retry_analysis(
+    analysis_id: str,
+    body: RetryAnalysisRequest,
+    store: AnalysisStore = Depends(get_store),
+) -> AnalysisSummary:
+    request = await store.get_request(analysis_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    retried_request = request.model_copy(
+        update={
+            "llm_backend": body.llm_backend,
+            "case_metadata": body.case_metadata or request.case_metadata,
+        }
+    )
+    return await _enqueue_analysis_request(retried_request, store=store)

@@ -73,6 +73,9 @@ async def upload_file(
         )
 
     all_texts = []
+    all_artifacts = []
+    all_activity_events = []
+    all_interaction_edges = []
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
         for upload in valid_uploads:
@@ -85,6 +88,9 @@ async def upload_file(
                     detail=f"Failed to parse '{upload.filename}': {exc}",
                 ) from exc
             all_texts.extend(request.texts)
+            all_artifacts.extend(request.artifacts)
+            all_activity_events.extend(request.activity_events)
+            all_interaction_edges.extend(request.interaction_edges)
 
     if not all_texts:
         raise HTTPException(status_code=422, detail="No text entries parsed from uploaded files")
@@ -92,6 +98,9 @@ async def upload_file(
     authors = sorted({t.author for t in all_texts})
     return UploadResponse(
         texts=all_texts,
+        artifacts=all_artifacts,
+        activity_events=all_activity_events,
+        interaction_edges=all_interaction_edges,
         text_count=len(all_texts),
         author_count=len(authors),
         authors=authors,

@@ -4,7 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api } from "@/lib/api-client";
-import type { TextEntry, TaskType } from "@/lib/types";
+import type {
+  ActivityEvent,
+  ArtifactRecord,
+  CaseMetadata,
+  InteractionEdge,
+  TaskParams,
+  TaskType,
+  TextEntry,
+  UploadResponse,
+} from "@/lib/types";
 import { UploadZone } from "@/components/analysis/upload-zone";
 import { ConfigForm } from "@/components/analysis/config-form";
 import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
@@ -14,24 +23,35 @@ export default function NewAnalysisPage() {
   const router = useRouter();
   const { t } = useI18n();
   const [texts, setTexts] = useState<TextEntry[]>([]);
+  const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>([]);
+  const [interactionEdges, setInteractionEdges] = useState<InteractionEdge[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleUpload = (uploadedTexts: TextEntry[]) => {
-    setTexts(uploadedTexts);
+  const handleUpload = (payload: UploadResponse) => {
+    setTexts(payload.texts);
+    setArtifacts(payload.artifacts);
+    setActivityEvents(payload.activity_events);
+    setInteractionEdges(payload.interaction_edges);
   };
 
   const handleSubmit = async (config: {
     task: TaskType;
     llm_backend: string;
-    compare_groups?: string[][];
+    task_params: TaskParams;
+    case_metadata?: CaseMetadata;
   }) => {
     setIsSubmitting(true);
     try {
       const result = await api.createAnalysis({
         texts,
+        artifacts,
         task: config.task,
         llm_backend: config.llm_backend,
-        compare_groups: config.compare_groups,
+        task_params: config.task_params,
+        case_metadata: config.case_metadata,
+        activity_events: activityEvents,
+        interaction_edges: interactionEdges,
       });
       toast.success(t("analysis.startSuccess"), {
         description: `ID: ${result.id}`,
@@ -60,7 +80,7 @@ export default function NewAnalysisPage() {
 
       <StaggerItem>
         <ConfigForm
-          hasTexts={texts.length > 0}
+          texts={texts}
           onSubmit={handleSubmit}
           isSubmitting={isSubmitting}
         />

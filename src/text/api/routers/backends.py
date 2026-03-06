@@ -144,6 +144,23 @@ async def upsert_custom_backend(
     elif "api_key" in body.model_fields_set:
         update_payload["api_key"] = body.api_key
 
+    # Support inheriting API key configuration from an existing backend entry,
+    # so batch-created model variants can reuse the provider credentials.
+    if (
+        not body.clear_api_key
+        and body.inherit_api_key_from
+        and "api_key" not in body.model_fields_set
+        and "api_key_env" not in body.model_fields_set
+    ):
+        source_raw = store.list_raw_backends().get(body.inherit_api_key_from)
+        if isinstance(source_raw, Mapping):
+            inherited_api_key = source_raw.get("api_key")
+            inherited_api_key_env = source_raw.get("api_key_env")
+            if isinstance(inherited_api_key, str) and inherited_api_key.strip():
+                update_payload["api_key"] = inherited_api_key
+            elif isinstance(inherited_api_key_env, str) and inherited_api_key_env.strip():
+                update_payload["api_key_env"] = inherited_api_key_env
+
     store.upsert_backend(normalized_name, update_payload)
 
     raw_backends = store.list_raw_backends()

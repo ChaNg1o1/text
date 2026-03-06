@@ -7,32 +7,28 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from text.ingest.schema import AnalysisRequest, TextEntry
+from text.ingest.schema import (
+    AnalysisRequest,
+    ArtifactKind,
+    ArtifactRecord,
+    DerivationKind,
+    TextEntry,
+    sha256_text,
+)
 
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_EXTENSIONS = {".csv", ".json", ".jsonl", ".txt"}
-
-# Maximum characters per TextEntry for TXT files before chunking.
 MAX_ENTRY_CHARS = 8000
-
-# Maximum file size (in bytes) for a single input file.
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
-
-# Sentence-ending pattern for chunking.
+MAX_FILE_SIZE = 100 * 1024 * 1024
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?。！？])\s+")
 
 
 def load_from_path(path: Path) -> AnalysisRequest:
-    """Load from a file or directory.
-
-    If *path* is a file, delegates to ``load_from_file``.
-    If *path* is a directory, recursively discovers all supported files
-    and merges their ``TextEntry`` lists into a single ``AnalysisRequest``.
-    """
+    """Load from a file or directory."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Input path not found: {path}")
@@ -40,51 +36,22 @@ def load_from_path(path: Path) -> AnalysisRequest:
     if path.is_file():
         return load_from_file(path)
 
-    # Directory: recursive scan.
-    all_entries: list[TextEntry] = []
-    file_count = 0
+    requests: list[AnalysisRequest] = []
     for child in sorted(path.rglob("*")):
         if not child.is_file() or child.suffix.lower() not in _SUPPORTED_EXTENSIONS:
             continue
         try:
-            req = load_from_file(child)
-            all_entries.extend(req.texts)
-            file_count += 1
+            requests.append(load_from_file(child))
         except Exception as exc:
             logger.warning("Skipping %s: %s", child, exc)
 
-    if not all_entries:
+    if not requests:
         raise ValueError(f"No supported files found in directory: {path}")
 
-    logger.info(
-        "Loaded %d entries from %d files in directory: %s", len(all_entries), file_count, path
-    )
-    return AnalysisRequest(texts=all_entries)
-
-
-def _content_id(content: str) -> str:
-    """Generate a deterministic ID from content using BLAKE2b (16 hex chars)."""
-    return hashlib.blake2b(content.encode(), digest_size=8).hexdigest()
-
-
-def _parse_timestamp(raw: str | None) -> datetime | None:
-    """Best-effort timestamp parsing. Returns None on failure."""
-    if not raw or not raw.strip():
-        return None
-    raw = raw.strip()
-    for fmt in (
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d",
-    ):
-        try:
-            return datetime.strptime(raw, fmt)
-        except ValueError:
-            continue
-    logger.warning("Unable to parse timestamp: %r", raw)
-    return None
+    texts = [text for req in requests for text in req.texts]
+    artifacts = [artifact for req in requests for artifact in req.artifacts]
+    logger.info("Loaded %d entries from directory: %s", len(texts), path)
+    return AnalysisRequest(texts=texts, artifacts=artifacts)
 
 
 def load_from_file(path: Path) -> AnalysisRequest:
@@ -108,26 +75,92 @@ def load_from_file(path: Path) -> AnalysisRequest:
 
     if ext == ".json":
         return load_json(path)
-    elif ext == ".csv":
-        return AnalysisRequest(texts=load_csv(path))
-    elif ext == ".txt":
-        return AnalysisRequest(texts=load_txt(path))
-    elif ext == ".jsonl":
-        return AnalysisRequest(texts=load_jsonl(path))
-
-    # Unreachable, but satisfies type checker.
+    if ext == ".csv":
+        return load_csv(path)
+    if ext == ".txt":
+        return load_txt(path)
+    if ext == ".jsonl":
+        return load_jsonl(path)
     raise ValueError(f"Unhandled extension: {ext}")
 
 
-def load_csv(path: Path) -> list[TextEntry]:
-    """Load entries from CSV.
+def _content_id(content: str) -> str:
+    return hashlib.blake2b(content.encode("utf-8"), digest_size=8).hexdigest()
 
-    Expected columns: id, author, content, timestamp (opt), source (opt).
-    If 'id' column is missing or a row has no id, one is generated from content.
-    If 'author' column is missing, defaults to "unknown".
-    """
-    path = Path(path)
+
+def _artifact_id(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def _parse_timestamp(raw: str | None) -> datetime | None:
+    if not raw or not raw.strip():
+        return None
+    raw = raw.strip()
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    ):
+        try:
+            dt = datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    logger.warning("Unable to parse timestamp: %r", raw)
+    return None
+
+
+def _make_manual_artifact(
+    *,
+    source_name: str,
+    content: str,
+    operator: str | None = None,
+    notes: str | None = None,
+) -> ArtifactRecord:
+    sha256 = sha256_text(content)
+    return ArtifactRecord(
+        artifact_id=_artifact_id(f"{source_name}:{sha256}"),
+        kind=ArtifactKind.MANUAL_ENTRY,
+        sha256=sha256,
+        byte_count=len(content.encode("utf-8")),
+        source_name=source_name,
+        acquisition_timestamp=datetime.now(tz=timezone.utc),
+        operator=operator,
+        transform_chain=["manual_import"],
+        notes=notes,
+    )
+
+
+def _entry_from_content(
+    *,
+    content: str,
+    author: str,
+    source: str | None,
+    timestamp: datetime | None,
+    artifact: ArtifactRecord,
+    entry_id: str | None = None,
+) -> TextEntry:
+    return TextEntry(
+        id=entry_id or _content_id(content),
+        author=author,
+        content=content,
+        timestamp=timestamp,
+        source=source,
+        artifact_id=artifact.artifact_id,
+        content_sha256=artifact.sha256,
+        derivation_kind=DerivationKind.MANUAL_ENTRY
+        if artifact.kind == ArtifactKind.MANUAL_ENTRY
+        else DerivationKind.ORIGINAL,
+    )
+
+
+def load_csv(path: Path) -> AnalysisRequest:
     entries: list[TextEntry] = []
+    artifacts: list[ArtifactRecord] = []
 
     with path.open(newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
@@ -141,110 +174,105 @@ def load_csv(path: Path) -> list[TextEntry]:
             )
 
         for row_num, row in enumerate(reader, start=2):
-            # Normalize keys to lowercase, strip whitespace
             row = {k.strip().lower(): v.strip() if v else "" for k, v in row.items()}
-
             content = row.get("content", "")
             if not content:
                 logger.warning("Skipping empty row at line %d", row_num)
                 continue
 
-            entry_id = row.get("id", "") or _content_id(content)
-            author = row.get("author", "") or "unknown"
-            timestamp = _parse_timestamp(row.get("timestamp"))
-            source = row.get("source") or None
-
+            artifact = _make_manual_artifact(
+                source_name=f"{path.name}:line:{row_num}",
+                content=content,
+            )
+            artifacts.append(artifact)
             entries.append(
-                TextEntry(
-                    id=entry_id,
-                    author=author,
+                _entry_from_content(
                     content=content,
-                    timestamp=timestamp,
-                    source=source,
+                    author=row.get("author", "") or "unknown",
+                    source=row.get("source") or path.name,
+                    timestamp=_parse_timestamp(row.get("timestamp")),
+                    artifact=artifact,
+                    entry_id=row.get("id", "") or None,
                 )
             )
 
     logger.info("Loaded %d entries from CSV: %s", len(entries), path)
-    return entries
+    return AnalysisRequest(texts=entries, artifacts=artifacts)
 
 
 def load_json(path: Path) -> AnalysisRequest:
-    """Load an AnalysisRequest from JSON.
-
-    Supports two formats:
-    1. AnalysisRequest schema (object with "texts" key)
-    2. Plain array of strings (each string becomes a TextEntry with author
-       inferred from the filename)
-    """
-    path = Path(path)
     with path.open(encoding="utf-8") as fh:
         data = json.load(fh)
 
-    # --- Format 2: plain array of strings ---
     if isinstance(data, list):
-        # Infer author from parent directory name (e.g. .../GeoffreyHuntley/text.json)
         author = path.parent.name if path.parent.name else "unknown"
-        entries: list[TextEntry] = []
-        for item in data:
-            if isinstance(item, str) and item.strip():
-                entries.append(
-                    TextEntry(
-                        id=_content_id(item),
+        texts: list[TextEntry] = []
+        artifacts: list[ArtifactRecord] = []
+        for index, item in enumerate(data, start=1):
+            if isinstance(item, str):
+                content = item.strip()
+                if not content:
+                    continue
+                artifact = _make_manual_artifact(
+                    source_name=f"{path.name}:item:{index}",
+                    content=content,
+                )
+                artifacts.append(artifact)
+                texts.append(
+                    _entry_from_content(
+                        content=content,
                         author=author,
-                        content=item,
+                        source=path.name,
+                        timestamp=None,
+                        artifact=artifact,
                     )
                 )
             elif isinstance(item, dict):
-                content = item.get("content", "")
+                content = str(item.get("content", "")).strip()
                 if not content:
                     continue
-                if not item.get("id"):
-                    item["id"] = _content_id(content)
-                if not item.get("author"):
-                    item["author"] = author
-                entries.append(TextEntry.model_validate(item))
-        logger.info("Loaded %d entries from JSON array: %s", len(entries), path)
-        return AnalysisRequest(texts=entries)
+                artifact = _make_manual_artifact(
+                    source_name=f"{path.name}:item:{index}",
+                    content=content,
+                )
+                artifacts.append(artifact)
+                texts.append(
+                    _entry_from_content(
+                        content=content,
+                        author=str(item.get("author") or author),
+                        source=str(item.get("source") or path.name),
+                        timestamp=_parse_timestamp(item.get("timestamp")),
+                        artifact=artifact,
+                        entry_id=str(item.get("id") or "") or None,
+                    )
+                )
+        return AnalysisRequest(texts=texts, artifacts=artifacts)
 
-    # --- Format 1: AnalysisRequest object ---
     if not isinstance(data, dict):
         raise ValueError(f"Expected JSON object or array at top level, got {type(data).__name__}")
 
-    # Auto-generate missing IDs in texts array
     if "texts" in data and isinstance(data["texts"], list):
         for item in data["texts"]:
             if isinstance(item, dict) and not item.get("id"):
-                content = item.get("content", "")
+                content = str(item.get("content", ""))
                 item["id"] = _content_id(content) if content else _content_id("")
 
     request = AnalysisRequest.model_validate(data)
+    request = _ensure_artifacts(request, source_name=path.name)
     logger.info("Loaded AnalysisRequest with %d texts from JSON: %s", len(request.texts), path)
     return request
 
 
-def load_txt(path: Path) -> list[TextEntry]:
-    """Load plain text file. Paragraphs (separated by blank lines) become entries.
-
-    If no blank-line separators are found, each non-empty line becomes an entry.
-    Segments exceeding ``MAX_ENTRY_CHARS`` are further split at sentence boundaries.
-    """
-    path = Path(path)
+def load_txt(path: Path) -> AnalysisRequest:
     try:
         raw = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         logger.warning("File %s is not valid UTF-8; falling back to lossy decoding", path)
         raw = path.read_bytes().decode("utf-8", errors="replace")
 
-    # Try paragraph-based splitting first
     paragraphs = [p.strip() for p in raw.split("\n\n") if p.strip()]
+    segments = paragraphs if len(paragraphs) > 1 else [line.strip() for line in raw.splitlines() if line.strip()]
 
-    if len(paragraphs) <= 1:
-        # Fall back to line-by-line if there's only one or zero paragraphs
-        segments = [line.strip() for line in raw.splitlines() if line.strip()]
-    else:
-        segments = paragraphs
-
-    # Split oversized segments at sentence boundaries.
     final_segments: list[str] = []
     for seg in segments:
         if len(seg) <= MAX_ENTRY_CHARS:
@@ -252,22 +280,26 @@ def load_txt(path: Path) -> list[TextEntry]:
         else:
             final_segments.extend(_chunk_text(seg, MAX_ENTRY_CHARS))
 
-    entries: list[TextEntry] = []
-    for segment in final_segments:
-        entries.append(
-            TextEntry(
-                id=_content_id(segment),
-                author="unknown",
+    texts: list[TextEntry] = []
+    artifacts: list[ArtifactRecord] = []
+    for index, segment in enumerate(final_segments, start=1):
+        artifact = _make_manual_artifact(source_name=f"{path.name}:segment:{index}", content=segment)
+        artifacts.append(artifact)
+        texts.append(
+            _entry_from_content(
                 content=segment,
+                author="unknown",
+                source=path.name,
+                timestamp=None,
+                artifact=artifact,
             )
         )
 
-    logger.info("Loaded %d entries from TXT: %s", len(entries), path)
-    return entries
+    logger.info("Loaded %d entries from TXT: %s", len(texts), path)
+    return AnalysisRequest(texts=texts, artifacts=artifacts)
 
 
 def _chunk_text(text: str, max_chars: int) -> list[str]:
-    """Split *text* into chunks of at most *max_chars*, preferring sentence boundaries."""
     sentences = _SENTENCE_END_RE.split(text)
     chunks: list[str] = []
     current: list[str] = []
@@ -277,35 +309,28 @@ def _chunk_text(text: str, max_chars: int) -> list[str]:
         sent = sent.strip()
         if not sent:
             continue
-        sent_len = len(sent)
-        # If a single sentence exceeds max_chars, include it as-is.
-        if sent_len > max_chars:
+        if len(sent) > max_chars:
             if current:
                 chunks.append(" ".join(current))
                 current = []
                 current_len = 0
             chunks.append(sent)
             continue
-        if current_len + sent_len + 1 > max_chars and current:
+        if current_len + len(sent) + 1 > max_chars and current:
             chunks.append(" ".join(current))
             current = []
             current_len = 0
         current.append(sent)
-        current_len += sent_len + 1
+        current_len += len(sent) + 1
 
     if current:
         chunks.append(" ".join(current))
-
     return chunks
 
 
-def load_jsonl(path: Path) -> list[TextEntry]:
-    """Load entries from JSON Lines format. One TextEntry JSON object per line.
-
-    Missing 'id' fields are auto-generated. Missing 'author' defaults to "unknown".
-    """
-    path = Path(path)
-    entries: list[TextEntry] = []
+def load_jsonl(path: Path) -> AnalysisRequest:
+    texts: list[TextEntry] = []
+    artifacts: list[ArtifactRecord] = []
 
     with path.open(encoding="utf-8") as fh:
         for line_num, line in enumerate(fh, start=1):
@@ -323,13 +348,47 @@ def load_jsonl(path: Path) -> list[TextEntry]:
                     f"Expected JSON object at line {line_num}, got {type(data).__name__}"
                 )
 
-            content = data.get("content", "")
-            if not data.get("id"):
-                data["id"] = _content_id(content) if content else _content_id("")
-            if not data.get("author"):
-                data["author"] = "unknown"
+            content = str(data.get("content", "")).strip()
+            artifact = _make_manual_artifact(
+                source_name=f"{path.name}:line:{line_num}",
+                content=content,
+            )
+            artifacts.append(artifact)
+            texts.append(
+                _entry_from_content(
+                    content=content,
+                    author=str(data.get("author") or "unknown"),
+                    source=str(data.get("source") or path.name),
+                    timestamp=_parse_timestamp(data.get("timestamp")),
+                    artifact=artifact,
+                    entry_id=str(data.get("id") or "") or None,
+                )
+            )
 
-            entries.append(TextEntry.model_validate(data))
+    logger.info("Loaded %d entries from JSONL: %s", len(texts), path)
+    return AnalysisRequest(texts=texts, artifacts=artifacts)
 
-    logger.info("Loaded %d entries from JSONL: %s", len(entries), path)
-    return entries
+
+def _ensure_artifacts(request: AnalysisRequest, *, source_name: str) -> AnalysisRequest:
+    artifacts_by_id = {artifact.artifact_id: artifact for artifact in request.artifacts}
+    normalized_texts: list[TextEntry] = []
+    for index, text in enumerate(request.texts, start=1):
+        if text.artifact_id and text.artifact_id in artifacts_by_id:
+            normalized_texts.append(text)
+            continue
+        artifact = _make_manual_artifact(
+            source_name=f"{source_name}:text:{index}",
+            content=text.content,
+            notes="Synthetic artifact generated during import.",
+        )
+        artifacts_by_id[artifact.artifact_id] = artifact
+        normalized_texts.append(
+            text.model_copy(
+                update={
+                    "artifact_id": artifact.artifact_id,
+                    "content_sha256": artifact.sha256,
+                    "derivation_kind": DerivationKind.MANUAL_ENTRY,
+                }
+            )
+        )
+    return request.model_copy(update={"texts": normalized_texts, "artifacts": list(artifacts_by_id.values())})

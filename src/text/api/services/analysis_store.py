@@ -45,6 +45,31 @@ _SUMMARY_COLUMNS_SQL = (
     "created_at, completed_at, error_message"
 )
 
+_CREATE_JOBS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    analysis_id      TEXT PRIMARY KEY,
+    status           TEXT NOT NULL,
+    dedupe_key       TEXT NOT NULL,
+    lease_owner      TEXT,
+    lease_expires_at REAL,
+    heartbeat_at     REAL,
+    retry_count      INTEGER NOT NULL DEFAULT 0,
+    error_message    TEXT,
+    created_at       REAL NOT NULL,
+    updated_at       REAL NOT NULL
+);
+"""
+
+_CREATE_PROGRESS_EVENTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS analysis_progress_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    analysis_id TEXT NOT NULL,
+    event       TEXT NOT NULL,
+    data_json   TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
+"""
+
 
 class AnalysisStore:
     """Async SQLite store for analysis records, following the FeatureCache pattern."""
@@ -60,6 +85,15 @@ class AnalysisStore:
             self._db.row_factory = aiosqlite.Row
             await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
+            await self._ensure_column(
+                self._db, table="analyses", column="perf_json", col_type="TEXT"
+            )
+            await self._db.execute(_CREATE_JOBS_TABLE_SQL)
+            await self._db.execute(_CREATE_PROGRESS_EVENTS_TABLE_SQL)
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_progress_events_analysis_id_id "
+                "ON analysis_progress_events (analysis_id, id)"
+            )
             await self._ensure_column(
                 self._db, table="analyses", column="perf_json", col_type="TEXT"
             )
@@ -277,9 +311,180 @@ class AnalysisStore:
     async def delete(self, analysis_id: str) -> bool:
         """Delete an analysis. Returns True if a row was deleted."""
         db = await self._ensure_db()
+        await db.execute("DELETE FROM analysis_jobs WHERE analysis_id = ?", (analysis_id,))
+        await db.execute("DELETE FROM analysis_progress_events WHERE analysis_id = ?", (analysis_id,))
         cursor = await db.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
         await db.commit()
         return cursor.rowcount > 0
+
+    async def append_progress_event(
+        self,
+        analysis_id: str,
+        *,
+        event: str,
+        data_json: str,
+        created_at: float | None = None,
+        keep_latest: int = 512,
+    ) -> None:
+        db = await self._ensure_db()
+        ts = created_at or time.time()
+        await db.execute(
+            """
+            INSERT INTO analysis_progress_events (analysis_id, event, data_json, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (analysis_id, event, data_json, ts),
+        )
+        await db.execute(
+            """
+            DELETE FROM analysis_progress_events
+            WHERE analysis_id = ?
+              AND id NOT IN (
+                SELECT id
+                FROM analysis_progress_events
+                WHERE analysis_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+              )
+            """,
+            (analysis_id, analysis_id, keep_latest),
+        )
+        await db.commit()
+
+    async def list_progress_events(
+        self,
+        analysis_id: str,
+        *,
+        limit: int = 256,
+    ) -> list[dict[str, Any]]:
+        db = await self._ensure_db()
+        async with db.execute(
+            """
+            SELECT event, data_json
+            FROM analysis_progress_events
+            WHERE analysis_id = ?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (analysis_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["data_json"]))
+            except json.JSONDecodeError:
+                logger.warning("Failed to decode progress event payload for analysis %s", analysis_id)
+                continue
+            if isinstance(payload, dict):
+                events.append({"event": str(row["event"]), "data": payload})
+        return events
+
+    async def enqueue_job(self, analysis_id: str, dedupe_key: str) -> None:
+        db = await self._ensure_db()
+        now = time.time()
+        await db.execute(
+            """
+            INSERT INTO analysis_jobs (
+                analysis_id, status, dedupe_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(analysis_id) DO UPDATE SET
+                status = excluded.status,
+                dedupe_key = excluded.dedupe_key,
+                updated_at = excluded.updated_at
+            """,
+            (analysis_id, "pending", dedupe_key, now, now),
+        )
+        await db.commit()
+
+    async def lease_next_job(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: float = 30.0,
+    ) -> tuple[str, AnalysisRequest] | None:
+        db = await self._ensure_db()
+        now = time.time()
+        async with db.execute(
+            """
+            SELECT analysis_id
+            FROM analysis_jobs
+            WHERE status = 'pending'
+               OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (now,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+
+        analysis_id = str(row["analysis_id"])
+        lease_expires_at = now + lease_seconds
+        cursor = await db.execute(
+            """
+            UPDATE analysis_jobs
+            SET status = 'running',
+                lease_owner = ?,
+                lease_expires_at = ?,
+                heartbeat_at = ?,
+                updated_at = ?
+            WHERE analysis_id = ?
+              AND (status = 'pending' OR (status = 'running' AND lease_expires_at < ?))
+            """,
+            (worker_id, lease_expires_at, now, now, analysis_id, now),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            return None
+        request = await self.get_request(analysis_id)
+        if request is None:
+            return None
+        return analysis_id, request
+
+    async def heartbeat_job(
+        self,
+        analysis_id: str,
+        *,
+        worker_id: str,
+        lease_seconds: float = 30.0,
+    ) -> None:
+        db = await self._ensure_db()
+        now = time.time()
+        await db.execute(
+            """
+            UPDATE analysis_jobs
+            SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+            WHERE analysis_id = ? AND lease_owner = ?
+            """,
+            (now, now + lease_seconds, now, analysis_id, worker_id),
+        )
+        await db.commit()
+
+    async def complete_job(
+        self,
+        analysis_id: str,
+        *,
+        status: str,
+        error_message: str | None = None,
+    ) -> None:
+        db = await self._ensure_db()
+        now = time.time()
+        await db.execute(
+            """
+            UPDATE analysis_jobs
+            SET status = ?, error_message = ?, lease_owner = NULL,
+                lease_expires_at = NULL, heartbeat_at = ?, updated_at = ?
+            WHERE analysis_id = ?
+            """,
+            (status, error_message, now, now, analysis_id),
+        )
+        await db.commit()
+
+    async def cancel_job(self, analysis_id: str) -> None:
+        await self.complete_job(analysis_id, status="canceled", error_message="Canceled by user")
 
     # ------------------------------------------------------------------
     # Row mapping
@@ -312,29 +517,9 @@ class AnalysisStore:
         from text.ingest.schema import ForensicReport
 
         report = None
-        report_backfilled = False
         if row["report_json"]:
             try:
                 report = ForensicReport.model_validate_json(row["report_json"])
-                if report.taste_assessment is None or not report.insights:
-                    try:
-                        from text.agents.taste import build_taste_outputs
-
-                        assessment, insights = build_taste_outputs(
-                            report.agent_reports,
-                            report.contradictions,
-                        )
-                        if report.taste_assessment is None and assessment is not None:
-                            report.taste_assessment = assessment
-                            report_backfilled = True
-                        if not report.insights:
-                            report.insights = insights
-                            report_backfilled = len(insights) > 0 or report_backfilled
-                    except Exception:
-                        logger.warning(
-                            "Failed to backfill taste insights for analysis %s",
-                            row["id"],
-                        )
             except Exception:
                 logger.warning("Failed to deserialize report for analysis %s", row["id"])
 
@@ -364,5 +549,5 @@ class AnalysisStore:
                 report=report,
                 perf=perf,
             ),
-            report_backfilled,
+            False,
         )

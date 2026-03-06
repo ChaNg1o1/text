@@ -9,9 +9,15 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, field_validator
 
+from text.app_settings import AppSettingsDocument
 from text.ingest.schema import (
+    ActivityEvent,
+    ArtifactRecord,
+    CaseMetadata,
     FeatureVector,
     ForensicReport,
+    InteractionEdge,
+    TaskParams,
     TaskType,
     TextEntry,
 )
@@ -37,6 +43,9 @@ class AnalysisStatus(str, Enum):
 
 class UploadResponse(BaseModel):
     texts: list[TextEntry]
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
+    activity_events: list[ActivityEvent] = Field(default_factory=list)
+    interaction_edges: list[InteractionEdge] = Field(default_factory=list)
     text_count: int
     author_count: int
     authors: list[str]
@@ -50,8 +59,17 @@ class UploadResponse(BaseModel):
 class CreateAnalysisRequest(BaseModel):
     texts: list[TextEntry]
     task: TaskType = TaskType.FULL
-    compare_groups: list[list[str]] | None = None
+    task_params: TaskParams = Field(default_factory=TaskParams)
     llm_backend: str = Field(min_length=1)
+    case_metadata: CaseMetadata | None = None
+    artifacts: list[ArtifactRecord] = Field(default_factory=list)
+    activity_events: list[ActivityEvent] = Field(default_factory=list)
+    interaction_edges: list[InteractionEdge] = Field(default_factory=list)
+
+
+class RetryAnalysisRequest(BaseModel):
+    llm_backend: str = Field(min_length=1)
+    case_metadata: CaseMetadata | None = None
 
 
 class AnalysisSummary(BaseModel):
@@ -144,6 +162,7 @@ class UpsertCustomBackendRequest(BaseModel):
     api_base: str = Field(min_length=1, max_length=2048)
     api_key: str | None = None
     api_key_env: str | None = None
+    inherit_api_key_from: str | None = None
     clear_api_key: bool = False
 
     @field_validator("api_base")
@@ -198,12 +217,48 @@ class UpsertCustomBackendRequest(BaseModel):
         normalized = value.strip()
         return normalized or None
 
+    @field_validator("inherit_api_key_from")
+    @classmethod
+    def validate_inherit_api_key_from(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
 
 class BackendTestResponse(BaseModel):
     backend: str
     success: bool
     detail: str
     latency_ms: int | None = None
+
+
+class AppSettingsResponse(AppSettingsDocument):
+    pass
+
+
+class QaSuggestionsRequest(BaseModel):
+    count: int = Field(default=4, ge=1, le=8)
+    exclude: list[str] = Field(default_factory=list)
+
+
+class QaSuggestionsResponse(BaseModel):
+    suggestions: list[str] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------
+# Progress
+# ------------------------------------------------------------------
+
+
+class ProgressEventRecord(BaseModel):
+    event: str
+    data: dict[str, object]
+
+
+class ProgressSnapshotResponse(BaseModel):
+    analysis_id: str
+    events: list[ProgressEventRecord] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------

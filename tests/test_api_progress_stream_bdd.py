@@ -99,3 +99,65 @@ def test_given_failed_analysis_when_requesting_progress_then_stream_returns_fail
         assert payload["analysis_id"] == analysis_id
         assert payload["status"] == AnalysisStatus.FAILED.value
         assert payload["error"] == "boom"
+
+
+def test_given_running_analysis_with_persisted_events_when_requesting_snapshot_then_returns_history(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id = _create_analysis_with_status(deps._store, AnalysisStatus.RUNNING)
+        asyncio.run(
+            deps._store.append_progress_event(
+                analysis_id,
+                event="analysis_started",
+                data_json=json.dumps(
+                    {
+                        "analysis_id": analysis_id,
+                        "timestamp": 123.0,
+                    }
+                ),
+                created_at=123.0,
+            )
+        )
+        asyncio.run(
+            deps._store.append_progress_event(
+                analysis_id,
+                event="log",
+                data_json=json.dumps(
+                    {
+                        "message": "worker booted",
+                        "source": "analysis_runner",
+                        "timestamp": 124.0,
+                    }
+                ),
+                created_at=124.0,
+            )
+        )
+
+        response = client.get(f"/api/v1/analyses/{analysis_id}/progress/snapshot")
+        assert response.status_code == 200
+
+        payload = response.json()
+        assert payload["analysis_id"] == analysis_id
+        assert payload["events"] == [
+            {
+                "event": "analysis_started",
+                "data": {
+                    "analysis_id": analysis_id,
+                    "timestamp": 123.0,
+                },
+            },
+            {
+                "event": "log",
+                "data": {
+                    "message": "worker booted",
+                    "source": "analysis_runner",
+                    "timestamp": 124.0,
+                },
+            },
+        ]

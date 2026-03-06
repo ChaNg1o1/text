@@ -1,8 +1,70 @@
-// Enums
-export type TaskType = "attribution" | "profiling" | "sockpuppet" | "full";
+export type TaskType =
+  | "verification"
+  | "closed_set_id"
+  | "open_set_id"
+  | "clustering"
+  | "profiling"
+  | "sockpuppet"
+  | "full";
 export type AnalysisStatus = "pending" | "running" | "completed" | "failed" | "canceled";
+export type ConclusionGrade =
+  | "strong_support"
+  | "moderate_support"
+  | "inconclusive"
+  | "moderate_against"
+  | "strong_against";
+export type DerivationKind = "original" | "normalized" | "ocr" | "transcribed" | "manual_entry";
+export type ArtifactKind = "raw_text" | "file_export" | "screenshot_ocr" | "transcript" | "manual_entry";
 
-// Data models
+export interface CaseMetadata {
+  case_id?: string;
+  client?: string;
+  analyst?: string;
+  notes?: string;
+}
+
+export interface TaskParams {
+  questioned_text_ids: string[];
+  reference_author_ids: string[];
+  candidate_author_ids: string[];
+  cluster_text_ids: string[];
+  subject_ids: string[];
+  account_ids: string[];
+  top_k: number;
+}
+
+export interface ArtifactRecord {
+  artifact_id: string;
+  kind: ArtifactKind;
+  sha256: string;
+  byte_count: number;
+  source_name: string;
+  acquisition_timestamp?: string;
+  operator?: string;
+  transform_chain: string[];
+  notes?: string;
+}
+
+export interface ActivityEvent {
+  event_id: string;
+  account_id: string;
+  event_type: string;
+  occurred_at: string;
+  thread_id?: string;
+  topic?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface InteractionEdge {
+  source_account_id: string;
+  target_account_id: string;
+  relation_type: string;
+  weight: number;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface TextEntry {
   id: string;
   author: string;
@@ -10,6 +72,9 @@ export interface TextEntry {
   timestamp?: string;
   source?: string;
   metadata?: Record<string, unknown>;
+  artifact_id?: string;
+  content_sha256?: string;
+  derivation_kind?: DerivationKind;
 }
 
 export interface RustFeatures {
@@ -68,6 +133,19 @@ export interface AgentFinding {
   confidence: number;
   evidence: string[];
   metadata?: Record<string, unknown>;
+  opinion_kind?: "deterministic_evidence" | "interpretive_opinion";
+}
+
+export interface LLMCallRecord {
+  agent: string;
+  model_id: string;
+  timestamp: string;
+  prompt_hash: string;
+  response_hash: string;
+  token_count_in?: number;
+  token_count_out?: number;
+  temperature?: number;
+  cache_hit?: boolean;
 }
 
 export interface AgentReport {
@@ -76,69 +154,141 @@ export interface AgentReport {
   findings: AgentFinding[];
   summary: string;
   raw_llm_response?: string;
+  llm_call?: LLMCallRecord;
 }
 
-export interface PersonaDimension {
+export interface EvidenceItem {
+  evidence_id: string;
+  label: string;
+  summary: string;
+  source_text_ids: string[];
+  excerpts: string[];
+  metrics: Record<string, number>;
+  provenance_refs: string[];
+  interpretive_opinion: boolean;
+}
+
+export interface ReportConclusion {
+  key: string;
+  task: TaskType;
+  statement: string;
+  grade: ConclusionGrade;
+  score?: number;
+  score_type?: string;
+  subject?: string;
+  evidence_ids: string[];
+  counter_evidence: string[];
+  limitations: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReportMaterial {
+  artifact_id: string;
+  source_name: string;
+  sha256: string;
+  byte_count: number;
+  text_ids: string[];
+  note?: string;
+}
+
+export interface MethodRecord {
+  key: string;
+  title: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  threshold_profile_version?: string;
+}
+
+export interface ResultRecord {
+  key: string;
+  title: string;
+  body: string;
+  evidence_ids: string[];
+  interpretive_opinion: boolean;
+  supporting_agents: string[];
+}
+
+export interface WritingProfileDimension {
   key: string;
   label: string;
   score: number;
   confidence: number;
+  dimension_type: "observable" | "speculative";
   evidence_spans: string[];
   counter_evidence: string[];
 }
 
-export interface PersonaProfile {
+export interface WritingProfile {
   subject: string;
   summary: string;
-  dimensions: PersonaDimension[];
-  overall_confidence?: number;
+  dimensions: WritingProfileDimension[];
 }
 
-export interface InsightItem {
-  rank: number;
-  discipline: string;
-  category: string;
-  insight: string;
-  confidence: number;
-  taste_score: number;
-  dimension_scores: Record<string, number>;
-  supporting_disciplines: string[];
-  evidence: string[];
-  metadata?: Record<string, unknown>;
+export interface ReproducibilityInfo {
+  report_sha256?: string;
+  request_fingerprint?: string;
+  pipeline_version: string;
+  rust_feature_version: string;
+  python_feature_version: string;
+  threshold_profile_version: string;
+  prompt_template_version: string;
+  model_id?: string;
+  generated_at: string;
+  parameter_snapshot: Record<string, unknown>;
 }
 
-export interface TasteAssessment {
-  overall_score: number;
-  dimension_scores: Record<string, number>;
-  strengths: string[];
-  risks: string[];
-  methodology: string;
+export interface ProvenanceRecord {
+  report_id: string;
+  input_manifest: ArtifactRecord[];
+  pipeline_version: string;
+  feature_extractor_version: Record<string, string>;
+  threshold_profile_version: string;
+  llm_calls: LLMCallRecord[];
+  report_sha256?: string;
+  created_at: string;
+  operator?: string;
+}
+
+export interface AppendixItem {
+  key: string;
+  title: string;
+  content: string;
 }
 
 export interface ForensicReport {
   request: AnalysisRequest;
-  agent_reports: AgentReport[];
-  synthesis: string;
-  confidence_scores: Record<string, number>;
-  contradictions: string[];
-  recommendations: string[];
-  persona_profiles: PersonaProfile[];
+  summary: string;
+  conclusions: ReportConclusion[];
+  materials: ReportMaterial[];
+  methods: MethodRecord[];
+  results: ResultRecord[];
+  limitations: string[];
+  reproducibility: ReproducibilityInfo;
+  appendix: AppendixItem[];
+  provenance?: ProvenanceRecord;
+  writing_profiles: WritingProfile[];
+  evidence_items: EvidenceItem[];
   anomaly_samples: AnomalySample[];
-  insights?: InsightItem[];
-  taste_assessment?: TasteAssessment;
+  agent_reports: AgentReport[];
   created_at: string;
 }
 
-// API models
 export interface AnalysisRequest {
   texts: TextEntry[];
   task: TaskType;
-  compare_groups?: string[][];
+  task_params: TaskParams;
   llm_backend: string;
+  case_metadata?: CaseMetadata;
+  artifacts: ArtifactRecord[];
+  activity_events: ActivityEvent[];
+  interaction_edges: InteractionEdge[];
 }
 
 export interface UploadResponse {
   texts: TextEntry[];
+  artifacts: ArtifactRecord[];
+  activity_events: ActivityEvent[];
+  interaction_edges: InteractionEdge[];
   text_count: number;
   author_count: number;
   authors: string[];
@@ -147,8 +297,12 @@ export interface UploadResponse {
 export interface CreateAnalysisRequest {
   texts: TextEntry[];
   task: TaskType;
-  compare_groups?: string[][];
+  task_params: TaskParams;
   llm_backend: string;
+  case_metadata?: CaseMetadata;
+  artifacts: ArtifactRecord[];
+  activity_events: ActivityEvent[];
+  interaction_edges: InteractionEdge[];
 }
 
 export interface AnalysisSummary {
@@ -223,8 +377,9 @@ export interface UpsertCustomBackendRequest {
   provider: "openai_compatible" | "anthropic_compatible";
   model: string;
   api_base: string;
-  api_key?: string;
-  api_key_env?: string;
+  api_key?: string | null;
+  api_key_env?: string | null;
+  inherit_api_key_from?: string | null;
   clear_api_key?: boolean;
 }
 
@@ -235,7 +390,44 @@ export interface BackendTestResponse {
   latency_ms?: number;
 }
 
-// SSE Events
+export interface PromptOverrides {
+  stylometry: string;
+  writing_process: string;
+  computational: string;
+  sociolinguistics: string;
+  synthesis: string;
+  qa: string;
+}
+
+export interface AnalysisDefaults {
+  default_llm_backend?: string;
+  default_task: TaskType;
+  default_top_k: number;
+  default_case_analyst: string;
+  default_case_client: string;
+  qa_temperature: number;
+  qa_max_tokens: number;
+}
+
+export interface AppSettings {
+  analysis_defaults: AnalysisDefaults;
+  prompt_overrides: PromptOverrides;
+}
+
+export interface RetryAnalysisRequest {
+  llm_backend: string;
+  case_metadata?: CaseMetadata;
+}
+
+export interface QaSuggestionsRequest {
+  count?: number;
+  exclude?: string[];
+}
+
+export interface QaSuggestionsResponse {
+  suggestions: string[];
+}
+
 export type SSEEventType =
   | "analysis_started"
   | "phase_changed"
@@ -253,4 +445,14 @@ export type SSEEventType =
 export interface SSEEventData {
   timestamp: number;
   [key: string]: unknown;
+}
+
+export interface ProgressEventRecord {
+  event: SSEEventType;
+  data: SSEEventData;
+}
+
+export interface ProgressSnapshotResponse {
+  analysis_id: string;
+  events: ProgressEventRecord[];
 }

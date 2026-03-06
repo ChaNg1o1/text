@@ -15,14 +15,14 @@ import { cn } from "@/lib/utils";
 
 const AGENT_ORDER = [
   "stylometry",
-  "psycholinguistics",
+  "writing_process",
   "computational",
   "sociolinguistics",
 ];
 
 const AGENT_LABELS: Record<string, string> = {
   stylometry: "Stylometry",
-  psycholinguistics: "Psycholinguistics",
+  writing_process: "Writing Process",
   computational_linguistics: "Computational Linguistics",
   computational: "Computational Linguistics",
   sociolinguistics: "Sociolinguistics",
@@ -33,35 +33,27 @@ interface AgentSectionProps {
 }
 
 function confidenceTone(c: number): {
-  rail: string;
   chip: string;
   shell: string;
-  hover: string;
   marker: string;
 } {
   if (c >= 0.75) {
     return {
-      rail: "from-emerald-400 via-emerald-500 to-teal-500",
       chip: "text-emerald-700 dark:text-emerald-300 border-emerald-500/40 bg-emerald-500/10",
       shell: "border-emerald-500/30 shadow-[0_0_0_1px_hsl(var(--background))_inset,0_12px_28px_-18px_rgba(16,185,129,0.65)]",
-      hover: "hover:shadow-[0_0_0_1px_hsl(var(--background))_inset,0_18px_34px_-18px_rgba(16,185,129,0.8)]",
       marker: "bg-emerald-500/80",
     };
   }
   if (c >= 0.45) {
     return {
-      rail: "from-amber-300 via-amber-400 to-orange-500",
       chip: "text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10",
       shell: "border-amber-500/30 shadow-[0_0_0_1px_hsl(var(--background))_inset,0_12px_28px_-18px_rgba(245,158,11,0.65)]",
-      hover: "hover:shadow-[0_0_0_1px_hsl(var(--background))_inset,0_18px_34px_-18px_rgba(245,158,11,0.85)]",
       marker: "bg-amber-500/80",
     };
   }
   return {
-    rail: "from-rose-400 via-red-500 to-fuchsia-500",
     chip: "text-rose-700 dark:text-rose-300 border-rose-500/40 bg-rose-500/10",
     shell: "border-rose-500/30 shadow-[0_0_0_1px_hsl(var(--background))_inset,0_12px_28px_-18px_rgba(244,63,94,0.6)]",
-    hover: "hover:shadow-[0_0_0_1px_hsl(var(--background))_inset,0_18px_34px_-18px_rgba(244,63,94,0.78)]",
     marker: "bg-rose-500/80",
   };
 }
@@ -78,20 +70,19 @@ function FindingCard({
   return (
     <article
       className={cn(
-        "group/finding relative overflow-hidden rounded-2xl border bg-card motion-safe:transition-[transform,box-shadow,border-color] motion-safe:duration-300 hover:-translate-y-0.5",
+        "relative overflow-hidden rounded-2xl border bg-card",
         tone.shell,
-        tone.hover,
       )}
     >
-      <div className={cn("absolute inset-y-0 left-0 w-[5px] bg-gradient-to-b", tone.rail)} />
       <div className="pointer-events-none absolute inset-0 opacity-35 [background-image:radial-gradient(circle_at_1px_1px,hsl(var(--foreground)/0.08)_1px,transparent_0)] [background-size:11px_11px]" />
-      <div className="pointer-events-none absolute -left-[44%] top-0 h-full w-[36%] -skew-x-12 bg-gradient-to-r from-transparent via-white/30 to-transparent opacity-0 blur-[1px] transition-all duration-700 group-hover/finding:left-[118%] group-hover/finding:opacity-100 dark:via-white/10" />
-      <div className="pointer-events-none absolute inset-0 rounded-[inherit] ring-1 ring-transparent transition-colors duration-300 group-hover/finding:ring-foreground/15" />
-      <div className="relative space-y-3 p-5 pl-6">
+      <div className="relative space-y-3 p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="text-xs font-semibold tracking-wide">
               {finding.category}
+            </Badge>
+            <Badge variant="secondary" className="text-[11px] font-medium">
+              {finding.opinion_kind === "deterministic_evidence" ? "evidence" : "interpretive"}
             </Badge>
             <span
               className={cn(
@@ -135,7 +126,7 @@ export function AgentSection({ reports }: AgentSectionProps) {
   });
 
   return (
-    <Accordion type="multiple" defaultValue={sorted.map((r) => r.agent_name)} className="space-y-2">
+    <Accordion type="multiple" defaultValue={[]} className="space-y-2">
       {sorted.map((report) => (
         <AccordionItem
           key={report.agent_name}
@@ -156,6 +147,17 @@ export function AgentSection({ reports }: AgentSectionProps) {
             {report.summary && (
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <Markdown rehypePlugins={[rehypeRaw]}>{report.summary}</Markdown>
+              </div>
+            )}
+            {report.llm_call && (
+              <div className="rounded-xl border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <span>model: {report.llm_call.model_id}</span>
+                  <span>{new Date(report.llm_call.timestamp).toLocaleString()}</span>
+                  <span>prompt: {report.llm_call.token_count_in ?? "-"}</span>
+                  <span>output: {report.llm_call.token_count_out ?? "-"}</span>
+                  <span>{report.llm_call.cache_hit ? "cache hit" : "cache miss"}</span>
+                </div>
               </div>
             )}
             {report.findings.map((f, i) => (

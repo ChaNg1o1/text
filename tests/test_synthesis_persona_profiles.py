@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from text.agents.synthesis import SynthesisAgent
-from text.ingest.schema import AnalysisRequest, TaskType, TextEntry
+from text.ingest.schema import AnalysisRequest, ForensicReport, TaskType, TextEntry
 
 
 def _request_payload() -> AnalysisRequest:
@@ -14,80 +14,63 @@ def _request_payload() -> AnalysisRequest:
     )
 
 
-def test_synthesis_parse_persona_profiles() -> None:
+def test_synthesis_parse_interpretive_results() -> None:
     raw = json.dumps(
         {
             "summary": "综合结论",
-            "confidence_scores": {"profiling_overall": 0.72},
-            "contradictions": [],
-            "recommendations": ["补充样本"],
-            "persona_profiles": [
+            "interpretive_results": [
                 {
-                    "subject": "alice",
-                    "summary": "风格偏稳健。",
-                    "overall_confidence": 0.81,
-                    "dimensions": [
-                        {
-                            "key": "communication_style",
-                            "label": "沟通风格",
-                            "score": 78,
-                            "confidence": 0.75,
-                            "evidence_spans": ["句式简洁，命令句比例低。"],
-                            "counter_evidence": ["个别文本情绪用词较强。"],
-                        }
-                    ],
+                    "key": "interp_1",
+                    "title": "解释性意见",
+                    "body": "多个视角都提示风格较稳定。",
+                    "evidence_ids": ["ev_0001"],
+                    "supporting_agents": ["stylometry", "computational"],
                 }
             ],
-            "findings": [],
+            "additional_limitations": ["题材跨度较大，需谨慎解读。"],
         },
         ensure_ascii=False,
     )
 
     agent = SynthesisAgent(model="demo-model")
-    report = agent._parse_synthesis(raw, [], _request_payload())
-
-    assert report.persona_profiles
-    profile = report.persona_profiles[0]
-    assert profile.subject == "alice"
-    assert profile.summary == "风格偏稳健。"
-    assert profile.overall_confidence == 0.81
-    assert profile.dimensions[0].key == "communication_style"
-    assert profile.dimensions[0].score == 78
-
-
-def test_synthesis_parse_persona_profiles_clamps_values() -> None:
-    raw = json.dumps(
-        {
-            "summary": "x",
-            "confidence_scores": {},
-            "contradictions": [],
-            "recommendations": [],
-            "persona_profiles": [
-                {
-                    "subject": "overall",
-                    "summary": "",
-                    "overall_confidence": 2,
-                    "dimensions": [
-                        {
-                            "key": "risk_preference",
-                            "label": "风险偏好",
-                            "score": 140,
-                            "confidence": -1,
-                            "evidence_spans": [],
-                            "counter_evidence": [],
-                        }
-                    ],
-                }
-            ],
-            "findings": [],
-        },
-        ensure_ascii=False,
+    report = agent._parse_synthesis(
+        raw,
+        base_report=ForensicReport(request=_request_payload()),
+        request=_request_payload(),
     )
 
-    agent = SynthesisAgent(model="demo-model")
-    report = agent._parse_synthesis(raw, [], _request_payload())
+    assert report is not None
+    assert report.summary == "综合结论"
+    assert report.results[0].title == "解释性意见"
+    assert report.results[0].interpretive_opinion is True
+    assert report.results[0].supporting_agents == ["stylometry", "computational"]
+    assert report.limitations == ["题材跨度较大，需谨慎解读。"]
 
-    profile = report.persona_profiles[0]
-    assert profile.overall_confidence == 1.0
-    assert profile.dimensions[0].score == 100.0
-    assert profile.dimensions[0].confidence == 0.0
+
+def test_synthesis_parse_interpretive_results_recovers_truncated_json() -> None:
+    raw = """```json
+{
+  "summary": "x",
+  "interpretive_results": [
+    {
+      "key": "interp_1",
+      "title": "解释性意见",
+      "body": "输出被截断前的部分内容",
+      "evidence_ids": ["ev_0001"],
+      "supporting_agents": ["stylometry"]
+    }
+  ],
+  "additional_limitations": ["JSON 截断"]
+"""
+
+    agent = SynthesisAgent(model="demo-model")
+    report = agent._parse_synthesis(
+        raw,
+        base_report=ForensicReport(request=_request_payload()),
+        request=_request_payload(),
+    )
+
+    assert report is not None
+    assert report.summary == "x"
+    assert report.results[0].body == "输出被截断前的部分内容"
+    assert report.limitations == ["JSON 截断"]

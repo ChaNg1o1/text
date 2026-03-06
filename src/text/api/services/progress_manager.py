@@ -14,7 +14,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,13 @@ class ProgressManager:
         self._queue_size = max(1, queue_size)
         self._drop_log_every = max(1, drop_log_every)
         self._lock = Lock()
+        self._persist_callback: Callable[[str, SSEEvent], Awaitable[None]] | None = None
+
+    def set_persist_callback(
+        self,
+        callback: Callable[[str, SSEEvent], Awaitable[None]] | None,
+    ) -> None:
+        self._persist_callback = callback
 
     def emit(self, analysis_id: str, event: str, data: dict[str, Any] | None = None) -> None:
         """Publish an event to all subscribers of the given analysis."""
@@ -79,18 +86,32 @@ class ProgressManager:
                     dropped_total,
                 )
 
+        if self._persist_callback is not None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                loop.create_task(
+                    self._persist_callback(analysis_id, sse),
+                    name=f"persist-progress:{analysis_id}:{event}",
+                )
+
     async def subscribe(
         self,
         analysis_id: str,
         *,
         heartbeat_interval: float | None = None,
+        replay_history: bool = True,
     ) -> AsyncIterator[SSEEvent]:
         """Yield SSEEvents for a given analysis until the stream ends (None sentinel)."""
         queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue(maxsize=self._queue_size)
         with self._lock:
             self._subscribers.setdefault(analysis_id, []).append(queue)
             history = self._history.get(analysis_id, ())
-            if len(history) > self._queue_size:
+            if not replay_history:
+                replay_events: list[SSEEvent] = []
+            elif len(history) > self._queue_size:
                 logger.warning(
                     "Replay history exceeds queue size for analysis %s; "
                     "replaying only the latest %d events",

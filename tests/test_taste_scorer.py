@@ -66,10 +66,10 @@ def test_build_taste_outputs_returns_ranked_insights_and_assessment() -> None:
 def test_build_taste_outputs_applies_contradiction_penalty() -> None:
     reports = [
         _report(
-            "psycholinguistics",
+            "writing_process",
             [
                 AgentFinding(
-                    discipline="psycholinguistics",
+                    discipline="writing_process",
                     category="cognitive_profile",
                     description="认知复杂度指标稳定偏高，结论明确。",
                     confidence=0.8,

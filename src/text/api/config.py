@@ -6,6 +6,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings
 
+from text.app_settings import DEFAULT_APP_SETTINGS_PATH
+
 
 class Settings(BaseSettings):
     """Application settings, overridable via environment variables."""
@@ -22,6 +24,7 @@ class Settings(BaseSettings):
     ]
     db_dir: Path = Path.home() / ".cache" / "text"
     backends_config: Path = Path.home() / ".config" / "text" / "backends.json"
+    app_settings_config: Path = DEFAULT_APP_SETTINGS_PATH
     preload_embedding: bool = True
     max_concurrent_analyses: int = 1
     observability_enabled: bool = True

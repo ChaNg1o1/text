@@ -6,7 +6,11 @@ import type { AnalysisStatus } from "@/lib/types";
 
 const RETRY_DELAYS_MS = [3000, 5000, 8000, 15000] as const;
 
-export function useSSEProgress(analysisId: string | undefined, status?: AnalysisStatus) {
+export function useSSEProgress(
+  analysisId: string | undefined,
+  status?: AnalysisStatus,
+  options?: { replayHistory?: boolean },
+) {
   const handleSSEEvent = useAnalysisStore((s) => s.handleSSEEvent);
   const clientRef = useRef<ReturnType<typeof createSSEClient> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -33,7 +37,8 @@ export function useSSEProgress(analysisId: string | undefined, status?: Analysis
 
     const bootstrapSSE = async () => {
       try {
-        const url = await api.progressUrl(analysisId);
+        const replayHistory = options?.replayHistory ?? true;
+        const url = await api.progressUrl(analysisId, { replay: replayHistory });
         if (!active) return;
 
         client = createSSEClient(
@@ -90,7 +95,7 @@ export function useSSEProgress(analysisId: string | undefined, status?: Analysis
       client?.close();
       clientRef.current = null;
     };
-  }, [analysisId, status, handleSSEEvent, retryTick]);
+  }, [analysisId, status, handleSSEEvent, options?.replayHistory, retryTick]);
 
   return {
     isConnected:

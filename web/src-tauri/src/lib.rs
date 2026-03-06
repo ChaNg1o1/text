@@ -35,6 +35,15 @@ fn get_api_origin(state: State<'_, BackendRuntime>) -> String {
     state.api_origin.clone()
 }
 
+#[tauri::command]
+fn save_file(app: tauri::AppHandle, content: String, filename: String) -> Result<String, String> {
+    let dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&filename);
+    std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
 fn find_free_port() -> Result<u16, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -364,7 +373,7 @@ pub fn run() {
             app.manage(backend);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_api_origin])
+        .invoke_handler(tauri::generate_handler![get_api_origin, save_file])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

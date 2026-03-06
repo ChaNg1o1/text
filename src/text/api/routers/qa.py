@@ -10,9 +10,11 @@ from collections.abc import AsyncIterator, Iterator
 from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.responses import StreamingResponse
 
+from text.agents.json_utils import parse_json_object_loose
+from text.app_settings import AppSettingsStore, apply_prompt_override
 from text.api.config import Settings
 from text.api.deps import get_settings, get_store
-from text.api.models import AnalysisStatus
+from text.api.models import AnalysisStatus, QaSuggestionsRequest, QaSuggestionsResponse
 from text.api.services.analysis_store import AnalysisStore
 from text.ingest.schema import AgentFinding, AgentReport, ForensicReport
 from text.llm.backend import LLMBackend
@@ -23,6 +25,7 @@ STREAM_HEADERS = {
     "Connection": "keep-alive",
     "X-Accel-Buffering": "no",
 }
+GENERATION_HEARTBEAT_SECONDS = 5.0
 
 
 def _sse(event: str, data: dict[str, object]) -> str:
@@ -65,31 +68,48 @@ def _build_report_context(report: ForensicReport) -> str:
         f"Texts: {len(report.request.texts)}",
         f"LLM Backend: {report.request.llm_backend}",
         "",
-        "# Synthesis",
-        _truncate(report.synthesis or "(none)", 1200),
+        "# Summary",
+        _truncate(report.summary or "(none)", 1200),
         "",
     ]
 
-    if report.contradictions:
-        lines.append("# Contradictions")
-        lines.extend(f"- {_truncate(item, 240)}" for item in report.contradictions[:10])
+    if report.conclusions:
+        lines.append("# Conclusions")
+        for conclusion in report.conclusions[:10]:
+            lines.append(
+                f"- [{conclusion.grade.value}] {conclusion.statement} "
+                f"(task={conclusion.task.value}, score={conclusion.score if conclusion.score is not None else 'n/a'})"
+            )
         lines.append("")
 
-    if report.recommendations:
-        lines.append("# Recommendations")
-        lines.extend(f"- {_truncate(item, 240)}" for item in report.recommendations[:10])
+    if report.limitations:
+        lines.append("# Limitations")
+        lines.extend(f"- {_truncate(item, 240)}" for item in report.limitations[:10])
         lines.append("")
 
-    if report.confidence_scores:
-        lines.append("# Confidence Scores")
-        for key, value in sorted(report.confidence_scores.items()):
-            lines.append(f"- {key}: {value:.2f}")
+    if report.evidence_items:
+        lines.append("# Evidence Items")
+        for item in report.evidence_items[:10]:
+            lines.append(f"- {item.evidence_id}: {_truncate(item.summary, 200)}")
         lines.append("")
 
     if report.anomaly_samples:
         lines.append("# Anomaly Samples")
         for sample in report.anomaly_samples[:5]:
             lines.append(f"- text_id={sample.text_id}, outlier_dims={len(sample.outlier_dimensions)}")
+        lines.append("")
+
+    if report.results:
+        lines.append("# Results")
+        for result in report.results[:10]:
+            marker = "interpretive" if result.interpretive_opinion else "deterministic"
+            lines.append(f"- [{marker}] {result.title}: {_truncate(result.body, 220)}")
+        lines.append("")
+
+    if report.writing_profiles:
+        lines.append("# Writing Profiles")
+        for profile in report.writing_profiles[:5]:
+            lines.append(f"- {profile.subject}: {_truncate(profile.summary, 200)}")
         lines.append("")
 
     lines.append("# Agent Reports")
@@ -125,6 +145,87 @@ def _chunk_text(text: str, target_size: int = 64) -> Iterator[str]:
         yield " ".join(buf)
 
 
+def _fallback_suggestions(report: ForensicReport, *, count: int, exclude: list[str]) -> list[str]:
+    excluded = {item.strip() for item in exclude if item.strip()}
+    suggestions: list[str] = []
+
+    if report.conclusions:
+        suggestions.append("先用最简单的话告诉我，这次结论到底偏向什么？")
+        suggestions.append("这个结果更像是‘有线索’还是‘基本能确定’？")
+    if report.evidence_items:
+        suggestions.append("最关键的三条依据分别是什么？")
+    if report.limitations:
+        suggestions.append("这份结果最需要小心的地方是什么？")
+    if report.writing_profiles:
+        suggestions.append("从写作习惯上看，这个人最明显的特征是什么？")
+    if report.anomaly_samples:
+        suggestions.append("有哪些异常文本值得我单独再看一遍？")
+    suggestions.append("如果我要把这份报告讲给非专业同事听，应该怎么说？")
+
+    unique: list[str] = []
+    for item in suggestions:
+        normalized = item.strip()
+        if not normalized or normalized in excluded or normalized in unique:
+            continue
+        unique.append(normalized)
+        if len(unique) >= count:
+            break
+    return unique
+
+
+async def _generate_suggestions(
+    *,
+    backend_name: str,
+    report: ForensicReport,
+    settings: Settings,
+    count: int,
+    exclude: list[str],
+) -> list[str]:
+    backend = LLMBackend(backend=backend_name, config_path=settings.backends_config)
+    app_settings = AppSettingsStore(settings.app_settings_config).load()
+    context = _build_report_context(report)
+    cleaned_exclude = [item.strip() for item in exclude if item.strip()]
+    system_prompt = (
+        "You generate concise, user-friendly follow-up questions for a completed text forensics report. "
+        "The audience is non-expert users. Questions must be easy to understand, actionable, and answerable "
+        "using only the current report context. Avoid raw metric names unless necessary. Prefer Chinese unless "
+        "the report is clearly in another language. Return ONLY JSON with a top-level key 'suggestions'."
+    )
+    system_prompt = apply_prompt_override(system_prompt, app_settings.prompt_overrides.qa)
+    user_prompt = (
+        "Based on the following report context, generate fresh follow-up questions.\n\n"
+        f"{context}\n\n"
+        f"Need exactly {count} short questions.\n"
+        f"Avoid repeating these questions: {cleaned_exclude or ['(none)']}.\n"
+        "Return JSON in the form {\"suggestions\": [\"...\", \"...\"]}."
+    )
+    raw = await backend.complete(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=max(app_settings.analysis_defaults.qa_temperature, 0.7),
+        max_tokens=min(app_settings.analysis_defaults.qa_max_tokens, 400),
+    )
+    parsed = parse_json_object_loose(raw)
+    if parsed is None:
+        return _fallback_suggestions(report, count=count, exclude=exclude)
+
+    suggestions_raw = parsed.value.get("suggestions", [])
+    if not isinstance(suggestions_raw, list):
+        return _fallback_suggestions(report, count=count, exclude=exclude)
+
+    normalized: list[str] = []
+    excluded = {item.strip() for item in exclude if item.strip()}
+    for item in suggestions_raw:
+        text = str(item).strip()
+        if not text or text in excluded or text in normalized:
+            continue
+        normalized.append(text)
+        if len(normalized) >= count:
+            break
+
+    return normalized or _fallback_suggestions(report, count=count, exclude=exclude)
+
+
 async def _generate_answer(
     question: str,
     backend_name: str,
@@ -132,6 +233,7 @@ async def _generate_answer(
     settings: Settings,
 ) -> str:
     backend = LLMBackend(backend=backend_name, config_path=settings.backends_config)
+    app_settings = AppSettingsStore(settings.app_settings_config).load()
     context = _build_report_context(report)
     system_prompt = (
         "You are a forensic analysis assistant. "
@@ -139,6 +241,7 @@ async def _generate_answer(
         "If context is insufficient, say so explicitly. "
         "Use concise, factual language and cite agent names or evidence snippets when relevant."
     )
+    system_prompt = apply_prompt_override(system_prompt, app_settings.prompt_overrides.qa)
     user_prompt = (
         "Use the following analysis context to answer the question.\n\n"
         f"{context}\n\n"
@@ -148,50 +251,10 @@ async def _generate_answer(
     answer = await backend.complete(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        temperature=0.2,
-        max_tokens=1200,
+        temperature=app_settings.analysis_defaults.qa_temperature,
+        max_tokens=app_settings.analysis_defaults.qa_max_tokens,
     )
     return answer.strip() or "I could not derive an answer from the current analysis context."
-
-
-_QA_HEARTBEAT_INTERVAL: float = 8.0
-
-
-async def _generate_with_heartbeat(
-    question: str,
-    backend_name: str,
-    report: ForensicReport,
-    settings: Settings,
-    heartbeat_queue: asyncio.Queue[str | None],
-) -> str:
-    """Run LLM generation while emitting heartbeat sentinels into *heartbeat_queue*.
-
-    The queue receives empty strings as heartbeat ticks, and ``None`` as the
-    completion sentinel.
-    """
-    generation_task = asyncio.create_task(
-        _generate_answer(question, backend_name, report, settings)
-    )
-
-    async def _heartbeat_loop() -> None:
-        while not generation_task.done():
-            await asyncio.sleep(_QA_HEARTBEAT_INTERVAL)
-            if not generation_task.done():
-                try:
-                    heartbeat_queue.put_nowait("")
-                except asyncio.QueueFull:
-                    pass
-
-    heartbeat_task = asyncio.create_task(_heartbeat_loop())
-    try:
-        answer = await generation_task
-    finally:
-        heartbeat_task.cancel()
-        try:
-            heartbeat_queue.put_nowait(None)
-        except asyncio.QueueFull:
-            pass
-    return answer
 
 
 @router.get("/analyses/{analysis_id}/qa/stream")
@@ -223,26 +286,31 @@ async def stream_report_qa(
             },
         )
 
+        generation_task: asyncio.Task[str] | None = None
         try:
-            heartbeat_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=8)
-            gen_task = asyncio.create_task(
-                _generate_with_heartbeat(
+            generation_task = asyncio.create_task(
+                _generate_answer(
                     question=clean_question,
                     backend_name=detail.llm_backend,
                     report=detail.report,
                     settings=settings,
-                    heartbeat_queue=heartbeat_queue,
                 )
             )
-
-            # Drain heartbeat queue while LLM is working.
             while True:
-                sentinel = await heartbeat_queue.get()
-                if sentinel is None:
+                try:
+                    answer = await asyncio.wait_for(
+                        asyncio.shield(generation_task),
+                        timeout=GENERATION_HEARTBEAT_SECONDS,
+                    )
                     break
-                yield _sse("qa_heartbeat", {"timestamp": time.time()})
-
-            answer = await gen_task
+                except asyncio.TimeoutError:
+                    yield _sse(
+                        "qa_heartbeat",
+                        {
+                            "analysis_id": analysis_id,
+                            "timestamp": time.time(),
+                        },
+                    )
 
             for chunk in _chunk_text(answer):
                 yield _sse(
@@ -272,9 +340,44 @@ async def stream_report_qa(
                     "timestamp": time.time(),
                 },
             )
+        finally:
+            if generation_task is not None and not generation_task.done():
+                generation_task.cancel()
+                try:
+                    await generation_task
+                except asyncio.CancelledError:
+                    pass
 
     return StreamingResponse(
         _stream(),
         media_type="text/event-stream",
         headers=STREAM_HEADERS,
     )
+
+
+@router.post("/analyses/{analysis_id}/qa/suggestions", response_model=QaSuggestionsResponse)
+async def generate_report_qa_suggestions(
+    analysis_id: str,
+    body: QaSuggestionsRequest,
+    store: AnalysisStore = Depends(get_store),
+    settings: Settings = Depends(get_settings),
+) -> QaSuggestionsResponse:
+    detail = await store.get(analysis_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    if detail.status != AnalysisStatus.COMPLETED or detail.report is None:
+        raise HTTPException(status_code=409, detail="Analysis report is not available for QA")
+
+    try:
+        suggestions = await _generate_suggestions(
+            backend_name=detail.llm_backend,
+            report=detail.report,
+            settings=settings,
+            count=body.count,
+            exclude=body.exclude,
+        )
+    except Exception:
+        suggestions = _fallback_suggestions(detail.report, count=body.count, exclude=body.exclude)
+
+    return QaSuggestionsResponse(suggestions=suggestions)

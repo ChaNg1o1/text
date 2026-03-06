@@ -38,7 +38,7 @@ export interface ProgressState {
 
 const INITIAL_AGENTS: Record<string, AgentProgress> = {
   stylometry: { name: "stylometry", status: "pending" },
-  psycholinguistics: { name: "psycholinguistics", status: "pending" },
+  writing_process: { name: "writing_process", status: "pending" },
   computational: { name: "computational", status: "pending" },
   sociolinguistics: { name: "sociolinguistics", status: "pending" },
 };

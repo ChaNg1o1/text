@@ -1,4 +1,5 @@
 import type {
+  AppSettings,
   AnalysisDetail,
   AnalysisListResponse,
   AnalysisSummary,
@@ -8,6 +9,10 @@ import type {
   CustomBackendsResponse,
   CreateAnalysisRequest,
   FeaturesResponse,
+  ProgressSnapshotResponse,
+  QaSuggestionsRequest,
+  QaSuggestionsResponse,
+  RetryAnalysisRequest,
   UpsertCustomBackendRequest,
   UploadResponse,
 } from "./types";
@@ -377,6 +382,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  retryAnalysis: (id: string, data: RetryAnalysisRequest) =>
+    request<AnalysisSummary>(`/analyses/${id}/retry`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   listAnalyses: (params?: {
     page?: number;
@@ -458,6 +468,12 @@ export const api = {
     request<void>(`/backends/custom/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
+  getSettings: () => request<AppSettings>("/settings"),
+  updateSettings: (payload: AppSettings) =>
+    request<AppSettings>("/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   testBackend: (name: string) =>
     requestWithOptions<BackendTestResponse>(
       `/backends/${encodeURIComponent(name)}/test`,
@@ -472,14 +488,33 @@ export const api = {
     ),
 
   // SSE URL helper
-  progressUrl: async (id: string) => {
+  progressUrl: async (id: string, options?: { replay?: boolean }) => {
     const apiBase = await resolveApiBase();
-    return `${apiBase}/analyses/${id}/progress`;
+    const params = new URLSearchParams();
+    if (typeof options?.replay === "boolean") {
+      params.set("replay", options.replay ? "1" : "0");
+    }
+    const qs = params.toString();
+    return `${apiBase}/analyses/${encodeURIComponent(id)}/progress${qs ? `?${qs}` : ""}`;
   },
+  getProgressSnapshot: (id: string) =>
+    request<ProgressSnapshotResponse>(`/analyses/${encodeURIComponent(id)}/progress/snapshot`),
 
   qaStreamUrl: async (id: string, question: string) => {
     const apiBase = await resolveApiBase();
     const params = new URLSearchParams({ question });
     return `${apiBase}/analyses/${encodeURIComponent(id)}/qa/stream?${params.toString()}`;
   },
+  getQaSuggestions: (id: string, payload?: QaSuggestionsRequest) =>
+    requestWithOptions<QaSuggestionsResponse>(
+      `/analyses/${encodeURIComponent(id)}/qa/suggestions`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload ?? {}),
+      },
+      {
+        timeoutMs: BACKEND_TEST_TIMEOUT_MS,
+        timeoutMessage: "Generating question suggestions timed out. Please retry.",
+      },
+    ),
 };

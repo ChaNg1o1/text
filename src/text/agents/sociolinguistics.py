@@ -1,9 +1,10 @@
-"""Sociolinguistics Agent -- social identity and context analysis."""
+"""Sociolinguistics agent -- observable register and community language analysis."""
 
 from __future__ import annotations
 
 import logging
 
+from text.app_settings import apply_prompt_override
 from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
 
 from .stylometry import _call_llm, _fmt_dict, _parse_findings
@@ -12,29 +13,21 @@ logger = logging.getLogger(__name__)
 
 
 class SociolinguisticsAgent:
-    """Analyzes social identity markers and contextual language patterns."""
+    """Analyzes observable register, code-switching, and community language signals."""
 
     SYSTEM_PROMPT = """\
-You are a sociolinguist and digital forensics expert specializing in analyzing \
-social identity, cultural context, and community membership signals embedded in \
-written text. You draw on variationist sociolinguistics, discourse analysis, and \
-computational approaches to social meaning.
+You are a sociolinguist and digital forensics expert specializing in observable \
+register, community language, and code-switching signals embedded in written text. \
+Do NOT infer age, gender, education, profession, or region unless the signal is \
+explicitly lexical and directly observable.
 
 Your analytical framework covers the following dimensions:
 
-1. **Social Identity Markers**
-   - Age indicators: generational vocabulary, slang currency, cultural references, \
-technology terminology. Younger writers tend to use more informal abbreviations, \
-emoji, and current internet slang; older writers often use more formal register \
-and dated expressions.
-   - Gender indicators: research shows statistical (not deterministic) differences \
-in pronoun usage, hedging, emotional expression, and topic focus. Interpret these \
-probabilistically, not as definitive classification.
-   - Education level: vocabulary sophistication, syntactic complexity, domain-specific \
-terminology, argument structure, and citation/reference patterns. Higher education \
-correlates with longer sentences, more subordinate clauses, and abstract vocabulary.
-   - Professional background: technical jargon, domain-specific collocations, \
-professional discourse conventions.
+1. **Register & Formality**
+   - Explain the observed register, switching between formal and informal language, \
+and whether the register is stable or fluctuates across samples.
+   - Register mismatches are admissible only as observable style facts, not as \
+demographic inference.
 
 2. **Code-Switching Patterns**
    - CJK/Latin mixing: the ratio and context of switching between CJK characters \
@@ -58,7 +51,7 @@ different contexts, or deliberate style shifting.
    - Register appropriateness: mismatch between expected register (based on \
 claimed context) and actual register is forensically significant.
 
-4. **In-Group Language & Slang**
+2. **In-Group Language & Slang**
    - Community-specific vocabulary: technical communities, fan groups, political \
 movements, regional communities, and online subcultures each develop distinctive \
 lexicons.
@@ -66,7 +59,7 @@ lexicons.
    - Shared reference systems: allusions, memes, hashtag conventions, and \
 intertextual references that assume community knowledge.
 
-5. **Emoji & Emoticon Usage Patterns**
+3. **Emoji & Emoticon Usage Patterns**
    - Emoji density: the rate of emoji usage per token is a strong generational \
 and cultural marker. Heavy emoji use (density > 0.05) suggests informal digital \
 communication norms.
@@ -75,21 +68,15 @@ reveal emotional expression style.
    - Emoticon vs emoji: use of text-based emoticons (:-) ) vs Unicode emoji may \
 indicate technological era and platform familiarity.
 
-6. **Regional & Dialectal Markers**
-   - Spelling conventions: American vs British vs other English varieties; \
-simplified vs traditional Chinese characters.
-   - Dialectal grammar: regional syntactic patterns, local preposition usage, \
-and non-standard constructions that indicate geographic origin.
-   - Lexical regionalism: vocabulary choices that map to specific regions \
-(e.g., "subway" vs "metro" vs "underground"; regional food, measurement, and \
-cultural terms).
-   - Time zone indicators: temporal references, greeting conventions, and \
-activity patterns that suggest geographic location.
+4. **Dialectal / Variety Clues**
+   - Spelling conventions and directly observable lexical variants may be noted, \
+but only as textual clues. Do not claim a specific region unless the text itself \
+provides explicit evidence.
 
 **Output Requirements:**
 Provide your analysis as a JSON array of finding objects. Each finding must have:
-- "category": one of "social_identity", "code_switching", "register_formality", \
-"ingroup_language", "emoji_patterns", "regional_markers"
+- "category": one of "register_formality", "code_switching", "ingroup_language", \
+"emoji_patterns", "variety_clues"
 - "description": a clear, specific analytical statement (2-4 sentences)
 - "confidence": a float between 0.0 and 1.0
 - "evidence": a list of specific data points supporting this finding
@@ -107,10 +94,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
+        prompt_override: str | None = None,
     ) -> None:
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        self.prompt_override = prompt_override
 
     async def analyze(
         self,
@@ -129,9 +118,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         user_prompt = self._build_prompt(features, task_context)
 
         try:
-            raw_response = await _call_llm(
-                self.SYSTEM_PROMPT, user_prompt, model,
+            raw_response, llm_call = await _call_llm(
+                apply_prompt_override(self.SYSTEM_PROMPT, self.prompt_override),
+                user_prompt,
+                model,
                 api_base=self.api_base, api_key=self.api_key,
+                agent_name="sociolinguistics",
             )
         except Exception as exc:
             logger.exception("SociolinguisticsAgent LLM call failed")
@@ -150,6 +142,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             findings=findings,
             summary=summary,
             raw_llm_response=raw_response,
+            llm_call=llm_call,
         )
 
     def _build_prompt(
@@ -168,7 +161,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
 
             block = (
                 f"### Sample {i} (id={fv.text_id})\n"
-                f"**Social & Cultural Indicators:**\n"
+                f"**Observable Register Indicators:**\n"
                 f"- CJK ratio: {rust.cjk_ratio:.4f}\n"
                 f"- Code-switching ratio: {rust.code_switching_ratio:.4f}\n"
                 f"- Emoji density: {rust.emoji_density:.4f}\n"
@@ -190,9 +183,8 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             sections.append(block)
 
         sections.append(
-            "Analyze the social identity signals, code-switching patterns, "
-            "register characteristics, and community markers in these texts. "
-            "Consider CJK/Latin mixing, formality, slang, and regional indicators. "
+            "Analyze observable register, code-switching patterns, community markers, "
+            "and directly observable variety clues in these texts. "
             "Return your findings as a JSON array."
         )
         return "\n\n".join(sections)

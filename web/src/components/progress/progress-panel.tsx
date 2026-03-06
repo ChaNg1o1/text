@@ -14,6 +14,8 @@ import { useI18n } from "@/components/providers/i18n-provider";
 
 interface ProgressPanelProps {
   progress: ProgressState;
+  isLiveConnected?: boolean;
+  historyHydrated?: boolean;
 }
 
 const PHASE_ORDER = ["feature_extraction", "agent_analysis", "synthesis"];
@@ -31,7 +33,11 @@ function phasePercent(phase: string): number {
   }
 }
 
-export function ProgressPanel({ progress }: ProgressPanelProps) {
+export function ProgressPanel({
+  progress,
+  isLiveConnected = false,
+  historyHydrated = false,
+}: ProgressPanelProps) {
   const { t } = useI18n();
   const [now, setNow] = useState(() => Date.now() / 1000);
   const phaseLabel = (phase: string) => t(`progress.${phase}`);
@@ -49,6 +55,9 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
     return new Date(progress.lastEventAt * 1000).toLocaleTimeString();
   }, [progress.lastEventAt]);
   const latestLog = progress.logs[progress.logs.length - 1];
+  const statusTone = isLiveConnected
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+    : "border-amber-500/30 bg-amber-500/10 text-amber-700";
   const agentSummary = useMemo(() => {
     const stats = { completed: 0, running: 0, pending: 0, failed: 0 };
     const runningAgents: string[] = [];
@@ -98,13 +107,18 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
                   {phaseLabel(progress.phase)}
                 </CardTitle>
               </div>
-              {elapsedSeconds != null && (
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Clock className="h-4 w-4" />
-                  <span>{t("progress.elapsed")}:</span>
-                  <NumberTween value={elapsedSeconds} decimals={1} suffix="s" />
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className={statusTone}>
+                  {isLiveConnected ? t("progress.liveConnected") : t("progress.liveDisconnected")}
+                </Badge>
+                {elapsedSeconds != null && (
+                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <Clock className="h-4 w-4" />
+                    <span>{t("progress.elapsed")}:</span>
+                    <NumberTween value={elapsedSeconds} decimals={1} suffix="s" />
+                  </div>
+                )}
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -182,6 +196,11 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
                 {t("progress.latestLog", { message: latestLog.message })}
               </p>
             )}
+            {!latestLog && historyHydrated && (
+              <p className="rounded-md border border-dashed border-border/60 bg-muted/20 px-2.5 py-2 text-xs text-muted-foreground">
+                {isLiveConnected ? t("progress.logsEmpty") : t("progress.logsWaiting")}
+              </p>
+            )}
             {/* Error */}
             {progress.error && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
@@ -204,9 +223,9 @@ export function ProgressPanel({ progress }: ProgressPanelProps) {
       )}
 
       {/* Log stream */}
-      {progress.logs.length > 0 && (
+      {(progress.logs.length > 0 || historyHydrated) && (
         <FadeIn delay={0.06}>
-          <LogStream logs={progress.logs} />
+          <LogStream logs={progress.logs} isLiveConnected={isLiveConnected} />
         </FadeIn>
       )}
     </div>

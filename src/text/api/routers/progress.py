@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import StreamingResponse
 
 from text.api.deps import get_store
-from text.api.models import AnalysisStatus
+from text.api.models import AnalysisStatus, ProgressEventRecord, ProgressSnapshotResponse
 from text.api.services.analysis_store import AnalysisStore
 from text.api.services.progress_manager import progress_manager
 
@@ -24,6 +24,7 @@ STREAM_HEADERS = {
 @router.get("/analyses/{analysis_id}/progress")
 async def stream_progress(
     analysis_id: str,
+    replay: bool = True,
     store: AnalysisStore = Depends(get_store),
 ) -> StreamingResponse:
     """Stream SSE events for analysis progress."""
@@ -60,11 +61,31 @@ async def stream_progress(
         )
 
     async def _event_stream():
-        async for event in progress_manager.subscribe(analysis_id, heartbeat_interval=15):
+        async for event in progress_manager.subscribe(
+            analysis_id,
+            heartbeat_interval=15,
+            replay_history=replay,
+        ):
             yield event.encode()
 
     return StreamingResponse(
         _event_stream(),
         media_type="text/event-stream",
         headers=STREAM_HEADERS,
+    )
+
+
+@router.get("/analyses/{analysis_id}/progress/snapshot", response_model=ProgressSnapshotResponse)
+async def get_progress_snapshot(
+    analysis_id: str,
+    store: AnalysisStore = Depends(get_store),
+) -> ProgressSnapshotResponse:
+    detail = await store.get(analysis_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    events = await store.list_progress_events(analysis_id)
+    return ProgressSnapshotResponse(
+        analysis_id=analysis_id,
+        events=[ProgressEventRecord.model_validate(item) for item in events],
     )

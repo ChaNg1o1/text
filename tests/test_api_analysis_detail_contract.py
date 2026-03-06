@@ -13,6 +13,9 @@ from text.ingest.schema import (
     AgentFinding,
     AgentReport,
     AnalysisRequest,
+    ConclusionGrade,
+    ReportConclusion,
+    ResultRecord,
     ForensicReport,
     TaskType,
     TextEntry,
@@ -63,7 +66,7 @@ def test_analysis_detail_excludes_features_and_includes_perf(monkeypatch, tmp_pa
         assert body["perf"]["total_ms"] == 123.4
 
 
-def test_analysis_detail_backfills_taste_for_legacy_report(monkeypatch, tmp_path) -> None:
+def test_analysis_detail_returns_forensic_report_sections(monkeypatch, tmp_path) -> None:
     deps.get_settings.cache_clear()
     monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
 
@@ -84,6 +87,28 @@ def test_analysis_detail_backfills_taste_for_legacy_report(monkeypatch, tmp_path
         )
         legacy_report = ForensicReport(
             request=request,
+            summary="综合结论：当前证据仅支持在候选集中作有限判断。",
+            conclusions=[
+                ReportConclusion(
+                    key="closed_set_id",
+                    task=TaskType.CLOSED_SET_ID,
+                    statement="在候选集中，alice 的风格距离最近。",
+                    grade=ConclusionGrade.MODERATE_SUPPORT,
+                    score=1.2,
+                    score_type="log10_lr",
+                    evidence_ids=["ev_0001"],
+                )
+            ],
+            results=[
+                ResultRecord(
+                    key="deterministic_result",
+                    title="候选集排名",
+                    body="1. alice | log10(LR)=1.20",
+                    evidence_ids=["ev_0001"],
+                    interpretive_opinion=False,
+                )
+            ],
+            limitations=["样本长度有限，结论应结合题材差异审慎解读。"],
             agent_reports=[
                 AgentReport(
                     agent_name="computational",
@@ -114,10 +139,11 @@ def test_analysis_detail_backfills_taste_for_legacy_report(monkeypatch, tmp_path
         body = response.json()
         report = body["report"]
         assert report is not None
-        assert report["taste_assessment"] is not None
-        assert report["insights"]
+        assert report["summary"] == "综合结论：当前证据仅支持在候选集中作有限判断。"
+        assert report["conclusions"][0]["task"] == "closed_set_id"
+        assert report["results"][0]["title"] == "候选集排名"
+        assert report["limitations"]
 
-        # First detail read should persist backfilled fields into stored report_json.
         db_path = tmp_path / "analyses.db"
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
@@ -126,5 +152,5 @@ def test_analysis_detail_backfills_taste_for_legacy_report(monkeypatch, tmp_path
             ).fetchone()
         assert row is not None
         stored_report = json.loads(row[0])
-        assert stored_report.get("taste_assessment") is not None
-        assert stored_report.get("insights")
+        assert stored_report["summary"] == report["summary"]
+        assert stored_report["conclusions"][0]["grade"] == "moderate_support"

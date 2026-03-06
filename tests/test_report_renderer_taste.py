@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from text.ingest.schema import (
     AnalysisRequest,
-    InsightItem,
-    TasteAssessment,
+    ConclusionGrade,
+    EvidenceItem,
+    ForensicReport,
+    ReportConclusion,
+    ReportMaterial,
+    ResultRecord,
     TaskType,
     TextEntry,
-    ForensicReport,
+    WritingProfile,
+    WritingProfileDimension,
 )
 from text.report.renderer import ReportRenderer
 
@@ -19,34 +24,71 @@ def _request_payload() -> AnalysisRequest:
     )
 
 
-def test_markdown_renderer_includes_taste_section_and_insights() -> None:
+def test_markdown_renderer_includes_forensic_sections() -> None:
     report = ForensicReport(
         request=_request_payload(),
-        synthesis="综合结论示例。",
-        taste_assessment=TasteAssessment(
-            overall_score=78.5,
-            dimension_scores={"evidence": 82.0, "clarity": 76.0},
-            strengths=["证据强度较强（82.0）"],
-            risks=["清晰度偏弱（76.0）"],
-            methodology="测试方法",
-        ),
-        insights=[
-            InsightItem(
-                rank=1,
-                discipline="computational_linguistics",
-                category="semantic_similarity",
-                insight="文本间语义相似度高。",
-                confidence=0.85,
-                taste_score=81.2,
-                dimension_scores={"evidence": 85.0, "confidence": 85.0},
-                supporting_disciplines=["stylometry"],
-                evidence=["cosine_similarity=0.91"],
+        summary="综合结论：当前证据仅支持有限判断。",
+        materials=[
+            ReportMaterial(
+                artifact_id="art-1",
+                source_name="sample.txt",
+                sha256="abc123",
+                byte_count=42,
+                text_ids=["t1"],
             )
         ],
+        conclusions=[
+            ReportConclusion(
+                key="verification",
+                task=TaskType.VERIFICATION,
+                statement="当前证据支持目标文本与已知作者 alice 的写作指纹一致。",
+                grade=ConclusionGrade.MODERATE_SUPPORT,
+                score=1.2,
+                score_type="log10_lr",
+                evidence_ids=["ev_0001"],
+            )
+        ],
+        results=[
+            ResultRecord(
+                key="verification_deterministic",
+                title="Verification 确定性结果",
+                body="log10(LR)=1.20",
+                evidence_ids=["ev_0001"],
+                interpretive_opinion=False,
+            )
+        ],
+        evidence_items=[
+            EvidenceItem(
+                evidence_id="ev_0001",
+                label="verification_core",
+                summary="verification 的核心比较结果",
+                source_text_ids=["t1"],
+                excerpts=["log10(LR)=1.20"],
+            )
+        ],
+        writing_profiles=[
+            WritingProfile(
+                subject="alice",
+                summary="写作风格相对稳定。",
+                dimensions=[
+                    WritingProfileDimension(
+                        key="lexical_richness",
+                        label="词汇丰富度",
+                        score=72,
+                        confidence=0.81,
+                        evidence_spans=["type-token ratio 较高"],
+                    )
+                ],
+            )
+        ],
+        limitations=["样本量偏小。"],
     )
 
     rendered = ReportRenderer.to_markdown(report)
-    assert "## 品味量化（Taste）" in rendered
-    assert "总体品味分" in rendered
-    assert "## 高质量洞见（Top Insights）" in rendered
-    assert "文本间语义相似度高。" in rendered
+    assert "## 报告摘要与结论分级" in rendered
+    assert "## 材料清单" in rendered
+    assert "## 分析结果" in rendered
+    assert "### 证据摘要" in rendered
+    assert "### 写作画像" in rendered
+    assert "## 可复现信息" in rendered
+    assert "当前证据支持目标文本与已知作者 alice 的写作指纹一致。" in rendered

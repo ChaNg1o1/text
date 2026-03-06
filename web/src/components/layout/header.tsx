@@ -33,7 +33,7 @@ export function Header() {
       match: (path: string) => path === "/analyses/new",
     },
     {
-      href: "/settings/backends",
+      href: "/settings",
       label: t("nav.settings"),
       icon: SlidersHorizontal,
       match: (path: string) => path.startsWith("/settings"),

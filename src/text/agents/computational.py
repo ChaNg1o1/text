@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from text.app_settings import apply_prompt_override
 from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
 
 from .stylometry import (
@@ -117,10 +118,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
+        prompt_override: str | None = None,
     ) -> None:
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        self.prompt_override = prompt_override
         self._outlier_dims: dict[str, list[tuple[str, float]]] = {}
 
     @property
@@ -167,12 +170,13 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
         user_prompt = self._build_prompt(prompt_features, task_context, comp_results)
 
         try:
-            raw_response = await _call_llm(
-                self.SYSTEM_PROMPT,
+            raw_response, llm_call = await _call_llm(
+                apply_prompt_override(self.SYSTEM_PROMPT, self.prompt_override),
                 user_prompt,
                 model,
                 api_base=self.api_base,
                 api_key=self.api_key,
+                agent_name="computational",
             )
         except Exception as exc:
             logger.exception("ComputationalAgent LLM call failed")
@@ -195,6 +199,7 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             findings=findings,
             summary=summary,
             raw_llm_response=raw_response,
+            llm_call=llm_call,
         )
 
     # ------------------------------------------------------------------

@@ -8,12 +8,36 @@ agent findings into:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import math
 import re
 from collections import Counter
 from difflib import SequenceMatcher
 
-from text.ingest.schema import AgentFinding, AgentReport, InsightItem, TasteAssessment
+from text.ingest.schema import AgentFinding, AgentReport
+
+
+@dataclass(slots=True)
+class InsightItem:
+    rank: int
+    discipline: str
+    category: str
+    insight: str
+    confidence: float
+    taste_score: float
+    dimension_scores: dict[str, float]
+    supporting_disciplines: list[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class TasteAssessment:
+    overall_score: float
+    dimension_scores: dict[str, float]
+    strengths: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
+    methodology: str = ""
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{1,4}")
 _DIGIT_RE = re.compile(r"\d")

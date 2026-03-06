@@ -12,6 +12,7 @@ import logging
 import time
 
 import text.api.deps as deps
+from text.app_settings import AppSettingsStore
 from text.api.models import AnalysisStatus
 from text.api.services.analysis_store import AnalysisStore
 from text.api.services.progress_manager import progress_manager
@@ -349,15 +350,18 @@ class AnalysisRunner:
         # Synthesis hooks
         pm.emit(analysis_id, "phase_changed", {"phase": "agent_analysis"})
         settings = deps.get_settings()
+        app_settings = AppSettingsStore(settings.app_settings_config).load()
         orchestrator = InstrumentedOrchestrator(
             llm_backend=request.llm_backend,
             config_path=str(settings.backends_config),
+            prompt_overrides=app_settings.prompt_overrides,
         )
 
         # Override synthesize to emit synthesis events
         original_synthesize = orchestrator.synthesis.synthesize
 
         async def _instrumented_synthesize(
+            base_report: ForensicReport,
             agent_reports: list[AgentReport],
             req: AnalysisRequest,
         ) -> ForensicReport:
@@ -366,7 +370,7 @@ class AnalysisRunner:
             pm.emit(analysis_id, "synthesis_started", {})
             _emit_log(analysis_id, "Synthesis started.", source="synthesis")
             t_start = time.perf_counter()
-            report = await original_synthesize(agent_reports, req)
+            report = await original_synthesize(base_report, agent_reports, req)
             synthesis_ms = (time.perf_counter() - t_start) * 1000.0
             duration = round(synthesis_ms / 1000.0, 2)
             pm.emit(analysis_id, "synthesis_completed", {"duration_seconds": duration})

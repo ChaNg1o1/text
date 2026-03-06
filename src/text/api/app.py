@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -11,10 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import text.api.deps as deps
 from text.api.config import Settings
 from text.api.models import HealthResponse
-from text.api.routers import analyses, backends, features, observability, qa, uploads
+from text.api.routers import analyses, backends, features, observability, qa, settings, uploads
 from text.api.services.analysis_store import AnalysisStore
-from text.api.services.analysis_task_registry import analysis_task_registry
+from text.api.services.analysis_worker import AnalysisWorker
 from text.api.services.observability import ObservabilityRegistry, http_observability_middleware
+from text.api.services.progress_manager import progress_manager
 
 
 @asynccontextmanager
@@ -31,11 +33,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         event_limit=settings.observability_event_limit,
     )
     app.state.observability = deps._observability
+    worker = AnalysisWorker(store)
+    await worker.start()
+    app.state.analysis_worker = worker
+    progress_manager.set_persist_callback(
+        lambda analysis_id, event: store.append_progress_event(
+            analysis_id,
+            event=event.event,
+            data_json=json.dumps(event.data, ensure_ascii=False),
+            created_at=float(event.data.get("timestamp", 0.0) or 0.0),
+        )
+    )
 
     # Initialise progress manager if available
     try:
-        from text.api.services.progress_manager import progress_manager
-
         deps._progress_manager = progress_manager  # type: ignore[attr-defined]
     except (ImportError, AttributeError):
         pass
@@ -51,16 +62,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
-    await analysis_task_registry.cancel_all()
+    progress_manager.set_persist_callback(None)
+    await worker.stop()
     await store.close()
     deps._store = None
     deps._observability = None
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(config: Settings | None = None) -> FastAPI:
     """Build and configure the FastAPI application."""
-    if settings is None:
-        settings = deps.get_settings()
+    if config is None:
+        config = deps.get_settings()
 
     app = FastAPI(
         title="Text Forensics Platform",
@@ -72,7 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=config.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -83,6 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(uploads.router)
     app.include_router(analyses.router)
     app.include_router(backends.router)
+    app.include_router(settings.router)
     app.include_router(features.router)
     app.include_router(observability.router)
     app.include_router(qa.router)

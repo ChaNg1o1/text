@@ -226,7 +226,10 @@ export default function AnalysesPage() {
                 <SelectContent>
                   <SelectItem value="all">{t("analysis.allTypes")}</SelectItem>
                   <SelectItem value="full">{t("task.full")}</SelectItem>
-                  <SelectItem value="attribution">{t("task.attribution")}</SelectItem>
+                  <SelectItem value="verification">{t("task.verification")}</SelectItem>
+                  <SelectItem value="closed_set_id">{t("task.closed_set_id")}</SelectItem>
+                  <SelectItem value="open_set_id">{t("task.open_set_id")}</SelectItem>
+                  <SelectItem value="clustering">{t("task.clustering")}</SelectItem>
                   <SelectItem value="profiling">{t("task.profiling")}</SelectItem>
                   <SelectItem value="sockpuppet">{t("task.sockpuppet")}</SelectItem>
                 </SelectContent>

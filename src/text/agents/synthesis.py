@@ -1,185 +1,48 @@
-"""Synthesis Agent -- integrates findings from all discipline agents."""
+"""Synthesis agent constrained by deterministic forensic decisions."""
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any
 
-from text.ingest.schema import (
-    AgentFinding,
-    AgentReport,
-    AnalysisRequest,
-    ForensicReport,
-    PersonaDimension,
-    PersonaProfile,
-)
+from text.app_settings import apply_prompt_override
+from text.ingest.schema import AnalysisRequest, ForensicReport, ResultRecord
 
+from .json_utils import parse_json_object_loose
 from .stylometry import _call_llm
 
 logger = logging.getLogger(__name__)
 
 
-def _coerce_to_strings(items: list) -> list[str]:
-    """Convert a list of mixed str/dict items into a list of plain strings."""
-    result: list[str] = []
-    for item in items:
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, dict):
-            # Best-effort: use 'description', 'message', or 'action' key if present,
-            # otherwise fall back to a compact JSON representation.
-            text = (
-                item.get("description")
-                or item.get("message")
-                or item.get("action")
-                or json.dumps(item, ensure_ascii=False)
-            )
-            result.append(str(text))
-        else:
-            result.append(str(item))
-    return result
-
-
-def _repair_truncated_json_object(text: str) -> dict[str, Any] | None:
-    """Attempt to recover a top-level JSON object from a truncated response.
-
-    Strategy: find the last value-ending token (`"`, `]`, `}`, digit, or
-    boolean/null literal), then close any remaining open brackets/braces.
-    """
-    stripped = text.rstrip()
-    if not stripped.lstrip().startswith("{"):
-        return None
-
-    # Count unmatched braces/brackets (very rough, ignores strings).
-    open_braces = stripped.count("{") - stripped.count("}")
-    open_brackets = stripped.count("[") - stripped.count("]")
-
-    # Trim any trailing incomplete value (e.g., truncated string).
-    last_quote = stripped.rfind('"')
-    last_brace = stripped.rfind("}")
-    last_bracket = stripped.rfind("]")
-    cut = max(last_quote, last_brace, last_bracket)
-    if cut < 1:
-        return None
-
-    candidate = stripped[: cut + 1].rstrip().rstrip(",")
-
-    # Re-count after trimming.
-    open_braces = candidate.count("{") - candidate.count("}")
-    open_brackets = candidate.count("[") - candidate.count("]")
-
-    candidate += "]" * max(open_brackets, 0) + "}" * max(open_braces, 0)
-
-    try:
-        result = json.loads(candidate)
-        if isinstance(result, dict):
-            return result
-    except json.JSONDecodeError:
-        pass
-    return None
-
-
-def _clamp_float(value: Any, low: float, high: float, default: float) -> float:
-    """Best-effort float coercion with clamping."""
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        return default
-    return min(high, max(low, v))
-
 class SynthesisAgent:
-    """Integrates multi-disciplinary findings into a coherent forensic report."""
+    """Produces constrained interpretive summaries over deterministic outputs."""
 
     SYSTEM_PROMPT = """\
-You are a senior forensic analyst specializing in synthesizing multi-disciplinary \
-linguistic evidence into unified forensic conclusions. You have extensive experience \
-serving as an expert witness and producing reports that meet evidentiary standards. \
-Your role is to integrate findings from four specialist agents -- Stylometry, \
-Psycholinguistics, Computational Linguistics, and Sociolinguistics -- into a single \
-coherent assessment.
+You are a senior forensic analyst writing a court-aware summary for non-expert users.
 
-Your synthesis methodology follows these principles:
+Strict rules:
+1. Do NOT invent or upgrade any deterministic conclusion grade.
+2. Treat deterministic conclusions and evidence as the primary record.
+3. Your role is limited to:
+   - plain-language summary that a non-technical reader can understand
+   - explanation of how multiple signals fit together
+   - explicit limitations
+4. Use cautious language such as "当前证据支持", "当前证据不支持", "无法判断".
+5. Never state or imply an open-world identity claim unless the deterministic result already says so.
+6. Put the bottom-line conclusion first.
+7. Avoid raw metric names or formulas in the opening summary unless they are essential.
+8. When mentioning a metric, immediately explain it in plain Chinese.
 
-1. **Evidence Triangulation**
-   - A conclusion is strongest when supported by independent evidence from multiple \
-disciplines. For example, same-author attribution is most confident when stylometric \
-fingerprinting, semantic similarity, psychological consistency, AND social identity \
-markers all converge.
-   - Single-discipline findings carry less weight and should be presented as \
-suggestive rather than conclusive.
-   - Quantify the degree of cross-discipline support for each major conclusion.
+Output JSON object with:
+- "summary": string
+- "interpretive_results": array of objects with:
+  - "key": string
+  - "title": string
+  - "body": string
+  - "evidence_ids": array of strings
+  - "supporting_agents": array of strings
+- "additional_limitations": array of strings
 
-2. **Contradiction Resolution**
-   - When agents disagree, do not simply average or ignore. Explicitly identify the \
-contradiction, analyze possible explanations (e.g., genuine authorship vs topic shift \
-vs deliberate disguise), and assign adjusted confidence.
-   - Common legitimate explanations for contradictions include: genre/register shifts, \
-temporal evolution of writing style, collaborative authorship, and translated content.
-   - Flag unresolvable contradictions transparently.
-
-3. **Confidence Calibration**
-   - Overall confidence should reflect the WEAKEST link in the evidence chain, not \
-the average. If three agents agree at 0.9 but one contradicts at 0.8, the true \
-confidence is significantly reduced.
-   - Consider the base rate: in most forensic contexts, false positives are more \
-harmful than false negatives. Err on the side of caution.
-   - Explicitly state what would increase or decrease your confidence.
-
-4. **Task-Specific Synthesis**
-   - ATTRIBUTION: Focus on distinctive authorial markers, cross-text consistency, \
-and discriminating features. Provide a ranked list of attribution hypotheses.
-   - PROFILING: Synthesize demographic and psychological indicators into a coherent \
-author profile. Distinguish between high-confidence and speculative inferences.
-   - SOCKPUPPET: Compare across alleged-different-author texts for hidden similarity. \
-Look for stylistic DNA that persists despite surface-level disguise attempts.
-   - FULL: Provide comprehensive analysis covering all angles.
-
-5. **Report Structure**
-   Your synthesis output must include:
-   - A narrative summary (2-4 paragraphs) of the overall findings.
-   - Confidence scores for each major conclusion (0.0-1.0).
-   - A list of specific contradictions between agents (if any).
-   - Actionable recommendations for the investigator.
-
-6. **Epistemic Humility**
-   - Clearly distinguish between what the evidence shows and what you infer. \
-Use language like "the evidence is consistent with" rather than "the evidence proves."
-   - Acknowledge limitations: small sample size, missing context, feature extraction \
-errors, and the inherent probabilistic nature of linguistic analysis.
-   - Never overstate the certainty of conclusions.
-
-**Output Requirements:**
-Provide your synthesis as a JSON object with the following fields:
-- "summary": string -- the narrative synthesis (2-4 paragraphs)
-- "confidence_scores": object -- { "conclusion_name": float } for each major conclusion
-- "contradictions": array of strings -- each describing a specific inter-agent disagreement
-- "recommendations": array of strings -- actionable next steps for the investigator
-- "persona_profiles": array of profile objects (can be empty for non-profiling tasks), each with:
-  - "subject": string -- who the profile is about (e.g., "overall", author ID/name, or a group)
-  - "summary": string -- concise profile summary
-  - "overall_confidence": float (0.0-1.0)
-  - "dimensions": array of dimension objects, each with:
-    - "key": string (stable identifier, e.g. "communication_style")
-    - "label": string (human-readable title)
-    - "score": float (0-100)
-    - "confidence": float (0.0-1.0)
-    - "evidence_spans": array of strings (evidence excerpts or feature references)
-    - "counter_evidence": array of strings (opposing/uncertain signals)
-- "findings": array of finding objects, each with:
-  - "category": one of "attribution", "profiling", "sockpuppet", "methodology", "limitation"
-  - "description": string
-  - "confidence": float
-  - "evidence": array of strings (referencing specific agent findings)
-
-Return ONLY the JSON object, no other text.
-
-**IMPORTANT: Language Requirement**
-You MUST write ALL text content (synthesis narrative, contradictions, recommendations, \
-finding descriptions, evidence, and any other free-text fields) in Simplified Chinese \
-(简体中文). Keep JSON keys, category identifiers, and confidence_scores dimension \
-names in English. Numerical values remain as numbers. Only the human-readable text \
-should be in Chinese.
+Return ONLY JSON.
 """
 
     def __init__(
@@ -187,243 +50,154 @@ should be in Chinese.
         model: str | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
+        prompt_override: str | None = None,
     ) -> None:
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        self.prompt_override = prompt_override
 
     async def synthesize(
         self,
-        agent_reports: list[AgentReport],
+        base_report: ForensicReport,
+        agent_reports: list,
         request: AnalysisRequest,
     ) -> ForensicReport:
-        """Synthesize all agent findings into a final forensic report."""
+        report = base_report.model_copy(deep=True)
+        report.agent_reports = list(agent_reports)
+        if report.provenance is not None:
+            for agent_report in report.agent_reports:
+                if agent_report.llm_call is not None:
+                    report.provenance.llm_calls.append(agent_report.llm_call)
+
         model = self.model
         if not model:
-            return ForensicReport(
-                request=request,
-                agent_reports=agent_reports,
-                synthesis="未配置 LLM 模型，综合分析未执行；请先配置自定义后端。",
-                confidence_scores={},
-                contradictions=[],
-                recommendations=["请在设置页配置并选择一个可用的自定义后端后重试。"],
-            )
+            report.results.extend(self._fallback_results(agent_reports))
+            return report
 
-        user_prompt = self._build_prompt(agent_reports, request)
-
+        user_prompt = self._build_prompt(report, request)
         try:
-            raw_response = await _call_llm(
-                self.SYSTEM_PROMPT,
+            raw_response, llm_call = await _call_llm(
+                apply_prompt_override(self.SYSTEM_PROMPT, self.prompt_override),
                 user_prompt,
                 model,
                 api_base=self.api_base,
                 api_key=self.api_key,
+                agent_name="synthesis",
             )
         except Exception:
             logger.exception("SynthesisAgent LLM call failed")
-            return ForensicReport(
-                request=request,
-                agent_reports=agent_reports,
-                synthesis="由于 LLM 调用失败，综合分析未完成。各代理的独立报告仍然可用。",
-                confidence_scores={},
-                contradictions=[],
-                recommendations=["请人工审阅各代理的独立报告。"],
-            )
+            report.results.extend(self._fallback_results(agent_reports))
+            return report
 
-        return self._parse_synthesis(raw_response, agent_reports, request)
-
-    # ------------------------------------------------------------------
-    # Prompt construction
-    # ------------------------------------------------------------------
-
-    def _build_prompt(
-        self,
-        agent_reports: list[AgentReport],
-        request: AnalysisRequest,
-    ) -> str:
-        sections: list[str] = []
-
-        # Task context.
-        text_ids = [t.id for t in request.texts]
-        authors = sorted({t.author for t in request.texts})
-
-        # Truncate long lists to avoid wasting context.
-        max_display = 30
-        id_str = (
-            ", ".join(text_ids[:max_display]) + f" ... ({len(text_ids)} total)"
-            if len(text_ids) > max_display
-            else ", ".join(text_ids)
+        parsed_report = self._parse_synthesis(
+            raw_response,
+            base_report=report,
+            agent_reports=agent_reports,
+            request=request,
         )
-        author_str = (
-            ", ".join(authors[:max_display]) + f" ... ({len(authors)} total)"
-            if len(authors) > max_display
-            else ", ".join(authors)
-        )
+        if parsed_report is None:
+            report.results.extend(self._fallback_results(agent_reports))
+            return report
+        report = parsed_report
 
-        sections.append(
-            f"## Analysis Task\n"
-            f"- Task type: {request.task.value}\n"
-            f"- Number of texts: {len(request.texts)}\n"
-            f"- Text IDs: {id_str}\n"
-            f"- Authors claimed: {author_str}\n"
-        )
-
-        if request.compare_groups:
-            groups_str = "; ".join(
-                f"Group {i + 1}: [{', '.join(g)}]" for i, g in enumerate(request.compare_groups)
-            )
-            sections.append(f"- Comparison groups: {groups_str}\n")
-
-        # Agent reports.
-        for report in agent_reports:
-            lines = [
-                f"## Agent Report: {report.agent_name} ({report.discipline})",
-                f"**Summary:** {report.summary}",
-                f"**Number of findings:** {len(report.findings)}",
-            ]
-
-            for j, finding in enumerate(report.findings, 1):
-                evidence_str = "; ".join(finding.evidence[:5]) if finding.evidence else "(none)"
-                lines.append(
-                    f"\n### Finding {j}: [{finding.category}] "
-                    f"(confidence: {finding.confidence:.2f})\n"
-                    f"{finding.description}\n"
-                    f"Evidence: {evidence_str}"
-                )
-
-            sections.append("\n".join(lines))
-
-        # Instruction.
-        sections.append(
-            f"Synthesize the above {len(agent_reports)} agent reports into a unified "
-            f"forensic assessment for the '{request.task.value}' task. "
-            f"Identify convergences, contradictions, and overall conclusions. "
-            f"Provide calibrated confidence scores and actionable recommendations. "
-            f"Return your synthesis as a JSON object."
-        )
-
-        return "\n\n".join(sections)
-
-    # ------------------------------------------------------------------
-    # Response parsing
-    # ------------------------------------------------------------------
+        if report.provenance is not None:
+            report.provenance.llm_calls.append(llm_call)
+        report.reproducibility.model_id = llm_call.model_id
+        return report
 
     def _parse_synthesis(
         self,
-        raw: str,
-        agent_reports: list[AgentReport],
-        request: AnalysisRequest,
-    ) -> ForensicReport:
-        """Parse the LLM synthesis response into a ForensicReport."""
-        text = raw.strip()
-        if text.startswith("```"):
-            first_newline = text.index("\n")
-            last_fence = text.rfind("```")
-            text = text[first_newline + 1 : last_fence].strip()
-
-        try:
-            data: dict[str, Any] = json.loads(text)
-        except json.JSONDecodeError:
-            # Attempt to recover a truncated JSON object by closing open braces.
-            data = _repair_truncated_json_object(text)
-            if data is None:
-                logger.warning("Failed to parse synthesis JSON; using raw text as summary")
-                return ForensicReport(
-                    request=request,
-                    agent_reports=agent_reports,
-                    synthesis=raw[:3000],
-                    confidence_scores={},
-                    contradictions=[],
-                    recommendations=["综合分析输出无法结构化解析，请人工审阅原始文本。"],
-                )
-            logger.info("Recovered synthesis JSON from truncated response")
-
-        # Extract synthesis fields.
-        summary = data.get("summary", "")
-        confidence_scores = data.get("confidence_scores", {})
-
-        # LLM may return contradictions/recommendations as dicts or strings;
-        # coerce everything to strings for the ForensicReport schema.
-        contradictions = _coerce_to_strings(data.get("contradictions", []))
-        recommendations = _coerce_to_strings(data.get("recommendations", []))
-
-        # Parse structured persona profiles if present.
-        persona_profiles: list[PersonaProfile] = []
-        raw_profiles = data.get("persona_profiles", [])
-        if isinstance(raw_profiles, list):
-            for profile in raw_profiles:
-                if not isinstance(profile, dict):
-                    continue
-                subject = str(profile.get("subject", "")).strip() or "overall"
-                summary_text = str(profile.get("summary", "")).strip()
-                overall_conf_raw = profile.get("overall_confidence", None)
-                overall_conf = None
-                if overall_conf_raw is not None:
-                    overall_conf = _clamp_float(overall_conf_raw, 0.0, 1.0, 0.5)
-
-                dimensions: list[PersonaDimension] = []
-                raw_dimensions = profile.get("dimensions", [])
-                if isinstance(raw_dimensions, list):
-                    for dim in raw_dimensions:
-                        if not isinstance(dim, dict):
-                            continue
-                        key = str(dim.get("key", "")).strip() or "unknown"
-                        label = str(dim.get("label", "")).strip() or key
-                        dimensions.append(
-                            PersonaDimension(
-                                key=key,
-                                label=label,
-                                score=_clamp_float(dim.get("score"), 0.0, 100.0, 50.0),
-                                confidence=_clamp_float(dim.get("confidence"), 0.0, 1.0, 0.5),
-                                evidence_spans=_coerce_to_strings(dim.get("evidence_spans", [])),
-                                counter_evidence=_coerce_to_strings(
-                                    dim.get("counter_evidence", [])
-                                ),
-                            )
-                        )
-
-                persona_profiles.append(
-                    PersonaProfile(
-                        subject=subject,
-                        summary=summary_text,
-                        dimensions=dimensions,
-                        overall_confidence=overall_conf,
-                    )
-                )
-
-        # Parse nested findings if present.
-        synthesis_findings: list[AgentFinding] = []
-        for item in data.get("findings", []):
-            try:
-                synthesis_findings.append(
-                    AgentFinding(
-                        discipline="synthesis",
-                        category=item.get("category", "unknown"),
-                        description=item.get("description", ""),
-                        confidence=float(item.get("confidence", 0.5)),
-                        evidence=item.get("evidence", []),
-                    )
-                )
-            except (ValueError, TypeError):
-                logger.warning("Skipping malformed synthesis finding")
-
-        # Build the synthesis agent's own report and include it.
-        synthesis_report = AgentReport(
-            agent_name="synthesis",
-            discipline="synthesis",
-            findings=synthesis_findings,
-            summary=summary[:500] if summary else "综合分析完成。",
-            raw_llm_response=raw,
+        raw_response: str,
+        *,
+        base_report: ForensicReport | None = None,
+        agent_reports: list | None = None,
+        request: AnalysisRequest | None = None,
+    ) -> ForensicReport | None:
+        report = (
+            base_report.model_copy(deep=True)
+            if base_report is not None
+            else ForensicReport(request=request or AnalysisRequest(texts=[]))
         )
+        if agent_reports is not None:
+            report.agent_reports = list(agent_reports)
 
-        all_reports = list(agent_reports) + [synthesis_report]
+        parsed = parse_json_object_loose(raw_response)
+        if parsed is None:
+            return None
 
-        return ForensicReport(
-            request=request,
-            agent_reports=all_reports,
-            synthesis=summary,
-            confidence_scores=confidence_scores,
-            contradictions=contradictions,
-            recommendations=recommendations,
-            persona_profiles=persona_profiles,
+        data = parsed.value
+        summary = str(data.get("summary", "")).strip()
+        if summary:
+            report.summary = summary
+
+        for item in data.get("interpretive_results", []) or []:
+            if not isinstance(item, dict):
+                continue
+            report.results.append(
+                ResultRecord(
+                    key=str(item.get("key") or f"interpretive_{len(report.results)+1}"),
+                    title=str(item.get("title") or "解释性意见"),
+                    body=str(item.get("body") or "").strip(),
+                    evidence_ids=[str(eid) for eid in item.get("evidence_ids", []) if str(eid).strip()],
+                    interpretive_opinion=True,
+                    supporting_agents=[
+                        str(agent) for agent in item.get("supporting_agents", []) if str(agent).strip()
+                    ],
+                )
+            )
+
+        extra_limits = [
+            str(item) for item in data.get("additional_limitations", []) if str(item).strip()
+        ]
+        if extra_limits:
+            report.limitations.extend(extra_limits)
+        return report
+
+    def _build_prompt(self, report: ForensicReport, request: AnalysisRequest) -> str:
+        sections = [
+            "## Deterministic Conclusions",
+        ]
+        for conclusion in report.conclusions:
+            sections.append(
+                (
+                    f"- key={conclusion.key} | task={conclusion.task.value} | grade={conclusion.grade.value} "
+                    f"| score={conclusion.score if conclusion.score is not None else 'n/a'}\n"
+                    f"  statement={conclusion.statement}\n"
+                    f"  limitations={'；'.join(conclusion.limitations) if conclusion.limitations else '无'}\n"
+                    f"  evidence_ids={', '.join(conclusion.evidence_ids) if conclusion.evidence_ids else '无'}"
+                )
+            )
+
+        sections.append("\n## Evidence Items")
+        for evidence in report.evidence_items[:12]:
+            sections.append(
+                f"- {evidence.evidence_id}: {evidence.summary} | excerpts={'；'.join(evidence.excerpts[:3])}"
+            )
+
+        sections.append("\n## Agent Reports")
+        for agent_report in report.agent_reports:
+            sections.append(
+                f"- {agent_report.agent_name} ({agent_report.discipline}): {agent_report.summary}"
+            )
+        sections.append(
+            "\nWrite concise Chinese for a non-expert desktop app user. Start with the bottom line, "
+            "then explain why, then mention risks or limits."
         )
+        return "\n".join(sections)
+
+    def _fallback_results(self, agent_reports: list) -> list[ResultRecord]:
+        results: list[ResultRecord] = []
+        for agent_report in agent_reports:
+            if not getattr(agent_report, "summary", "").strip():
+                continue
+            results.append(
+                ResultRecord(
+                    key=f"agent_{agent_report.agent_name}",
+                    title=f"{agent_report.agent_name} 解释性摘要",
+                    body=agent_report.summary,
+                    interpretive_opinion=True,
+                    supporting_agents=[agent_report.agent_name],
+                )
+            )
+        return results

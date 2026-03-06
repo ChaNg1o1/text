@@ -7,6 +7,7 @@ import { I18nProvider } from "@/components/providers/i18n-provider";
 import { Header } from "@/components/layout/header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { RuntimeFlags } from "@/components/runtime/runtime-flags";
+import { WelcomeScreen } from "@/components/welcome/welcome-screen";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -37,6 +38,7 @@ export default function RootLayout({
         <RuntimeFlags />
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <I18nProvider>
+            <WelcomeScreen />
             <TooltipProvider>
               <div className="app-surface-flow" aria-hidden="true" />
               <Header />

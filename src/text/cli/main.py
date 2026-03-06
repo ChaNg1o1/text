@@ -2,7 +2,7 @@
 
 Command structure::
 
-    text analyze full|attribution|profiling|sockpuppet <input>
+    text analyze full|verify|closed-set-id|open-set-id|cluster|profile|sockpuppet <input>
     text extract <input>
     text config info|backends
     text config cache status|clear
@@ -25,8 +25,9 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from text.app_settings import AppSettingsStore
 from text.ingest.loader import load_from_path
-from text.ingest.schema import AnalysisRequest, FeatureVector, ForensicReport, TaskType
+from text.ingest.schema import AnalysisRequest, FeatureVector, ForensicReport, TaskParams, TaskType
 from text.llm.backend import LLMBackend, load_backends_config
 from text.report.renderer import ReportRenderer
 
@@ -224,7 +225,12 @@ async def _run_analysis(
     try:
         from text.agents.orchestrator import OrchestratorAgent
 
-        orchestrator = OrchestratorAgent(llm_backend=backend_name, config_path=config)
+        app_settings = AppSettingsStore().load()
+        orchestrator = OrchestratorAgent(
+            llm_backend=backend_name,
+            config_path=config,
+            prompt_overrides=app_settings.prompt_overrides,
+        )
 
         with Progress(
             SpinnerColumn(),
@@ -304,9 +310,7 @@ def _analyze(
     no_cache: bool,
     config: Path | None,
     *,
-    compare: list[str] | None = None,
-    author: str | None = None,
-    suspects: str | None = None,
+    task_params: TaskParams | None = None,
 ) -> None:
     """Shared entry point for all analyze subcommands."""
     console.print(
@@ -318,20 +322,7 @@ def _analyze(
     request = _load_data(input_path)
     request.task = task_type
     request.llm_backend = resolved_backend
-
-    if compare:
-        request.compare_groups = [g.split(",") for g in compare]
-    if author:
-        request.texts = [t for t in request.texts if t.author == author]
-        if not request.texts:
-            console.print(f"[bold red]Error:[/bold red] No texts found for author '{author}'.")
-            raise typer.Exit(code=1)
-    if suspects:
-        suspect_list = [s.strip() for s in suspects.split(",")]
-        request.texts = [t for t in request.texts if t.author in suspect_list]
-        if not request.texts:
-            console.print(f"[bold red]Error:[/bold red] No texts found for suspect(s): {suspects}")
-            raise typer.Exit(code=1)
+    request.task_params = task_params or TaskParams()
 
     # Default output: save report to a file in the current working directory.
     if output is None:
@@ -362,12 +353,121 @@ def analyze_full(
     _analyze(input, TaskType.FULL, llm, format, output, no_cache, config)
 
 
-@analyze_app.command("attribution")
-def analyze_attribution(
+def _split_csv_arg(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+@analyze_app.command("verify")
+def analyze_verification(
     input: InputArg,
-    compare: Annotated[
-        Optional[list[str]],
-        typer.Option("--compare", help="Author groups to compare (comma-separated per group)"),
+    questioned: Annotated[
+        str,
+        typer.Option("--questioned", help="Comma-separated questioned text IDs"),
+    ],
+    reference_authors: Annotated[
+        str,
+        typer.Option("--reference-authors", help="Comma-separated reference author IDs"),
+    ],
+    llm: LlmOpt = "default",
+    format: FormatOpt = "rich",
+    output: OutputOpt = None,
+    no_cache: NoCacheOpt = False,
+    config: ConfigOpt = None,
+) -> None:
+    """Authorship verification analysis."""
+    _analyze(
+        input,
+        TaskType.VERIFICATION,
+        llm,
+        format,
+        output,
+        no_cache,
+        config,
+        task_params=TaskParams(
+            questioned_text_ids=_split_csv_arg(questioned),
+            reference_author_ids=_split_csv_arg(reference_authors),
+        ),
+    )
+
+
+@analyze_app.command("closed-set-id")
+def analyze_closed_set_id(
+    input: InputArg,
+    questioned: Annotated[
+        str,
+        typer.Option("--questioned", help="Comma-separated questioned text IDs"),
+    ],
+    candidates: Annotated[
+        str,
+        typer.Option("--candidates", help="Comma-separated candidate author IDs"),
+    ],
+    top_k: Annotated[int, typer.Option("--top-k", help="Number of ranked candidates to include")] = 3,
+    llm: LlmOpt = "default",
+    format: FormatOpt = "rich",
+    output: OutputOpt = None,
+    no_cache: NoCacheOpt = False,
+    config: ConfigOpt = None,
+) -> None:
+    """Closed-set identification."""
+    _analyze(
+        input,
+        TaskType.CLOSED_SET_ID,
+        llm,
+        format,
+        output,
+        no_cache,
+        config,
+        task_params=TaskParams(
+            questioned_text_ids=_split_csv_arg(questioned),
+            candidate_author_ids=_split_csv_arg(candidates),
+            top_k=top_k,
+        ),
+    )
+
+
+@analyze_app.command("open-set-id")
+def analyze_open_set_id(
+    input: InputArg,
+    questioned: Annotated[
+        str,
+        typer.Option("--questioned", help="Comma-separated questioned text IDs"),
+    ],
+    candidates: Annotated[
+        str,
+        typer.Option("--candidates", help="Comma-separated candidate author IDs"),
+    ],
+    top_k: Annotated[int, typer.Option("--top-k", help="Number of ranked candidates to include")] = 3,
+    llm: LlmOpt = "default",
+    format: FormatOpt = "rich",
+    output: OutputOpt = None,
+    no_cache: NoCacheOpt = False,
+    config: ConfigOpt = None,
+) -> None:
+    """Open-set identification with rejection."""
+    _analyze(
+        input,
+        TaskType.OPEN_SET_ID,
+        llm,
+        format,
+        output,
+        no_cache,
+        config,
+        task_params=TaskParams(
+            questioned_text_ids=_split_csv_arg(questioned),
+            candidate_author_ids=_split_csv_arg(candidates),
+            top_k=top_k,
+        ),
+    )
+
+
+@analyze_app.command("cluster")
+def analyze_cluster(
+    input: InputArg,
+    text_ids: Annotated[
+        Optional[str],
+        typer.Option("--texts", help="Optional comma-separated text IDs to cluster"),
     ] = None,
     llm: LlmOpt = "default",
     format: FormatOpt = "rich",
@@ -375,16 +475,25 @@ def analyze_attribution(
     no_cache: NoCacheOpt = False,
     config: ConfigOpt = None,
 ) -> None:
-    """Authorship attribution analysis."""
-    _analyze(input, TaskType.ATTRIBUTION, llm, format, output, no_cache, config, compare=compare)
+    """Unsupervised clustering by writing fingerprints."""
+    _analyze(
+        input,
+        TaskType.CLUSTERING,
+        llm,
+        format,
+        output,
+        no_cache,
+        config,
+        task_params=TaskParams(cluster_text_ids=_split_csv_arg(text_ids)),
+    )
 
 
-@analyze_app.command("profiling")
+@analyze_app.command("profile")
 def analyze_profiling(
     input: InputArg,
-    author: Annotated[
+    subjects: Annotated[
         Optional[str],
-        typer.Option("--author", help="Specific author to profile"),
+        typer.Option("--subjects", help="Optional comma-separated subject/author IDs"),
     ] = None,
     llm: LlmOpt = "default",
     format: FormatOpt = "rich",
@@ -392,17 +501,26 @@ def analyze_profiling(
     no_cache: NoCacheOpt = False,
     config: ConfigOpt = None,
 ) -> None:
-    """Author profiling and linguistic fingerprinting."""
-    _analyze(input, TaskType.PROFILING, llm, format, output, no_cache, config, author=author)
+    """Observable writing profile analysis."""
+    _analyze(
+        input,
+        TaskType.PROFILING,
+        llm,
+        format,
+        output,
+        no_cache,
+        config,
+        task_params=TaskParams(subject_ids=_split_csv_arg(subjects)),
+    )
 
 
 @analyze_app.command("sockpuppet")
 def analyze_sockpuppet(
     input: InputArg,
-    suspects: Annotated[
-        Optional[str],
-        typer.Option("--suspects", help="Comma-separated suspect author names"),
-    ] = None,
+    accounts: Annotated[
+        str,
+        typer.Option("--accounts", help="Comma-separated account IDs"),
+    ],
     llm: LlmOpt = "default",
     format: FormatOpt = "rich",
     output: OutputOpt = None,
@@ -410,7 +528,16 @@ def analyze_sockpuppet(
     config: ConfigOpt = None,
 ) -> None:
     """Sockpuppet / sybil account detection."""
-    _analyze(input, TaskType.SOCKPUPPET, llm, format, output, no_cache, config, suspects=suspects)
+    _analyze(
+        input,
+        TaskType.SOCKPUPPET,
+        llm,
+        format,
+        output,
+        no_cache,
+        config,
+        task_params=TaskParams(account_ids=_split_csv_arg(accounts)),
+    )
 
 
 # ------------------------------------------------------------------
@@ -469,6 +596,44 @@ def extract(
         raise typer.Exit(code=1)
 
     console.print(f"  Written to [bold]{output}[/bold]")
+
+
+@app.command("evaluate")
+def evaluate_reference_corpus(
+    input: Annotated[Path, typer.Argument(help="Reference corpus file or directory")],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Optional JSON output path"),
+    ] = None,
+    no_cache: NoCacheOpt = False,
+) -> None:
+    """Evaluate a labeled reference corpus and emit calibration-style metrics."""
+    from text.decision import DecisionEngine
+
+    request = _load_data(input)
+
+    try:
+        features = asyncio.run(_extract_features(request, no_cache=no_cache))
+    except ImportError:
+        console.print(
+            "[bold red]Error:[/bold red] Feature extraction module is not available. "
+            "Ensure the Rust extension and NLP dependencies are installed."
+        )
+        raise typer.Exit(code=1) from None
+    except KeyboardInterrupt:
+        console.print("\n[dim]评测已取消。[/dim]")
+        raise typer.Exit(code=130) from None
+
+    metrics = DecisionEngine().evaluate_reference_corpus(request, features)
+    rendered = json.dumps(metrics, indent=2, ensure_ascii=False)
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
+        console.print(f"  Evaluation written to [bold]{output}[/bold]")
+        return
+
+    console.print(Panel(rendered, title="Reference Evaluation", border_style="blue"))
 
 
 # ------------------------------------------------------------------
@@ -671,4 +836,3 @@ def cache_clear(
 
     shutil.rmtree(cache_dir)
     console.print(f"  Cleared [bold green]{size_mb:.1f} MB[/bold green] from {cache_dir}")
-

@@ -15,7 +15,7 @@ import { useI18n } from "@/components/providers/i18n-provider";
 
 const AGENT_META: Record<string, { label: string; icon: typeof Brain }> = {
   stylometry: { label: "Stylometry", icon: BarChart3 },
-  psycholinguistics: { label: "Psycholinguistics", icon: Brain },
+  writing_process: { label: "Writing Process", icon: Brain },
   computational: { label: "Computational", icon: BarChart3 },
   sociolinguistics: { label: "Sociolinguistics", icon: Users },
 };
