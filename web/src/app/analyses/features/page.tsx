@@ -1,13 +1,14 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { ArrowLeft, Loader2, BarChart3, Link2Off } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useAnalysis } from "@/hooks/use-analysis";
 import type { FeaturesResponse } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -53,25 +54,30 @@ const SCALAR_FEATURES: {
   { key: "clause_depth_avg", label: "Clause Depth Avg", source: "nlp", group: "NLP" },
 ];
 
-const FEATURE_GROUPS = [...new Set(SCALAR_FEATURES.map((f) => f.group))];
+const FEATURE_GROUPS = [...new Set(SCALAR_FEATURES.map((feature) => feature.group))];
 
-function getValue(fv: FeaturesResponse["features"][number], key: string, source: "rust" | "nlp") {
-  const data = source === "rust"
-    ? (fv.rust_features as unknown as Record<string, unknown>)
-    : (fv.nlp_features as unknown as Record<string, unknown>);
+function getValue(
+  featureVector: FeaturesResponse["features"][number],
+  key: string,
+  source: "rust" | "nlp",
+) {
+  const data =
+    source === "rust"
+      ? (featureVector.rust_features as unknown as Record<string, unknown>)
+      : (featureVector.nlp_features as unknown as Record<string, unknown>);
   const value = data[key];
   return typeof value === "number" ? value : 0;
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
+function cosineSimilarity(a: number[], b: number[]) {
   if (a.length === 0 || a.length !== b.length) return 0;
   let dot = 0;
   let magA = 0;
   let magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
+  for (let index = 0; index < a.length; index += 1) {
+    dot += a[index] * b[index];
+    magA += a[index] * a[index];
+    magB += b[index] * b[index];
   }
   const denom = Math.sqrt(magA) * Math.sqrt(magB);
   return denom === 0 ? 0 : dot / denom;
@@ -108,75 +114,79 @@ function FeaturesPageContent() {
     return map;
   }, [analysis]);
 
+  const features = useMemo(() => featuresData?.features ?? [], [featuresData?.features]);
+
   const groupFeatures = useMemo(
-    () => SCALAR_FEATURES.filter((f) => f.group === selectedGroup),
+    () => SCALAR_FEATURES.filter((feature) => feature.group === selectedGroup),
     [selectedGroup],
   );
 
-  const effectiveSelectedFeature = groupFeatures.some((f) => f.key === selectedFeature)
+  const effectiveSelectedFeature = groupFeatures.some((feature) => feature.key === selectedFeature)
     ? selectedFeature
     : (groupFeatures[0]?.key ?? "");
-  const currentFeatureMeta = SCALAR_FEATURES.find((f) => f.key === effectiveSelectedFeature);
-
-  const features = useMemo(() => featuresData?.features ?? [], [featuresData?.features]);
+  const currentFeatureMeta = SCALAR_FEATURES.find((feature) => feature.key === effectiveSelectedFeature);
 
   const authorMap = useMemo(() => {
-    const normalizeAuthor = (value: string | undefined) => {
+    const normalizeGroup = (value: string | undefined) => {
       const next = value?.trim();
       if (!next || next.toLowerCase() === "unknown") return "";
       return next;
     };
 
     const map: Record<string, string> = {};
-    for (const fv of features) {
-      const author = normalizeAuthor(requestAuthorMap[fv.text_id]);
-      map[fv.text_id] = author || `text-${fv.text_id.slice(0, 8)}`;
+    for (const feature of features) {
+      const groupName = normalizeGroup(requestAuthorMap[feature.text_id]);
+      map[feature.text_id] = groupName || `text-${feature.text_id.slice(0, 8)}`;
     }
     return map;
-  }, [requestAuthorMap, features]);
+  }, [features, requestAuthorMap]);
 
   const filteredFeatures = useMemo(() => {
     if (selectedAuthors.length === 0) return features;
     const selected = new Set(selectedAuthors);
-    return features.filter((fv) => selected.has(authorMap[fv.text_id] ?? "unknown"));
-  }, [features, selectedAuthors, authorMap]);
+    return features.filter((feature) => selected.has(authorMap[feature.text_id] ?? "unknown"));
+  }, [authorMap, features, selectedAuthors]);
 
-  const hasAnyNamedAuthor = useMemo(
-    () => Object.values(authorMap).some((author) => !author.startsWith("text-")),
+  const allAuthors = useMemo(() => [...new Set(Object.values(authorMap))].sort(), [authorMap]);
+  const hasNamedGroups = useMemo(
+    () => Object.values(authorMap).some((groupName) => !groupName.startsWith("text-")),
     [authorMap],
   );
-  const allAuthors = useMemo(() => [...new Set(Object.values(authorMap))].sort(), [authorMap]);
-  const isAllAuthorsSelected = selectedAuthors.length === 0;
 
   const highlightedAuthors = useMemo(() => {
     if (selectedTextIds.length === 0) return [];
-    return [...new Set(selectedTextIds.map((id) => authorMap[id]).filter(Boolean))] as string[];
-  }, [selectedTextIds, authorMap]);
+    return [...new Set(selectedTextIds.map((textId) => authorMap[textId]).filter(Boolean))] as string[];
+  }, [authorMap, selectedTextIds]);
 
   const featureStats = useMemo(() => {
     if (!currentFeatureMeta || filteredFeatures.length === 0) {
       return { mean: 0, std: 0, outliers: 0 };
     }
 
-    const values = filteredFeatures.map((fv) =>
-      getValue(fv, currentFeatureMeta.key, currentFeatureMeta.source),
+    const values = filteredFeatures.map((feature) =>
+      getValue(feature, currentFeatureMeta.key, currentFeatureMeta.source),
     );
-    const mean = values.reduce((acc, val) => acc + val, 0) / values.length;
-    const variance = values.reduce((acc, val) => acc + (val - mean) ** 2, 0) / values.length;
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance =
+      values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
     const std = Math.sqrt(variance);
-    const outliers = std === 0
-      ? 0
-      : values.filter((value) => Math.abs((value - mean) / std) > 2).length;
+    const outliers =
+      std === 0
+        ? 0
+        : values.filter((value) => Math.abs((value - mean) / std) > 2).length;
 
     return { mean, std, outliers };
-  }, [filteredFeatures, currentFeatureMeta]);
+  }, [currentFeatureMeta, filteredFeatures]);
 
   const lowSimilarityPairs = useMemo(() => {
     const capped = filteredFeatures.slice(0, 50);
     let count = 0;
-    for (let i = 0; i < capped.length; i++) {
-      for (let j = i + 1; j < capped.length; j++) {
-        const similarity = cosineSimilarity(capped[i].nlp_features.embedding, capped[j].nlp_features.embedding);
+    for (let index = 0; index < capped.length; index += 1) {
+      for (let peer = index + 1; peer < capped.length; peer += 1) {
+        const similarity = cosineSimilarity(
+          capped[index].nlp_features.embedding,
+          capped[peer].nlp_features.embedding,
+        );
         if (similarity < 0.78) count += 1;
       }
     }
@@ -184,12 +194,12 @@ function FeaturesPageContent() {
   }, [filteredFeatures]);
 
   const toggleAuthor = (author: string) => {
-    if (isAllAuthorsSelected) {
+    if (selectedAuthors.length === 0) {
       setSelectedAuthors([author]);
       return;
     }
     if (selectedAuthors.includes(author)) {
-      setSelectedAuthors(selectedAuthors.filter((a) => a !== author));
+      setSelectedAuthors(selectedAuthors.filter((entry) => entry !== author));
       return;
     }
     setSelectedAuthors([...selectedAuthors, author]);
@@ -253,144 +263,54 @@ function FeaturesPageContent() {
   return (
     <StaggerContainer className="space-y-6" delayChildren={0.03} staggerChildren={0.04}>
       <StaggerItem>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button asChild variant="ghost" size="sm">
-              <Link href={`/analyses/detail?id=${encodeURIComponent(id)}`}>
-                <ArrowLeft className="mr-1.5 h-4 w-4" />
-                {t("common.back")}
-              </Link>
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
-                <BarChart3 className="h-6 w-6" />
-                {t("features.title")}
-              </h1>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {t("features.subtitle", { features: features.length, authors: allAuthors.length })}
-              </p>
+        <div className="rounded-[28px] border border-border/70 bg-card/96 p-6 shadow-none">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-3">
+              <Button asChild variant="ghost" size="sm" className="w-fit rounded-full">
+                <Link href={`/analyses/detail?id=${encodeURIComponent(id)}`}>
+                  <ArrowLeft className="h-4 w-4" />
+                  {t("common.back")}
+                </Link>
+              </Button>
+              <div>
+                <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  {t("features.labEyebrow")}
+                </div>
+                <h1 className="mt-2 text-3xl font-semibold tracking-tight">{t("features.title")}</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-7 text-muted-foreground">
+                  {t("features.labHint")}
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
+              <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                {t("features.contextTitle")}
+              </div>
+              <div className="mt-3 space-y-2 text-sm">
+                <div className="font-mono">{analysis.id}</div>
+                <div className="text-muted-foreground">{analysis.llm_backend}</div>
+                <Badge variant="outline" className="rounded-full px-3 py-1">
+                  {t(`task.${analysis.task_type}`)}
+                </Badge>
+              </div>
             </div>
           </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <InsightStat label={t("features.insight.samples")} value={<NumberTween value={filteredFeatures.length} />} />
+            <InsightStat label={t("features.insight.groups")} value={<NumberTween value={allAuthors.length} />} />
+            <InsightStat
+              label={t("features.insight.currentMean")}
+              value={<NumberTween value={featureStats.mean} decimals={3} />}
+              caption={`${t("features.insight.currentStd")}: ${featureStats.std.toFixed(3)}`}
+            />
+            <InsightStat
+              label={t("features.insight.anomalies")}
+              value={<NumberTween value={featureStats.outliers + lowSimilarityPairs} />}
+            />
+          </div>
         </div>
-      </StaggerItem>
-
-      <StaggerItem>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Card>
-            <CardContent className="pt-5">
-              <p className="text-xs text-muted-foreground">{t("features.insight.samples")}</p>
-              <p className="mt-1 text-2xl font-semibold"><NumberTween value={filteredFeatures.length} /></p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-5">
-              <p className="text-xs text-muted-foreground">{t("features.insight.authors")}</p>
-              <p className="mt-1 text-2xl font-semibold"><NumberTween value={allAuthors.length} /></p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-5">
-              <p className="text-xs text-muted-foreground">{t("features.insight.currentMean")}</p>
-              <p className="mt-1 text-2xl font-semibold"><NumberTween value={featureStats.mean} decimals={3} /></p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("features.insight.currentStd")}: <NumberTween value={featureStats.std} decimals={3} />
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-5">
-              <p className="text-xs text-muted-foreground">{t("features.insight.anomalies")}</p>
-              <p className="mt-1 text-2xl font-semibold"><NumberTween value={featureStats.outliers + lowSimilarityPairs} /></p>
-            </CardContent>
-          </Card>
-        </div>
-      </StaggerItem>
-
-      <StaggerItem>
-        <Card>
-          <CardContent className="pt-5 space-y-3">
-            <div className="flex flex-wrap gap-3 items-center">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{t("features.authors")}</span>
-                <div className="flex gap-1.5 flex-wrap">
-                  {allAuthors.map((author) => {
-                    const isSelected = selectedAuthors.length === 0 || selectedAuthors.includes(author);
-                    return (
-                      <Button
-                        key={author}
-                        type="button"
-                        variant={isSelected ? "secondary" : "outline"}
-                        size="xs"
-                        onClick={() => toggleAuthor(author)}
-                      >
-                        {author}
-                      </Button>
-                    );
-                  })}
-                  {selectedAuthors.length > 0 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      className="text-muted-foreground"
-                      onClick={() => setSelectedAuthors([])}
-                    >
-                      {t("common.showAll")}
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 ml-auto">
-                <span className="text-sm font-medium">{t("features.group")}</span>
-                <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FEATURE_GROUPS.map((g) => (
-                      <SelectItem key={g} value={g}>
-                        {g}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{t("features.feature")}</span>
-                <Select value={effectiveSelectedFeature} onValueChange={setSelectedFeature}>
-                  <SelectTrigger className="w-48">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groupFeatures.map((f) => (
-                      <SelectItem key={f.key} value={f.key}>
-                        {f.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {selectedTextIds.length > 0 && (
-                <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTextIds([])}>
-                  <Link2Off className="h-3.5 w-3.5" />
-                  {t("features.clearLink")}
-                </Button>
-              )}
-            </div>
-
-            {!hasAnyNamedAuthor && (
-              <p className="text-xs text-muted-foreground">{t("features.missingAuthor")}</p>
-            )}
-            {selectedTextIds.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {t("features.linkHint", { count: selectedTextIds.length })}
-              </p>
-            )}
-          </CardContent>
-        </Card>
       </StaggerItem>
 
       {features.length === 0 ? (
@@ -398,44 +318,158 @@ function FeaturesPageContent() {
           <p className="text-muted-foreground">{t("features.noData")}</p>
         </StaggerItem>
       ) : (
-        <div className="space-y-6">
-          {currentFeatureMeta && (
-            <DistributionChart
+        <div className="grid items-start gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+          <div className="space-y-4 xl:sticky xl:top-20">
+            <Card className="border-border/70 bg-card/96 shadow-none">
+              <CardContent className="space-y-4 pt-5">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    {t("features.controlsTitle")}
+                  </div>
+                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                    {t("features.contextHint")}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-sm font-medium">{t("features.groups")}</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {allAuthors.map((author) => {
+                      const isSelected =
+                        selectedAuthors.length === 0 || selectedAuthors.includes(author);
+                      return (
+                        <Button
+                          key={author}
+                          type="button"
+                          variant={isSelected ? "secondary" : "outline"}
+                          size="xs"
+                          onClick={() => toggleAuthor(author)}
+                        >
+                          {author}
+                        </Button>
+                      );
+                    })}
+                    {selectedAuthors.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        className="text-muted-foreground"
+                        onClick={() => setSelectedAuthors([])}
+                      >
+                        {t("common.showAll")}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-sm font-medium">{t("features.group")}</span>
+                  <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FEATURE_GROUPS.map((groupName) => (
+                        <SelectItem key={groupName} value={groupName}>
+                          {groupName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-sm font-medium">{t("features.feature")}</span>
+                  <Select value={effectiveSelectedFeature} onValueChange={setSelectedFeature}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groupFeatures.map((feature) => (
+                        <SelectItem key={feature.key} value={feature.key}>
+                          {feature.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {selectedTextIds.length > 0 && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTextIds([])}>
+                    {t("features.clearLink")}
+                  </Button>
+                )}
+
+                {!hasNamedGroups && (
+                  <p className="text-xs text-muted-foreground">{t("features.missingGroup")}</p>
+                )}
+                {selectedTextIds.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {t("features.linkHint", { count: selectedTextIds.length })}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-6">
+            {currentFeatureMeta && (
+              <DistributionChart
+                features={features}
+                authorMap={authorMap}
+                selectedAuthors={selectedAuthors}
+                highlightedAuthors={highlightedAuthors}
+                featureKey={currentFeatureMeta.key}
+                featureLabel={currentFeatureMeta.label}
+                source={currentFeatureMeta.source}
+              />
+            )}
+
+            <FeatureComparison
               features={features}
               authorMap={authorMap}
               selectedAuthors={selectedAuthors}
-              highlightedAuthors={highlightedAuthors}
-              featureKey={currentFeatureMeta.key}
-              featureLabel={currentFeatureMeta.label}
-              source={currentFeatureMeta.source}
             />
-          )}
 
-          <FeatureComparison
-            features={features}
-            authorMap={authorMap}
-            selectedAuthors={selectedAuthors}
-          />
+            <SimilarityHeatmap
+              features={features}
+              authorMap={authorMap}
+              selectedAuthors={selectedAuthors}
+              selectedTextIds={selectedTextIds}
+              onSelectPair={(payload) => {
+                setSelectedTextIds([payload.firstTextId, payload.secondTextId]);
+              }}
+            />
 
-          <SimilarityHeatmap
-            features={features}
-            authorMap={authorMap}
-            selectedAuthors={selectedAuthors}
-            selectedTextIds={selectedTextIds}
-            onSelectPair={(payload) => {
-              setSelectedTextIds([payload.firstTextId, payload.secondTextId]);
-            }}
-          />
-
-          <FeatureDataViewer
-            features={features}
-            authorMap={authorMap}
-            selectedAuthors={selectedAuthors}
-            selectedTextIds={selectedTextIds}
-          />
+            <FeatureDataViewer
+              features={features}
+              authorMap={authorMap}
+              selectedAuthors={selectedAuthors}
+              selectedTextIds={selectedTextIds}
+            />
+          </div>
         </div>
       )}
     </StaggerContainer>
+  );
+}
+
+function InsightStat({
+  label,
+  value,
+  caption,
+}: {
+  label: string;
+  value: ReactNode;
+  caption?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
+      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <div className="mt-2 text-2xl font-semibold">{value}</div>
+      {caption && <div className="mt-1 text-xs text-muted-foreground">{caption}</div>}
+    </div>
   );
 }
 

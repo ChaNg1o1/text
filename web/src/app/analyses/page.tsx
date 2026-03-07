@@ -1,14 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  Activity,
+  CheckCircle2,
   Loader2,
   Trash2,
   ExternalLink,
   FilterX,
   Search,
   Square,
+  AlertTriangle,
+  ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAnalyses } from "@/hooks/use-analyses";
@@ -110,6 +114,12 @@ export default function AnalysesPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [taskFilter, setTaskFilter] = useState<string>("");
   const [search, setSearch] = useState("");
+  const [overviewCounts, setOverviewCounts] = useState({
+    total: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+  });
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -124,6 +134,80 @@ export default function AnalysesPage() {
     search: search || undefined,
   });
   const hasStaleData = Boolean(error && data);
+  const overviewCards = useMemo(
+    () => [
+      {
+        key: "total",
+        label: t("analysis.overview.total"),
+        value: overviewCounts.total,
+        icon: Activity,
+        tone: "text-sky-600",
+      },
+      {
+        key: "running",
+        label: t("analysis.overview.running"),
+        value: overviewCounts.running,
+        icon: Loader2,
+        tone: "text-sky-600",
+      },
+      {
+        key: "completed",
+        label: t("analysis.overview.completed"),
+        value: overviewCounts.completed,
+        icon: CheckCircle2,
+        tone: "text-emerald-600",
+      },
+      {
+        key: "failed",
+        label: t("analysis.overview.failed"),
+        value: overviewCounts.failed,
+        icon: AlertTriangle,
+        tone: "text-rose-600",
+      },
+    ],
+    [overviewCounts, t],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadOverviewCounts = async () => {
+      try {
+        const baseParams = {
+          page: 1,
+          page_size: 1,
+          task_type: taskFilter || undefined,
+          search: search || undefined,
+        };
+        const [all, running, completed, failed] = await Promise.all([
+          api.listAnalyses(baseParams),
+          api.listAnalyses({ ...baseParams, status: "running" }),
+          api.listAnalyses({ ...baseParams, status: "completed" }),
+          api.listAnalyses({ ...baseParams, status: "failed" }),
+        ]);
+        if (cancelled) return;
+        setOverviewCounts({
+          total: all.total,
+          running: running.total,
+          completed: completed.total,
+          failed: failed.total,
+        });
+      } catch {
+        if (cancelled) return;
+        setOverviewCounts({
+          total: data?.total ?? 0,
+          running: data?.items.filter((item) => item.status === "running").length ?? 0,
+          completed: data?.items.filter((item) => item.status === "completed").length ?? 0,
+          failed: data?.items.filter((item) => item.status === "failed").length ?? 0,
+        });
+      }
+    };
+
+    void loadOverviewCounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [data, search, taskFilter]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -165,22 +249,64 @@ export default function AnalysesPage() {
   return (
     <StaggerContainer className="space-y-6" delayChildren={0.03} staggerChildren={0.04}>
       <StaggerItem>
-        <div className="flex items-center">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">{t("analysis.historyTitle")}</h1>
-            {data && (
-              <p className="text-sm text-muted-foreground mt-1">
-                <NumberTween value={data.total} /> {t("analysis.totalSuffix")}
-              </p>
-            )}
+        <div className="relative overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(138deg,rgba(250,248,244,0.98),rgba(242,239,232,0.88))] shadow-[0_24px_80px_-40px_rgba(36,32,24,0.32)] dark:bg-[linear-gradient(138deg,rgba(17,24,39,0.92),rgba(8,47,73,0.24),rgba(15,23,42,0.9))]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.16),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.1),transparent_36%)]" />
+          <div className="relative flex flex-col gap-5 p-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-3xl space-y-2">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                  {t("analysis.workbenchEyebrow")}
+                </div>
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight">{t("analysis.historyTitle")}</h1>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    {t("analysis.historySubtitle")}
+                  </p>
+                </div>
+              </div>
+              <Button asChild className="rounded-full">
+                <Link href="/analyses/new">
+                  {t("analysis.createNow")}
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {overviewCards.map((card) => {
+                const Icon = card.icon;
+                return (
+                  <Card
+                    key={card.key}
+                    className="border-border/70 bg-background/82 shadow-[0_18px_60px_-44px_rgba(15,23,42,0.55)]"
+                  >
+                    <CardContent className="flex items-center justify-between gap-3 pt-5">
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                          {card.label}
+                        </div>
+                        <div className="mt-2 text-2xl font-semibold">
+                          <NumberTween value={card.value} />
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-border/60 bg-background/70 p-2.5">
+                        <Icon className={`h-4 w-4 ${card.key === "running" ? `animate-spin ${card.tone}` : card.tone}`} />
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-muted-foreground">{t("analysis.historyHint")}</p>
           </div>
         </div>
       </StaggerItem>
 
       <StaggerItem>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex flex-wrap gap-3">
+        <Card className="border-border/70 bg-card/88 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
+          <CardContent className="space-y-4 pt-6">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="relative">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -239,6 +365,12 @@ export default function AnalysesPage() {
                 {t("common.clearFilters")}
               </Button>
             </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+              <p>
+                <NumberTween value={data?.total ?? overviewCounts.total} /> {t("analysis.totalSuffix")}
+              </p>
+              <p>{t("analysis.tableHint")}</p>
+            </div>
           </CardContent>
         </Card>
       </StaggerItem>
@@ -285,7 +417,7 @@ export default function AnalysesPage() {
                 </CardContent>
               </Card>
             )}
-            <Card>
+            <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
               <CardContent className="pt-6">
                 <Table>
                   <TableHeader>

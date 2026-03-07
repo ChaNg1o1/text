@@ -143,6 +143,8 @@ def test_analysis_detail_returns_forensic_report_sections(monkeypatch, tmp_path)
         assert report["conclusions"][0]["task"] == "closed_set_id"
         assert report["results"][0]["title"] == "候选集排名"
         assert report["limitations"]
+        assert report["narrative"]["version"] == "v1"
+        assert report["entity_aliases"]["text_aliases"][0]["alias"] == "T01"
 
         db_path = tmp_path / "analyses.db"
         with sqlite3.connect(db_path) as conn:
@@ -154,3 +156,4 @@ def test_analysis_detail_returns_forensic_report_sections(monkeypatch, tmp_path)
         stored_report = json.loads(row[0])
         assert stored_report["summary"] == report["summary"]
         assert stored_report["conclusions"][0]["grade"] == "moderate_support"
+        assert stored_report["narrative"]["version"] == "v1"

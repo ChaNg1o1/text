@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import {
+  ArrowLeft,
   FlaskConical,
   Layers3,
   Loader2,
@@ -534,55 +536,69 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
   return (
     <div className={cn("space-y-6", embedded && "space-y-4")}>
       {!embedded && (
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">{t("settings.backends.title")}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{t("settings.backends.subtitle")}</p>
+        <div className="relative overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(140deg,rgba(250,248,244,0.98),rgba(242,239,232,0.88))] shadow-[0_24px_80px_-40px_rgba(36,32,24,0.32)] dark:bg-[linear-gradient(140deg,rgba(17,24,39,0.92),rgba(8,47,73,0.24),rgba(15,23,42,0.9))]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.16),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.12),transparent_36%)]" />
+          <div className="relative space-y-5 p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-3">
+                <Button asChild variant="ghost" size="sm" className="w-fit rounded-full">
+                  <Link href="/settings">
+                    <ArrowLeft className="h-4 w-4" />
+                    {t("common.back")}
+                  </Link>
+                </Button>
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight">{t("settings.backends.title")}</h1>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                    {t("settings.backends.subtitle")}
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void load(true)}
+                disabled={isLoading}
+                className="rounded-full bg-background/80"
+              >
+                {isLoading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                )}
+                {t("settings.backends.refresh")}
+              </Button>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-[22px] border border-border/60 bg-background/80 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.55)]">
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                  <Server className="h-3.5 w-3.5" />
+                  {t("settings.backends.summary.custom")}
+                </div>
+                <div className="mt-3 text-2xl font-semibold tabular-nums">{customBackends.length}</div>
+              </div>
+              <div className="rounded-[22px] border border-border/60 bg-background/80 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.55)]">
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  {t("settings.backends.summary.ready")}
+                </div>
+                <div className="mt-3 text-2xl font-semibold tabular-nums">{readyCustomCount}</div>
+              </div>
+              <div className="rounded-[22px] border border-border/60 bg-background/80 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.55)]">
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                  <Layers3 className="h-3.5 w-3.5" />
+                  {t("settings.backends.summary.providers")}
+                </div>
+                <div className="mt-3 text-2xl font-semibold tabular-nums">{providerKindCount}</div>
+              </div>
+            </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void load(true)}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCcw className="mr-2 h-4 w-4" />
-            )}
-            {t("settings.backends.refresh")}
-          </Button>
         </div>
       )}
 
-      <Card>
-        <CardContent className="grid gap-3 py-4 sm:grid-cols-3">
-          <div className="rounded-lg border border-border/70 bg-card/60 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Server className="h-3.5 w-3.5" />
-              {t("settings.backends.summary.custom")}
-            </div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums">{customBackends.length}</div>
-          </div>
-          <div className="rounded-lg border border-border/70 bg-card/60 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              {t("settings.backends.summary.ready")}
-            </div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums">{readyCustomCount}</div>
-          </div>
-          <div className="rounded-lg border border-border/70 bg-card/60 px-4 py-3">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Layers3 className="h-3.5 w-3.5" />
-              {t("settings.backends.summary.providers")}
-            </div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums">{providerKindCount}</div>
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className="xl:sticky xl:top-20 xl:self-start">
+        <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.65)] xl:sticky xl:top-20 xl:self-start">
           <CardHeader className="space-y-3 pb-3">
             <CardTitle className="text-base">{t("settings.backends.customTitle")}</CardTitle>
             {!customApiReady && (
@@ -639,10 +655,10 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
                     type="button"
                     onClick={() => startEditGroup(group.groupId)}
                     className={cn(
-                      "w-full rounded-xl border px-3 py-2 text-left transition-colors",
+                      "w-full rounded-2xl border px-3 py-3 text-left transition-colors",
                       isActive
-                        ? "border-primary/60 bg-primary/10"
-                        : "border-border/70 bg-card/50 hover:border-border",
+                        ? "border-sky-500/35 bg-sky-500/8 shadow-[0_16px_38px_-28px_rgba(14,165,233,0.55)]"
+                        : "border-border/70 bg-card/50 hover:border-border hover:bg-background/60",
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -665,7 +681,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.65)]">
           <CardHeader className="border-b border-border/60">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

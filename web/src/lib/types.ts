@@ -166,6 +166,11 @@ export interface EvidenceItem {
   metrics: Record<string, number>;
   provenance_refs: string[];
   interpretive_opinion: boolean;
+  finding?: string;
+  why_it_matters?: string;
+  counter_readings?: string[];
+  strength?: "core" | "supporting" | "conflicting";
+  linked_conclusion_keys?: string[];
 }
 
 export interface ReportConclusion {
@@ -208,6 +213,67 @@ export interface ResultRecord {
   supporting_agents: string[];
 }
 
+export type NarrativeSectionKey =
+  | "bottom_line"
+  | "evidence_chain"
+  | "conflicts"
+  | "limitations"
+  | "next_actions";
+
+export interface NarrativeSection {
+  key: NarrativeSectionKey;
+  title: string;
+  summary: string;
+  detail: string;
+  evidence_ids: string[];
+  result_keys: string[];
+  default_expanded: boolean;
+}
+
+export interface NarrativeBundle {
+  version: "v1";
+  lead: string;
+  sections: NarrativeSection[];
+  action_items: string[];
+  contradictions: string[];
+}
+
+export interface TextAliasRecord {
+  text_id: string;
+  alias: string;
+  author: string;
+  preview: string;
+}
+
+export interface AuthorAliasRecord {
+  author_id: string;
+  alias: string;
+}
+
+export interface EntityAliases {
+  text_aliases: TextAliasRecord[];
+  author_aliases: AuthorAliasRecord[];
+}
+
+export interface ClusterViewCluster {
+  cluster_id: number;
+  label: string;
+  member_text_ids: string[];
+  member_aliases: string[];
+  representative_text_id?: string;
+  representative_excerpt: string;
+  theme_summary?: string;
+  separation_summary?: string;
+  top_markers?: string[];
+  representative_evidence_ids?: string[];
+  confidence_note?: string;
+}
+
+export interface ClusterView {
+  clusters: ClusterViewCluster[];
+  excluded_text_ids: string[];
+}
+
 export interface WritingProfileDimension {
   key: string;
   label: string;
@@ -222,6 +288,13 @@ export interface WritingProfile {
   subject: string;
   summary: string;
   dimensions: WritingProfileDimension[];
+  headline?: string;
+  observable_summary?: string;
+  stable_habits?: string[];
+  process_clues?: string[];
+  anomalies?: string[];
+  confidence_note?: string;
+  representative_text_ids?: string[];
 }
 
 export interface ReproducibilityInfo {
@@ -270,6 +343,9 @@ export interface ForensicReport {
   evidence_items: EvidenceItem[];
   anomaly_samples: AnomalySample[];
   agent_reports: AgentReport[];
+  narrative?: NarrativeBundle;
+  entity_aliases?: EntityAliases;
+  cluster_view?: ClusterView;
   created_at: string;
 }
 

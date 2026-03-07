@@ -49,8 +49,8 @@ export function FeatureDataViewer({
 
   if (filtered.length === 0) {
     return (
-      <Card>
-        <CardHeader>
+      <Card className="border-border/70 bg-card/96 shadow-none">
+        <CardHeader className="border-b border-border/50">
           <CardTitle className="text-lg">{t("viewer.title")}</CardTitle>
         </CardHeader>
         <CardContent>
@@ -61,8 +61,8 @@ export function FeatureDataViewer({
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="border-border/70 bg-card/96 shadow-none">
+      <CardHeader className="border-b border-border/50">
         <CardTitle className="text-lg">{t("viewer.title")}</CardTitle>
       </CardHeader>
       <CardContent>
@@ -86,7 +86,7 @@ export function FeatureDataViewer({
                 <AccordionTrigger>
                   <div className="text-left">
                     <div className="font-mono text-xs">{fv.text_id}</div>
-                    <div className="text-xs text-muted-foreground">{t("viewer.author", { author })}</div>
+                    <div className="text-xs text-muted-foreground">{t("viewer.group", { author })}</div>
                   </div>
                 </AccordionTrigger>
                 <AccordionContent>

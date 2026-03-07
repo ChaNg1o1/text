@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   ArrowRight,
@@ -33,7 +34,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/components/providers/i18n-provider";
-import { BackendManager } from "@/app/settings/backends/page";
 import { cn } from "@/lib/utils";
 
 const EMPTY_SETTINGS: AppSettings = {
@@ -56,7 +56,7 @@ const EMPTY_SETTINGS: AppSettings = {
   },
 };
 
-type SettingsTabValue = "general" | "prompts" | "backends";
+type SettingsTabValue = "general" | "prompts";
 
 const TASK_OPTIONS: Array<{ value: TaskType; label: string }> = [
   { value: "full", label: "Full" },
@@ -210,13 +210,11 @@ export default function SettingsPage() {
             <div className="grid gap-3 md:grid-cols-3">
               {overviewSections.map((section, index) => {
                 const Icon = section.icon;
-                const isActive = activeTab === section.value;
+                const isBackends = section.value === "backends";
+                const isActive = !isBackends && activeTab === section.value;
                 return (
-                  <button
+                  <div
                     key={section.value}
-                    type="button"
-                    onClick={() => setActiveTab(section.value)}
-                    aria-pressed={isActive}
                     className={cn(
                       "rounded-[22px] border p-4 text-left transition-all",
                       isActive
@@ -238,11 +236,27 @@ export default function SettingsPage() {
                         {section.description}
                       </p>
                     </div>
-                    <div className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-foreground/80">
-                      {isActive ? t("settings.overviewActive") : t("settings.overviewOpen")}
-                      <ArrowRight className="h-3.5 w-3.5" />
+                    <div className="mt-4">
+                      {isBackends ? (
+                        <Button asChild variant="outline" size="sm" className="rounded-full">
+                          <Link href="/settings/backends">
+                            {t("settings.manageBackends")}
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab(section.value)}
+                          aria-pressed={isActive}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-foreground/80"
+                        >
+                          {isActive ? t("settings.overviewActive") : t("settings.overviewOpen")}
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -294,7 +308,6 @@ export default function SettingsPage() {
         <TabsList className="w-full justify-start overflow-x-auto overflow-y-hidden rounded-2xl border border-border/60 bg-card/74 p-1.5 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-fit">
           <TabsTrigger value="general">{t("settings.tab.general")}</TabsTrigger>
           <TabsTrigger value="prompts">{t("settings.tab.prompts")}</TabsTrigger>
-          <TabsTrigger value="backends">{t("settings.tab.backends")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-4">
@@ -494,10 +507,47 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="backends" className="space-y-4">
-          <BackendManager embedded />
-        </TabsContent>
       </Tabs>
+
+      <Card className="border-border/70 bg-card/88 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.65)]">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1.5">
+            <CardTitle className="flex items-center gap-2">
+              <Bot className="h-4 w-4 text-sky-600" />
+              {t("settings.tab.backends")}
+            </CardTitle>
+            <p className="text-sm leading-6 text-muted-foreground">
+              {t("settings.backendsDedicatedHint")}
+            </p>
+          </div>
+          <Button asChild variant="outline" className="rounded-full sm:self-center">
+            <Link href="/settings/backends">
+              {t("settings.manageBackends")}
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+              {t("settings.summary.ready")}
+            </div>
+            <div className="mt-2 text-2xl font-semibold">{readyBackends.length}</div>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+              {t("settings.summary.backends")}
+            </div>
+            <div className="mt-2 text-2xl font-semibold">{customBackends.length}</div>
+          </div>
+          <div className="rounded-2xl border border-border/60 bg-background/50 p-4">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+              {t("settings.summary.prompts")}
+            </div>
+            <div className="mt-2 text-2xl font-semibold">{promptOverrideCount}</div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="flex flex-col gap-3 rounded-[24px] border border-border/60 bg-card/72 p-4 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)] sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">{t("settings.saveHint")}</p>

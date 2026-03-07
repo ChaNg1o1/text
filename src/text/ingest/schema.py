@@ -242,6 +242,11 @@ class EvidenceItem(BaseModel):
     evidence_id: str
     label: str
     summary: str
+    finding: str = ""
+    why_it_matters: str = ""
+    counter_readings: list[str] = Field(default_factory=list)
+    strength: Literal["core", "supporting", "conflicting"] = "supporting"
+    linked_conclusion_keys: list[str] = Field(default_factory=list)
     source_text_ids: list[str] = Field(default_factory=list)
     excerpts: list[str] = Field(default_factory=list)
     metrics: dict[str, float] = Field(default_factory=dict)
@@ -289,6 +294,69 @@ class ResultRecord(BaseModel):
     supporting_agents: list[str] = Field(default_factory=list)
 
 
+NarrativeSectionKey = Literal[
+    "bottom_line",
+    "evidence_chain",
+    "conflicts",
+    "limitations",
+    "next_actions",
+]
+
+
+class NarrativeSection(BaseModel):
+    key: NarrativeSectionKey
+    title: str
+    summary: str
+    detail: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    result_keys: list[str] = Field(default_factory=list)
+    default_expanded: bool = False
+
+
+class NarrativeBundle(BaseModel):
+    version: Literal["v1"] = "v1"
+    lead: str = ""
+    sections: list[NarrativeSection] = Field(default_factory=list)
+    action_items: list[str] = Field(default_factory=list)
+    contradictions: list[str] = Field(default_factory=list)
+
+
+class TextAliasRecord(BaseModel):
+    text_id: str
+    alias: str
+    author: str
+    preview: str = ""
+
+
+class AuthorAliasRecord(BaseModel):
+    author_id: str
+    alias: str
+
+
+class EntityAliases(BaseModel):
+    text_aliases: list[TextAliasRecord] = Field(default_factory=list)
+    author_aliases: list[AuthorAliasRecord] = Field(default_factory=list)
+
+
+class ClusterViewCluster(BaseModel):
+    cluster_id: int
+    label: str
+    theme_summary: str = ""
+    separation_summary: str = ""
+    top_markers: list[str] = Field(default_factory=list)
+    representative_evidence_ids: list[str] = Field(default_factory=list)
+    confidence_note: str = ""
+    member_text_ids: list[str] = Field(default_factory=list)
+    member_aliases: list[str] = Field(default_factory=list)
+    representative_text_id: str | None = None
+    representative_excerpt: str = ""
+
+
+class ClusterView(BaseModel):
+    clusters: list[ClusterViewCluster] = Field(default_factory=list)
+    excluded_text_ids: list[str] = Field(default_factory=list)
+
+
 class WritingProfileDimension(BaseModel):
     key: str
     label: str
@@ -302,6 +370,13 @@ class WritingProfileDimension(BaseModel):
 class WritingProfile(BaseModel):
     subject: str
     summary: str = ""
+    headline: str = ""
+    observable_summary: str = ""
+    stable_habits: list[str] = Field(default_factory=list)
+    process_clues: list[str] = Field(default_factory=list)
+    anomalies: list[str] = Field(default_factory=list)
+    confidence_note: str = ""
+    representative_text_ids: list[str] = Field(default_factory=list)
     dimensions: list[WritingProfileDimension] = Field(default_factory=list)
 
 
@@ -353,6 +428,9 @@ class ForensicReport(BaseModel):
     evidence_items: list[EvidenceItem] = Field(default_factory=list)
     anomaly_samples: list[AnomalySample] = Field(default_factory=list)
     agent_reports: list[AgentReport] = Field(default_factory=list)
+    narrative: NarrativeBundle | None = None
+    entity_aliases: EntityAliases | None = None
+    cluster_view: ClusterView | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
 

@@ -66,10 +66,10 @@ export function DistributionChart({
   });
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="border-border/70 bg-card/96 shadow-none">
+      <CardHeader className="border-b border-border/50">
         <CardTitle className="text-lg">
-          {t("distribution.byAuthor", { feature: featureLabel })}
+          {t("distribution.byGroup", { feature: featureLabel })}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -80,7 +80,7 @@ export function DistributionChart({
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip
               formatter={(value: number) => [value.toFixed(4), featureLabel]}
-              labelFormatter={(label) => t("distribution.authorLabel", { label })}
+              labelFormatter={(label) => t("distribution.groupLabel", { label })}
             />
             <Bar dataKey="mean" name={featureLabel} radius={[4, 4, 0, 0]}>
               {data.map((entry, i) => {

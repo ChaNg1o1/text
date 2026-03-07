@@ -514,12 +514,17 @@ class AnalysisStore:
     def _row_to_detail(row: aiosqlite.Row) -> tuple[AnalysisDetail, bool]:
         from datetime import datetime, timezone
 
+        from text.decision.engine import DecisionEngine
         from text.ingest.schema import ForensicReport
 
         report = None
+        backfilled_report = False
         if row["report_json"]:
             try:
                 report = ForensicReport.model_validate_json(row["report_json"])
+                backfilled_report = DecisionEngine().ensure_story_surfaces(
+                    report, refresh_hash=True
+                )
             except Exception:
                 logger.warning("Failed to deserialize report for analysis %s", row["id"])
 
@@ -549,5 +554,5 @@ class AnalysisStore:
                 report=report,
                 perf=perf,
             ),
-            False,
+            backfilled_report,
         )

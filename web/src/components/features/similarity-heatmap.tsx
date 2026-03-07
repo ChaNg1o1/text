@@ -51,11 +51,11 @@ function cosineSimilarityNormalized(a: NormalizedEmbedding, b: NormalizedEmbeddi
 }
 
 function heatColor(value: number): string {
-  const scaled = Math.max(0, Math.min(1, value));
-  const r = Math.round(22 + 230 * scaled);
-  const g = Math.round(50 + 90 * (1 - Math.abs(scaled - 0.5) * 2));
-  const b = Math.round(226 - 206 * scaled);
-  return `rgb(${r}, ${g}, ${b})`;
+  if (value >= 0.9) return "rgb(15, 118, 110)";
+  if (value >= 0.82) return "rgb(16, 185, 129)";
+  if (value >= 0.72) return "rgb(56, 189, 248)";
+  if (value >= 0.6) return "rgb(191, 219, 254)";
+  return "rgb(226, 232, 240)";
 }
 
 export function SimilarityHeatmap({
@@ -133,8 +133,8 @@ export function SimilarityHeatmap({
 
   if (items.length === 0) {
     return (
-      <Card>
-        <CardHeader>
+      <Card className="border-border/70 bg-card/96 shadow-none">
+        <CardHeader className="border-b border-border/50">
           <CardTitle className="text-lg">{t("heatmap.emptyTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
@@ -146,8 +146,8 @@ export function SimilarityHeatmap({
 
   if (items.length < 2) {
     return (
-      <Card>
-        <CardHeader>
+      <Card className="border-border/70 bg-card/96 shadow-none">
+        <CardHeader className="border-b border-border/50">
           <CardTitle className="text-lg">{t("heatmap.title")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -166,21 +166,21 @@ export function SimilarityHeatmap({
   const cellSize = Math.max(8, Math.min(20, 600 / items.length));
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="border-border/70 bg-card/96 shadow-none">
+      <CardHeader className="border-b border-border/50">
         <CardTitle className="text-lg">{t("heatmap.title")}</CardTitle>
         <p className="text-sm text-muted-foreground">{t("heatmap.description")}</p>
       </CardHeader>
       <CardContent className="space-y-4 overflow-x-auto">
         <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
           <div>{t("heatmap.samplesShown", { count: stats.sampleCount })}</div>
-          <div>{t("heatmap.authorsShown", { count: stats.authorCount })}</div>
+          <div>{t("heatmap.groupsShown", { count: stats.authorCount })}</div>
           <div>{t("heatmap.pairsCompared", { count: stats.pairCount })}</div>
           <div>{t("heatmap.avgSimilarity", { value: stats.avgSimilarity.toFixed(3) })}</div>
           <div>{t("heatmap.lowPairs", { count: stats.lowPairs })}</div>
           {stats.withinAuthorAvg != null && stats.crossAuthorAvg != null && (
             <div>
-              {t("heatmap.authorGap", {
+              {t("heatmap.groupGap", {
                 within: stats.withinAuthorAvg.toFixed(3),
                 cross: stats.crossAuthorAvg.toFixed(3),
               })}
@@ -210,7 +210,7 @@ export function SimilarityHeatmap({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      className="rounded-[2px] cursor-pointer transition-transform duration-150 hover:scale-105"
+                      className="cursor-pointer rounded-[2px] transition-opacity"
                       style={{
                         width: cellSize,
                         height: cellSize,
@@ -253,7 +253,7 @@ export function SimilarityHeatmap({
                         </div>
                         <div>{t("heatmap.similarity", { value: val.toFixed(3) })}</div>
                         <div>
-                          {t("heatmap.authors", {
+                          {t("heatmap.groups", {
                             a: authorMap[first.text_id],
                             b: authorMap[second.text_id],
                           })}
@@ -266,15 +266,22 @@ export function SimilarityHeatmap({
             }),
           )}
         </div>
-        <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-          <span>0.0</span>
-          <div
-            className="h-3 w-32 rounded"
-            style={{
-              background: "linear-gradient(to right, rgb(22,138,226), rgb(252,70,24))",
-            }}
-          />
-          <span>1.0</span>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {[
+            { label: "0.60-", color: "rgb(226, 232, 240)" },
+            { label: "0.60+", color: "rgb(191, 219, 254)" },
+            { label: "0.72+", color: "rgb(56, 189, 248)" },
+            { label: "0.82+", color: "rgb(16, 185, 129)" },
+            { label: "0.90+", color: "rgb(15, 118, 110)" },
+          ].map((step) => (
+            <div key={step.label} className="flex items-center gap-1.5">
+              <span
+                className="h-3 w-3 rounded-sm border border-border/50"
+                style={{ backgroundColor: step.color }}
+              />
+              <span>{step.label}</span>
+            </div>
+          ))}
           <span className="ml-2">{t("heatmap.legend")}</span>
         </div>
         <p className="text-xs text-muted-foreground">{t("heatmap.clickHint")}</p>

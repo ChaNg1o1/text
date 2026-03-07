@@ -1,0 +1,142 @@
+"use client";
+
+import {
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+} from "recharts";
+import type { TextAliasRecord, WritingProfile } from "@/lib/types";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+
+interface WritingPortraitCardProps {
+  profile: WritingProfile;
+  aliases: TextAliasRecord[];
+}
+
+export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardProps) {
+  const radarData = profile.dimensions
+    .filter((dim) => dim.dimension_type === "observable")
+    .slice(0, 6)
+    .map((dim) => ({
+      label: dim.label,
+      score: dim.score,
+    }));
+  const aliasMap = new Map(aliases.map((item) => [item.text_id, item.alias]));
+
+  return (
+    <Card className="overflow-hidden border-border/60 bg-card/90">
+      <CardContent className="p-0">
+        <div className="grid gap-0 lg:grid-cols-[minmax(0,1.15fr)_380px]">
+          <div className="space-y-5 p-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{profile.subject}</Badge>
+              {profile.headline && <Badge variant="secondary">{profile.headline}</Badge>}
+            </div>
+            <div>
+              <h4 className="text-xl font-semibold">{profile.headline || profile.subject}</h4>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                {profile.observable_summary || profile.summary}
+              </p>
+            </div>
+
+            <PortraitList title="稳定习惯" items={profile.stable_habits ?? []} tone="cyan" />
+            <PortraitList title="过程线索" items={profile.process_clues ?? []} tone="amber" />
+            <PortraitList title="异常点" items={profile.anomalies ?? []} tone="rose" />
+
+            {profile.confidence_note && (
+              <div className="rounded-[20px] border border-border/60 bg-background/35 p-5 text-sm leading-7 text-muted-foreground">
+                {profile.confidence_note}
+              </div>
+            )}
+
+            {profile.representative_text_ids && profile.representative_text_ids.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {profile.representative_text_ids.map((textId) => (
+                  <Badge key={textId} variant="outline">
+                    {aliasMap.get(textId) ?? textId}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-border/60 bg-card/50 p-6 lg:border-t-0 lg:border-l">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+              Feature Portrait
+            </div>
+            <ChartContainer
+              className="mt-4 h-[320px] w-full"
+              config={{
+                score: {
+                  label: "Score",
+                  color: "hsl(192 91% 46%)",
+                },
+              }}
+            >
+              <RadarChart data={radarData}>
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <PolarGrid />
+                <PolarAngleAxis dataKey="label" tick={{ fontSize: 11 }} />
+                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                <Radar
+                  dataKey="score"
+                  stroke="var(--color-score)"
+                  fill="var(--color-score)"
+                  fillOpacity={0.15}
+                  strokeWidth={2}
+                />
+              </RadarChart>
+            </ChartContainer>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PortraitList({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  tone: "cyan" | "amber" | "rose";
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  const bulletTone = {
+    cyan: "bg-cyan-400",
+    amber: "bg-amber-400",
+    rose: "bg-rose-400",
+  }[tone];
+
+  return (
+    <section className="space-y-3">
+      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+        {title}
+      </div>
+      <div className="grid gap-3">
+        {items.map((item) => (
+          <div
+            key={`${title}-${item}`}
+            className="flex gap-3 rounded-[20px] border border-border/60 bg-background/35 px-5 py-4"
+          >
+            <span className={`mt-2 size-2 shrink-0 rounded-full ${bulletTone}`} />
+            <p className="text-sm leading-7 text-foreground/88">{item}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}

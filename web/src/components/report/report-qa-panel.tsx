@@ -65,8 +65,8 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
   const fallbackSuggestions = useMemo(() => {
     const list: string[] = [];
     if (report.conclusions.length > 0) {
-      list.push("先用最简单的话告诉我，这次结论偏向什么？");
-      list.push("这个结果更像是线索支持，还是已经比较稳？");
+      list.push("先用最简单的话告诉我，这次最值得关注的线索是什么？");
+      list.push("这些发现更像初步线索，还是已经形成比较稳定的判断？");
     }
     if (report.evidence_items.length > 0) {
       list.push("最关键的几条依据分别是什么？");

@@ -6,6 +6,7 @@ import json
 from fastapi.testclient import TestClient
 
 import text.api.deps as deps
+from text.decision.engine import DecisionEngine
 from text.api.app import create_app
 from text.api.models import AnalysisStatus
 from text.ingest.schema import (
@@ -226,3 +227,14 @@ def test_given_completed_analysis_when_requesting_qa_suggestions_then_returns_ll
             "如果只看最关键依据，应该先看哪几条？",
             "这份结果最可能在哪些地方出错？",
         ]
+
+
+def test_build_report_context_includes_narrative_sections() -> None:
+    import text.api.routers.qa as qa_router
+
+    report = ForensicReport(request=_request_payload(), summary="综合结论")
+    DecisionEngine().ensure_story_surfaces(report, refresh_hash=True)
+    context = qa_router._build_report_context(report)
+
+    assert "# Narrative" in context
+    assert "action_items" in context

@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FeatureVector } from "@/lib/types";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 const AUTHOR_COLORS = [
   "hsl(221, 83%, 53%)",
@@ -96,6 +97,7 @@ export function FeatureComparison({
   authorMap,
   selectedAuthors,
 }: FeatureComparisonProps) {
+  const { t } = useI18n();
   // Group by author
   const authorGroups: Record<string, FeatureVector[]> = {};
   for (const fv of features) {
@@ -140,9 +142,9 @@ export function FeatureComparison({
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Feature Comparison</CardTitle>
+    <Card className="border-border/70 bg-card/96 shadow-none">
+      <CardHeader className="border-b border-border/50">
+        <CardTitle className="text-lg">{t("comparison.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={400}>

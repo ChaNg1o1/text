@@ -149,7 +149,7 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
   };
 
   return (
-    <Card>
+    <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
       <CardContent className="pt-6">
         {!selectionLabel ? (
           <div
@@ -160,15 +160,27 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
             aria-label={t("upload.dropHint")}
-            className={`group flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 text-center transition-all duration-200 ${
+            className={`group relative overflow-hidden rounded-[24px] border-2 border-dashed p-8 text-center transition-all duration-200 ${
               isDragging
                 ? "border-primary bg-primary/10 shadow-sm"
-                : "border-muted-foreground/25 hover:border-primary/45 hover:bg-primary/5"
+                : "border-muted-foreground/25 bg-[linear-gradient(140deg,rgba(250,248,244,0.82),rgba(242,239,232,0.62))] hover:border-primary/45 hover:bg-primary/5 dark:bg-[linear-gradient(140deg,rgba(15,23,42,0.62),rgba(15,23,42,0.38))]"
             }`}
           >
-            <Upload className="mb-3 h-10 w-10 text-muted-foreground transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:scale-105" />
-            <p className="mb-1 text-sm font-medium">{t("upload.dropHint")}</p>
-            <p className="text-xs text-muted-foreground">{t("upload.supported")}</p>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.1),transparent_36%)]" />
+            <div className="relative flex flex-col items-center">
+              <div className="mb-4 rounded-[22px] border border-border/60 bg-background/78 p-3 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
+                <Upload className="h-8 w-8 text-muted-foreground transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:scale-105" />
+              </div>
+              <p className="mb-1 text-base font-semibold">{t("upload.dropHint")}</p>
+              <p className="max-w-xl text-sm leading-6 text-muted-foreground">{t("upload.supported")}</p>
+            </div>
+            <div className="relative mt-4 flex flex-wrap justify-center gap-2">
+              {SUPPORTED_EXTENSIONS.map((extension) => (
+                <Badge key={extension} variant="secondary" className="rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em]">
+                  {extension.replace(".", "")}
+                </Badge>
+              ))}
+            </div>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <Button type="button" variant="outline" size="sm" onClick={openFilePicker}>
                 {t("upload.chooseFile")}
@@ -198,31 +210,64 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
             />
           </div>
         ) : (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-muted-foreground" />
-                <span className="font-medium text-sm">{selectionLabel}</span>
-                {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
+          <div className="space-y-4">
+            <div className="rounded-[24px] border border-border/60 bg-[linear-gradient(140deg,rgba(250,248,244,0.78),rgba(242,239,232,0.58))] p-4 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.45)] dark:bg-[linear-gradient(140deg,rgba(15,23,42,0.62),rgba(15,23,42,0.42))]">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="rounded-2xl border border-border/60 bg-background/80 p-2.5">
+                    <FileText className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                      {t("upload.readyLabel")}
+                    </div>
+                    <div className="mt-1 truncate text-sm font-semibold">{selectionLabel}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isUploading && <Loader2 className="h-4 w-4 animate-spin" />}
+                  <Button variant="ghost" size="icon" aria-label={t("upload.clear")} onClick={handleClear}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-              <Button variant="ghost" size="icon" aria-label={t("upload.clear")} onClick={handleClear}>
-                <X className="h-4 w-4" />
-              </Button>
             </div>
             {preview && (
-              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                <span>{t("upload.filesCount", { count: preview.fileCount })}</span>
-                <span>{t("upload.textsCount", { count: preview.textCount })}</span>
-                <span>{t("upload.authorsCount", { count: preview.authorCount })}</span>
-                <div className="flex gap-1">
-                  {preview.authors.slice(0, 5).map((author) => (
-                    <Badge key={author} variant="secondary" className="text-xs">
+              <div className="grid gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]">
+                <div className="rounded-2xl border border-border/60 bg-background/45 p-4">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                    {t("upload.filesCount", { count: preview.fileCount })}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">{preview.fileCount}</div>
+                </div>
+                <div className="rounded-2xl border border-border/60 bg-background/45 p-4">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                    {t("upload.textsCount", { count: preview.textCount })}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">{preview.textCount}</div>
+                </div>
+                <div className="rounded-2xl border border-border/60 bg-background/45 p-4">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                    {t("upload.authorsCount", { count: preview.authorCount })}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold">{preview.authorCount}</div>
+                </div>
+              </div>
+            )}
+            {preview && preview.authors.length > 0 && (
+              <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
+                <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                  {t("upload.authorRoster")}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {preview.authors.slice(0, 8).map((author) => (
+                    <Badge key={author} variant="secondary" className="rounded-full text-xs">
                       {author}
                     </Badge>
                   ))}
-                  {preview.authors.length > 5 && (
-                    <Badge variant="secondary" className="text-xs">
-                      +{preview.authors.length - 5}
+                  {preview.authors.length > 8 && (
+                    <Badge variant="secondary" className="rounded-full text-xs">
+                      +{preview.authors.length - 8}
                     </Badge>
                   )}
                 </div>

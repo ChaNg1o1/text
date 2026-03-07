@@ -57,6 +57,33 @@ class ReportRenderer:
                 )
             w("")
 
+        if report.narrative:
+            w("## 叙事章节\n")
+            if report.narrative.lead:
+                w(f"**一句话结论：** {report.narrative.lead}")
+                w("")
+            for section in report.narrative.sections:
+                w(f"### {section.title}\n")
+                if section.summary:
+                    w(section.summary)
+                if section.detail:
+                    w(section.detail)
+                if section.evidence_ids:
+                    w(f"- 证据锚点：{', '.join(section.evidence_ids)}")
+                if section.result_keys:
+                    w(f"- 结果键：{', '.join(section.result_keys)}")
+                w("")
+            if report.narrative.action_items:
+                w("### 行动建议\n")
+                for item in report.narrative.action_items:
+                    w(f"- {item}")
+                w("")
+            if report.narrative.contradictions:
+                w("### 矛盾信号\n")
+                for item in report.narrative.contradictions:
+                    w(f"- {item}")
+                w("")
+
         w("## 案件信息\n")
         w(f"- **任务类型：** {report.request.task.value}")
         w(f"- **文本数：** {len(report.request.texts)}")
@@ -71,6 +98,48 @@ class ReportRenderer:
                 w(f"- **分析员：** {metadata.analyst}")
         w(f"- **生成时间：** {_format_timestamp(report.created_at)}")
         w("")
+
+        if report.entity_aliases:
+            w("## 别名图例\n")
+            if report.entity_aliases.author_aliases:
+                w("| 作者 ID | 别名 |")
+                w("|---------|------|")
+                for item in report.entity_aliases.author_aliases:
+                    w(f"| {item.author_id} | {item.alias} |")
+                w("")
+            if report.entity_aliases.text_aliases:
+                w("| 文本 ID | 别名 | 作者 | 预览 |")
+                w("|---------|------|------|------|")
+                for item in report.entity_aliases.text_aliases:
+                    w(
+                        f"| {item.text_id} | {item.alias} | {item.author} | "
+                        f"{item.preview or '-'} |"
+                    )
+                w("")
+
+        if report.cluster_view and report.cluster_view.clusters:
+            w("## 聚类结构表\n")
+            w("| 簇 | 成员别名 | 风格解释 | 区分点 | 代表文本 |")
+            w("|----|----------|----------|--------|----------|")
+            for cluster in report.cluster_view.clusters:
+                w(
+                    f"| {cluster.label} | {', '.join(cluster.member_aliases) or '-'} | "
+                    f"{cluster.theme_summary or '-'} | "
+                    f"{cluster.separation_summary or '-'} | "
+                    f"{cluster.representative_text_id or '-'} |"
+                )
+                if cluster.top_markers:
+                    w(f"- 标记：{'；'.join(cluster.top_markers)}")
+                if cluster.confidence_note:
+                    w(f"- 解释边界：{cluster.confidence_note}")
+                if cluster.representative_excerpt:
+                    w(f"- 代表片段：{cluster.representative_excerpt}")
+            if report.cluster_view.excluded_text_ids:
+                w("")
+                w("- 排除文本（长度不足）：")
+                for text_id in report.cluster_view.excluded_text_ids:
+                    w(f"  - {text_id}")
+            w("")
 
         w("## 材料清单\n")
         if report.materials:
@@ -108,6 +177,14 @@ class ReportRenderer:
             w("### 证据摘要\n")
             for item in report.evidence_items:
                 w(f"- **{item.evidence_id} / {item.label}：** {item.summary}")
+                if item.finding:
+                    w(f"  - 说明：{item.finding}")
+                if item.why_it_matters:
+                    w(f"  - 重要性：{item.why_it_matters}")
+                if item.counter_readings:
+                    w(f"  - 反向解释：{'；'.join(item.counter_readings[:3])}")
+                if item.linked_conclusion_keys:
+                    w(f"  - 关联结论：{', '.join(item.linked_conclusion_keys)}")
                 if item.excerpts:
                     w(f"  - 片段：{'；'.join(item.excerpts[:3])}")
             w("")
@@ -173,8 +250,28 @@ class ReportRenderer:
 
 def _render_profile_md(lines: list[str], profile: WritingProfile) -> None:
     lines.append(f"#### {profile.subject}\n")
+    if profile.headline:
+        lines.append(f"**画像标题：** {profile.headline}")
     if profile.summary:
         lines.append(profile.summary)
+    if profile.observable_summary:
+        lines.append(profile.observable_summary)
+    if profile.stable_habits:
+        lines.append("- 稳定习惯：")
+        for item in profile.stable_habits:
+            lines.append(f"  - {item}")
+    if profile.process_clues:
+        lines.append("- 过程线索（辅助解读）：")
+        for item in profile.process_clues:
+            lines.append(f"  - {item}")
+    if profile.anomalies:
+        lines.append("- 异常点：")
+        for item in profile.anomalies:
+            lines.append(f"  - {item}")
+    if profile.confidence_note:
+        lines.append(f"- 可信边界：{profile.confidence_note}")
+    if profile.representative_text_ids:
+        lines.append(f"- 代表文本：{', '.join(profile.representative_text_ids)}")
     lines.append("| 维度 | 分数 | 置信度 | 类型 |")
     lines.append("|------|-----:|------:|------|")
     for dim in profile.dimensions:
@@ -185,3 +282,4 @@ def _render_profile_md(lines: list[str], profile: WritingProfile) -> None:
             lines.append(f"- 证据：{'；'.join(dim.evidence_spans[:2])}")
         if dim.counter_evidence:
             lines.append(f"- 反证：{'；'.join(dim.counter_evidence[:2])}")
+    lines.append("")

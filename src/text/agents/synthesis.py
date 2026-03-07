@@ -5,7 +5,14 @@ from __future__ import annotations
 import logging
 
 from text.app_settings import apply_prompt_override
-from text.ingest.schema import AnalysisRequest, ForensicReport, ResultRecord
+from text.decision.engine import DecisionEngine
+from text.ingest.schema import (
+    AnalysisRequest,
+    ForensicReport,
+    NarrativeBundle,
+    NarrativeSection,
+    ResultRecord,
+)
 
 from .json_utils import parse_json_object_loose
 from .stylometry import _call_llm
@@ -34,12 +41,46 @@ Strict rules:
 
 Output JSON object with:
 - "summary": string
+- "narrative": object with:
+  - "version": "v1"
+  - "lead": string
+  - "sections": array of objects with:
+    - "key": one of ["bottom_line","evidence_chain","conflicts","limitations","next_actions"]
+    - "title": string
+    - "summary": string
+    - "detail": string
+    - "evidence_ids": array of strings
+    - "result_keys": array of strings
+    - "default_expanded": boolean
+  - "action_items": array of strings
+  - "contradictions": array of strings
 - "interpretive_results": array of objects with:
   - "key": string
   - "title": string
   - "body": string
   - "evidence_ids": array of strings
   - "supporting_agents": array of strings
+- "profile_overrides": array of objects with:
+  - "subject": string
+  - "headline": string
+  - "observable_summary": string
+  - "stable_habits": array of strings
+  - "process_clues": array of strings
+  - "anomalies": array of strings
+  - "confidence_note": string
+- "cluster_overrides": array of objects with:
+  - "cluster_id": integer
+  - "label": string
+  - "theme_summary": string
+  - "separation_summary": string
+  - "top_markers": array of strings
+  - "confidence_note": string
+- "evidence_overrides": array of objects with:
+  - "evidence_id": string
+  - "finding": string
+  - "why_it_matters": string
+  - "counter_readings": array of strings
+  - "strength": one of ["core","supporting","conflicting"]
 - "additional_limitations": array of strings
 
 Return ONLY JSON.
@@ -56,6 +97,7 @@ Return ONLY JSON.
         self.api_base = api_base
         self.api_key = api_key
         self.prompt_override = prompt_override
+        self.decision_engine = DecisionEngine()
 
     async def synthesize(
         self,
@@ -73,6 +115,8 @@ Return ONLY JSON.
         model = self.model
         if not model:
             report.results.extend(self._fallback_results(agent_reports))
+            self.decision_engine.ensure_story_surfaces(report)
+            self.decision_engine.refresh_report_hash(report)
             return report
 
         user_prompt = self._build_prompt(report, request)
@@ -88,6 +132,8 @@ Return ONLY JSON.
         except Exception:
             logger.exception("SynthesisAgent LLM call failed")
             report.results.extend(self._fallback_results(agent_reports))
+            self.decision_engine.ensure_story_surfaces(report)
+            self.decision_engine.refresh_report_hash(report)
             return report
 
         parsed_report = self._parse_synthesis(
@@ -98,12 +144,16 @@ Return ONLY JSON.
         )
         if parsed_report is None:
             report.results.extend(self._fallback_results(agent_reports))
+            self.decision_engine.ensure_story_surfaces(report)
+            self.decision_engine.refresh_report_hash(report)
             return report
         report = parsed_report
 
         if report.provenance is not None:
             report.provenance.llm_calls.append(llm_call)
         report.reproducibility.model_id = llm_call.model_id
+        self.decision_engine.ensure_story_surfaces(report)
+        self.decision_engine.refresh_report_hash(report)
         return report
 
     def _parse_synthesis(
@@ -131,6 +181,14 @@ Return ONLY JSON.
         if summary:
             report.summary = summary
 
+        narrative = self._parse_narrative(data.get("narrative"))
+        if narrative is not None:
+            report.narrative = narrative
+
+        self._apply_profile_overrides(report, data.get("profile_overrides"))
+        self._apply_cluster_overrides(report, data.get("cluster_overrides"))
+        self._apply_evidence_overrides(report, data.get("evidence_overrides"))
+
         for item in data.get("interpretive_results", []) or []:
             if not isinstance(item, dict):
                 continue
@@ -154,6 +212,156 @@ Return ONLY JSON.
             report.limitations.extend(extra_limits)
         return report
 
+    def _apply_profile_overrides(self, report: ForensicReport, raw: object) -> None:
+        if not isinstance(raw, list):
+            return
+        by_subject = {profile.subject: profile for profile in report.writing_profiles}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            subject = str(item.get("subject", "")).strip()
+            profile = by_subject.get(subject)
+            if profile is None:
+                continue
+            headline = str(item.get("headline", "")).strip()
+            observable_summary = str(item.get("observable_summary", "")).strip()
+            confidence_note = str(item.get("confidence_note", "")).strip()
+            stable_habits = [
+                str(value).strip()
+                for value in (item.get("stable_habits") or [])
+                if str(value).strip()
+            ]
+            process_clues = [
+                str(value).strip()
+                for value in (item.get("process_clues") or [])
+                if str(value).strip()
+            ]
+            anomalies = [
+                str(value).strip()
+                for value in (item.get("anomalies") or [])
+                if str(value).strip()
+            ]
+            if headline:
+                profile.headline = headline
+            if observable_summary:
+                profile.observable_summary = observable_summary
+            if stable_habits:
+                profile.stable_habits = stable_habits
+            if process_clues:
+                profile.process_clues = process_clues
+            if anomalies:
+                profile.anomalies = anomalies
+            if confidence_note:
+                profile.confidence_note = confidence_note
+
+    def _apply_cluster_overrides(self, report: ForensicReport, raw: object) -> None:
+        if not isinstance(raw, list) or report.cluster_view is None:
+            return
+        by_cluster = {cluster.cluster_id: cluster for cluster in report.cluster_view.clusters}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                cluster_id = int(item.get("cluster_id"))
+            except (TypeError, ValueError):
+                continue
+            cluster = by_cluster.get(cluster_id)
+            if cluster is None:
+                continue
+            for key in ["label", "theme_summary", "separation_summary", "confidence_note"]:
+                value = str(item.get(key, "")).strip()
+                if value:
+                    setattr(cluster, key, value)
+            top_markers = [
+                str(value).strip()
+                for value in (item.get("top_markers") or [])
+                if str(value).strip()
+            ]
+            if top_markers:
+                cluster.top_markers = top_markers[:4]
+
+    def _apply_evidence_overrides(self, report: ForensicReport, raw: object) -> None:
+        if not isinstance(raw, list):
+            return
+        by_evidence_id = {item.evidence_id: item for item in report.evidence_items}
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            evidence_id = str(item.get("evidence_id", "")).strip()
+            evidence = by_evidence_id.get(evidence_id)
+            if evidence is None:
+                continue
+            for key in ["finding", "why_it_matters"]:
+                value = str(item.get(key, "")).strip()
+                if value:
+                    setattr(evidence, key, value)
+            counter_readings = [
+                str(value).strip()
+                for value in (item.get("counter_readings") or [])
+                if str(value).strip()
+            ]
+            if counter_readings:
+                evidence.counter_readings = counter_readings[:3]
+            strength = str(item.get("strength", "")).strip()
+            if strength in {"core", "supporting", "conflicting"}:
+                evidence.strength = strength
+
+    def _parse_narrative(self, raw: object) -> NarrativeBundle | None:
+        if not isinstance(raw, dict):
+            return None
+        lead = str(raw.get("lead", "")).strip()
+        action_items = [
+            str(item).strip()
+            for item in (raw.get("action_items") or [])
+            if str(item).strip()
+        ]
+        contradictions = [
+            str(item).strip()
+            for item in (raw.get("contradictions") or [])
+            if str(item).strip()
+        ]
+        sections: list[NarrativeSection] = []
+        for section in raw.get("sections", []) or []:
+            if not isinstance(section, dict):
+                continue
+            key = str(section.get("key", "")).strip()
+            if key not in {
+                "bottom_line",
+                "evidence_chain",
+                "conflicts",
+                "limitations",
+                "next_actions",
+            }:
+                continue
+            sections.append(
+                NarrativeSection(
+                    key=key,
+                    title=str(section.get("title", "")).strip() or key,
+                    summary=str(section.get("summary", "")).strip(),
+                    detail=str(section.get("detail", "")).strip(),
+                    evidence_ids=[
+                        str(item).strip()
+                        for item in (section.get("evidence_ids") or [])
+                        if str(item).strip()
+                    ],
+                    result_keys=[
+                        str(item).strip()
+                        for item in (section.get("result_keys") or [])
+                        if str(item).strip()
+                    ],
+                    default_expanded=bool(section.get("default_expanded", False)),
+                )
+            )
+        if not lead and not sections:
+            return None
+        return NarrativeBundle(
+            version="v1",
+            lead=lead,
+            sections=sections,
+            action_items=action_items,
+            contradictions=contradictions,
+        )
+
     def _build_prompt(self, report: ForensicReport, request: AnalysisRequest) -> str:
         sections = [
             "## Deterministic Conclusions",
@@ -169,10 +377,58 @@ Return ONLY JSON.
                 )
             )
 
+        if report.entity_aliases and report.entity_aliases.text_aliases:
+            sections.append("\n## Text Aliases")
+            for alias in report.entity_aliases.text_aliases[:24]:
+                sections.append(
+                    f"- {alias.alias} => {alias.text_id} | author={alias.author} | preview={alias.preview}"
+                )
+
+        if report.cluster_view and report.cluster_view.clusters:
+            sections.append("\n## Cluster View")
+            for cluster in report.cluster_view.clusters:
+                sections.append(
+                    (
+                        f"- id={cluster.cluster_id} | label={cluster.label} | "
+                        f"members={', '.join(cluster.member_aliases)}\n"
+                        f"  theme={cluster.theme_summary}\n"
+                        f"  separation={cluster.separation_summary}\n"
+                        f"  markers={'；'.join(cluster.top_markers)}\n"
+                        f"  confidence={cluster.confidence_note}"
+                    )
+                )
+            if report.cluster_view.excluded_text_ids:
+                sections.append(
+                    f"- excluded_for_length={', '.join(report.cluster_view.excluded_text_ids)}"
+                )
+
+        if report.writing_profiles:
+            sections.append("\n## Writing Profiles")
+            for profile in report.writing_profiles:
+                sections.append(
+                    (
+                        f"- subject={profile.subject}\n"
+                        f"  headline={profile.headline}\n"
+                        f"  observable_summary={profile.observable_summary or profile.summary}\n"
+                        f"  stable_habits={'；'.join(profile.stable_habits[:4]) or '无'}\n"
+                        f"  process_clues={'；'.join(profile.process_clues[:4]) or '无'}\n"
+                        f"  anomalies={'；'.join(profile.anomalies[:4]) or '无'}\n"
+                        f"  confidence_note={profile.confidence_note}"
+                    )
+                )
+
         sections.append("\n## Evidence Items")
         for evidence in report.evidence_items[:12]:
             sections.append(
-                f"- {evidence.evidence_id}: {evidence.summary} | excerpts={'；'.join(evidence.excerpts[:3])}"
+                (
+                    f"- {evidence.evidence_id}: {evidence.summary}\n"
+                    f"  finding={evidence.finding}\n"
+                    f"  why_it_matters={evidence.why_it_matters}\n"
+                    f"  counter_readings={'；'.join(evidence.counter_readings[:3]) or '无'}\n"
+                    f"  strength={evidence.strength}\n"
+                    f"  linked_conclusions={', '.join(evidence.linked_conclusion_keys) or '无'}\n"
+                    f"  excerpts={'；'.join(evidence.excerpts[:3]) or '无'}"
+                )
             )
 
         sections.append("\n## Agent Reports")
@@ -181,8 +437,10 @@ Return ONLY JSON.
                 f"- {agent_report.agent_name} ({agent_report.discipline}): {agent_report.summary}"
             )
         sections.append(
-            "\nWrite concise Chinese for a non-expert desktop app user. Start with the bottom line, "
-            "then explain why, then mention risks or limits."
+            "\nWrite polished Chinese for a non-expert desktop app user. Start with the bottom line, "
+            "then explain why, then mention conflicts, then say what should be checked next. "
+            "Use natural paragraphs, not metric dumps. Return narrative sections in the fixed key order. "
+            "If the deterministic profile/cluster/evidence text is already useful, you may refine it but do not contradict it."
         )
         return "\n".join(sections)
 

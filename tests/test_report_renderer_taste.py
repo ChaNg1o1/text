@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from text.decision.engine import DecisionEngine
 from text.ingest.schema import (
     AnalysisRequest,
     ConclusionGrade,
@@ -83,9 +84,12 @@ def test_markdown_renderer_includes_forensic_sections() -> None:
         ],
         limitations=["样本量偏小。"],
     )
+    DecisionEngine().ensure_story_surfaces(report, refresh_hash=True)
 
     rendered = ReportRenderer.to_markdown(report)
     assert "## 报告摘要与结论分级" in rendered
+    assert "## 叙事章节" in rendered
+    assert "## 别名图例" in rendered
     assert "## 材料清单" in rendered
     assert "## 分析结果" in rendered
     assert "### 证据摘要" in rendered

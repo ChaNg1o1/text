@@ -73,6 +73,21 @@ def _build_report_context(report: ForensicReport) -> str:
         "",
     ]
 
+    if report.narrative:
+        lines.append("# Narrative")
+        lines.append(_truncate(report.narrative.lead, 400))
+        for section in report.narrative.sections[:5]:
+            lines.append(
+                f"- [{section.key}] {section.title}: {_truncate(section.summary, 260)}"
+            )
+        if report.narrative.action_items:
+            lines.append("- action_items: " + "; ".join(report.narrative.action_items[:5]))
+        if report.narrative.contradictions:
+            lines.append(
+                "- contradictions: " + "; ".join(report.narrative.contradictions[:5])
+            )
+        lines.append("")
+
     if report.conclusions:
         lines.append("# Conclusions")
         for conclusion in report.conclusions[:10]:
@@ -90,7 +105,11 @@ def _build_report_context(report: ForensicReport) -> str:
     if report.evidence_items:
         lines.append("# Evidence Items")
         for item in report.evidence_items[:10]:
-            lines.append(f"- {item.evidence_id}: {_truncate(item.summary, 200)}")
+            lines.append(
+                f"- {item.evidence_id}: {_truncate(item.summary, 180)} | "
+                f"finding={_truncate(item.finding or item.summary, 180)} | "
+                f"why={_truncate(item.why_it_matters, 180)}"
+            )
         lines.append("")
 
     if report.anomaly_samples:
@@ -109,7 +128,30 @@ def _build_report_context(report: ForensicReport) -> str:
     if report.writing_profiles:
         lines.append("# Writing Profiles")
         for profile in report.writing_profiles[:5]:
-            lines.append(f"- {profile.subject}: {_truncate(profile.summary, 200)}")
+            lines.append(
+                f"- {profile.subject}: {_truncate(profile.headline or profile.summary, 120)}"
+            )
+            if profile.observable_summary:
+                lines.append(f"  observable={_truncate(profile.observable_summary, 240)}")
+            if profile.stable_habits:
+                lines.append(
+                    "  stable_habits=" + "; ".join(_truncate(item, 100) for item in profile.stable_habits[:3])
+                )
+            if profile.process_clues:
+                lines.append(
+                    "  process_clues=" + "; ".join(_truncate(item, 100) for item in profile.process_clues[:2])
+                )
+        lines.append("")
+
+    if report.cluster_view and report.cluster_view.clusters:
+        lines.append("# Cluster View")
+        for cluster in report.cluster_view.clusters[:6]:
+            lines.append(
+                f"- {cluster.label}: {_truncate(cluster.theme_summary, 220)} "
+                f"(members={', '.join(cluster.member_aliases[:8])})"
+            )
+            if cluster.separation_summary:
+                lines.append(f"  separation={_truncate(cluster.separation_summary, 200)}")
         lines.append("")
 
     lines.append("# Agent Reports")

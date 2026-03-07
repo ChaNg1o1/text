@@ -21,13 +21,16 @@ export function WelcomeScreen() {
 
   // Check localStorage once on mount
   useEffect(() => {
-    const seen = localStorage.getItem(STORAGE_KEY);
-    if (seen) {
-      setShouldRender(false);
-    } else {
-      setShouldRender(true);
-      setPhase("playing");
-    }
+    const timer = window.setTimeout(() => {
+      const seen = localStorage.getItem(STORAGE_KEY);
+      if (seen) {
+        setShouldRender(false);
+      } else {
+        setShouldRender(true);
+        setPhase("playing");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   // Reveal skip button after a short delay
@@ -66,9 +69,13 @@ export function WelcomeScreen() {
   // Respect prefers-reduced-motion: skip entirely
   useEffect(() => {
     if (shouldRender && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      localStorage.setItem(STORAGE_KEY, "1");
-      setShouldRender(false);
+      const timer = window.setTimeout(() => {
+        localStorage.setItem(STORAGE_KEY, "1");
+        setShouldRender(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
+    return undefined;
   }, [shouldRender]);
 
   if (shouldRender === null || shouldRender === false || phase === "done") return null;

@@ -97,7 +97,7 @@ function FindingCard({
         </div>
         <p className="text-sm leading-relaxed">{finding.description}</p>
         {finding.evidence.length > 0 && (
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {finding.evidence.slice(0, 5).map((e, i) => (
               <li key={i} className="flex gap-2 text-xs text-muted-foreground">
                 <span className={cn("mt-[6px] size-1.5 shrink-0 rounded-full", tone.marker)} />
@@ -126,12 +126,12 @@ export function AgentSection({ reports }: AgentSectionProps) {
   });
 
   return (
-    <Accordion type="multiple" defaultValue={[]} className="space-y-2">
+    <Accordion type="multiple" defaultValue={[]} className="space-y-3">
       {sorted.map((report) => (
         <AccordionItem
           key={report.agent_name}
           value={report.agent_name}
-          className="border rounded-lg px-4 transition-[background-color,border-color,box-shadow] duration-300 data-[state=open]:bg-card/55 data-[state=open]:shadow-[0_10px_24px_-18px_rgba(15,23,42,0.45)] dark:data-[state=open]:shadow-[0_10px_24px_-18px_rgba(2,6,23,0.9)]"
+          className="border rounded-lg px-5 py-1 transition-[background-color,border-color,box-shadow] duration-300 data-[state=open]:bg-card/55 data-[state=open]:shadow-[0_10px_24px_-18px_rgba(15,23,42,0.45)] dark:data-[state=open]:shadow-[0_10px_24px_-18px_rgba(2,6,23,0.9)]"
         >
           <AccordionTrigger className="hover:no-underline data-[state=open]:text-foreground">
             <div className="flex items-center gap-3">
@@ -143,7 +143,7 @@ export function AgentSection({ reports }: AgentSectionProps) {
               </Badge>
             </div>
           </AccordionTrigger>
-          <AccordionContent className="space-y-3 pt-2 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1">
+          <AccordionContent className="space-y-4 pt-2 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1">
             {report.summary && (
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <Markdown rehypePlugins={[rehypeRaw]}>{report.summary}</Markdown>
