@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod/v4";
+import { AnimatePresence, motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { BackendInfo, CaseMetadata, TaskParams, TaskType, TextEntry } from "@/lib/types";
+import { FADE_VARIANTS, TRANSITION_ENTER } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,6 +60,16 @@ const TASK_OPTIONS: {
     labelKey: "config.task.sockpuppet.label",
     descriptionKey: "config.task.sockpuppet.desc",
   },
+  {
+    value: "self_discovery" as TaskType,
+    labelKey: "config.task.self_discovery.label",
+    descriptionKey: "config.task.self_discovery.desc",
+  },
+  {
+    value: "clue_extraction" as TaskType,
+    labelKey: "config.task.clue_extraction.label",
+    descriptionKey: "config.task.clue_extraction.desc",
+  },
 ];
 
 const formSchema = z.object({
@@ -70,6 +82,8 @@ const formSchema = z.object({
       "clustering",
       "profiling",
       "sockpuppet",
+      "self_discovery",
+      "clue_extraction",
     ] as const,
   ),
   llm_backend: z.string().min(1),
@@ -296,6 +310,19 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
       );
     }
 
+    if (taskValue === "self_discovery") {
+      return (
+        <div className="space-y-2">
+          <Label>{t("config.subjectIds")}</Label>
+          <Input
+            placeholder={t("config.subjectIdsPlaceholder")}
+            {...form.register("subject_ids")}
+          />
+          <p className="text-xs text-muted-foreground">{t("config.optionalIdsHint")}</p>
+        </div>
+      );
+    }
+
     return (
       <div className="rounded-2xl border border-dashed border-border/70 bg-background/35 p-4 text-sm text-muted-foreground">
         {t("config.scopeDefault")}
@@ -305,7 +332,7 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
 
   return (
     <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-5">
-      <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
+      <Card className="border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="rounded-full">01</Badge>
@@ -377,26 +404,45 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
                 {t("config.activePreset")}
               </div>
               {selectedTask && (
-                <>
-                  <div className="mt-3 text-base font-semibold">{t(selectedTask.labelKey)}</div>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(selectedTask.descriptionKey)}</p>
-                </>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={selectedTask.value}
+                    variants={FADE_VARIANTS}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                    transition={TRANSITION_ENTER}
+                  >
+                    <div className="mt-3 text-base font-semibold">{t(selectedTask.labelKey)}</div>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{t(selectedTask.descriptionKey)}</p>
+                  </motion.div>
+                </AnimatePresence>
               )}
-              {selectedBackend && (
-                <div className="mt-4 rounded-2xl border border-border/60 bg-background/60 p-3">
-                  <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    {t("config.llmBackend")}
-                  </div>
-                  <div className="mt-2 text-sm font-medium">{selectedBackend.name}</div>
-                  <div className="text-xs text-muted-foreground">{selectedBackend.model}</div>
-                </div>
-              )}
+              <AnimatePresence mode="wait">
+                {selectedBackend && (
+                  <motion.div
+                    key={selectedBackend.name}
+                    variants={FADE_VARIANTS}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                    transition={TRANSITION_ENTER}
+                    className="mt-4 rounded-2xl border border-border/60 bg-background/60 p-3"
+                  >
+                    <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      {t("config.llmBackend")}
+                    </div>
+                    <div className="mt-2 text-sm font-medium">{selectedBackend.name}</div>
+                    <div className="text-xs text-muted-foreground">{selectedBackend.model}</div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
+      <Card className="border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="rounded-full">02</Badge>
@@ -418,7 +464,7 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
         </CardContent>
       </Card>
 
-      <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
+      <Card className="border-border/70 bg-card/95 shadow-sm">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="rounded-full">03</Badge>
@@ -450,7 +496,7 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
         </CardContent>
       </Card>
 
-      <div className="flex flex-col gap-3 rounded-[24px] border border-border/60 bg-card/82 p-4 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)] sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-[24px] border border-border/60 bg-card/82 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">{t("config.submitHint")}</p>
         <Button
           type="submit"

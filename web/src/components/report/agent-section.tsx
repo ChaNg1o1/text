@@ -21,11 +21,10 @@ const AGENT_ORDER = [
 ];
 
 const AGENT_LABELS: Record<string, string> = {
-  stylometry: "Stylometry",
-  writing_process: "Writing Process",
-  computational_linguistics: "Computational Linguistics",
-  computational: "Computational Linguistics",
-  sociolinguistics: "Sociolinguistics",
+  stylometry: "Writing Fingerprint",
+  writing_process: "Psychological Portrait",
+  computational: "Pattern Analysis",
+  sociolinguistics: "Social Identity",
 };
 
 interface AgentSectionProps {
@@ -61,11 +60,24 @@ function confidenceTone(c: number): {
 function FindingCard({
   finding,
   moreLabel,
+  t,
 }: {
   finding: AgentFinding;
   moreLabel: (count: number) => string;
+  t: (key: string) => string;
 }) {
   const tone = confidenceTone(finding.confidence);
+  const meta = (finding.metadata ?? {}) as Record<string, unknown>;
+  const inferenceMode = typeof meta.inference_mode === "string" ? meta.inference_mode : "";
+  const inferenceLabel =
+    typeof meta.display_label === "string"
+      ? meta.display_label
+      : inferenceMode === "subjective_hypothesis"
+        ? t("report.inferenceMode.subjective")
+        : inferenceMode === "observable_process"
+          ? t("report.inferenceMode.observable")
+          : "";
+  const caution = typeof meta.caution === "string" ? meta.caution : "";
 
   return (
     <article
@@ -74,7 +86,6 @@ function FindingCard({
         tone.shell,
       )}
     >
-      <div className="pointer-events-none absolute inset-0 opacity-35 [background-image:radial-gradient(circle_at_1px_1px,hsl(var(--foreground)/0.08)_1px,transparent_0)] [background-size:11px_11px]" />
       <div className="relative space-y-3 p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -82,8 +93,15 @@ function FindingCard({
               {finding.category}
             </Badge>
             <Badge variant="secondary" className="text-[11px] font-medium">
-              {finding.opinion_kind === "deterministic_evidence" ? "evidence" : "interpretive"}
+              {finding.opinion_kind === "deterministic_evidence"
+                ? t("report.opinionKind.deterministic")
+                : t("report.opinionKind.interpretive")}
             </Badge>
+            {inferenceLabel && (
+              <Badge variant="outline" className="text-[11px] font-medium">
+                {inferenceLabel}
+              </Badge>
+            )}
             <span
               className={cn(
                 "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide",
@@ -96,6 +114,17 @@ function FindingCard({
           </div>
         </div>
         <p className="text-sm leading-relaxed">{finding.description}</p>
+        {finding.interpretation && (
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground/80 italic
+                        border-l-2 border-muted-foreground/20 pl-2">
+            {finding.interpretation}
+          </p>
+        )}
+        {caution && (
+          <p className="rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+            {caution}
+          </p>
+        )}
         {finding.evidence.length > 0 && (
           <ul className="space-y-2">
             {finding.evidence.slice(0, 5).map((e, i) => (
@@ -131,7 +160,7 @@ export function AgentSection({ reports }: AgentSectionProps) {
         <AccordionItem
           key={report.agent_name}
           value={report.agent_name}
-          className="border rounded-lg px-5 py-1 transition-[background-color,border-color,box-shadow] duration-300 data-[state=open]:bg-card/55 data-[state=open]:shadow-[0_10px_24px_-18px_rgba(15,23,42,0.45)] dark:data-[state=open]:shadow-[0_10px_24px_-18px_rgba(2,6,23,0.9)]"
+          className="rounded-lg border px-5 py-1 transition-[background-color,border-color] duration-300 data-[state=open]:bg-card/55"
         >
           <AccordionTrigger className="hover:no-underline data-[state=open]:text-foreground">
             <div className="flex items-center gap-3">
@@ -165,6 +194,7 @@ export function AgentSection({ reports }: AgentSectionProps) {
                 key={i}
                 finding={f}
                 moreLabel={(count) => t("report.moreFindings", { count })}
+                t={t}
               />
             ))}
           </AccordionContent>

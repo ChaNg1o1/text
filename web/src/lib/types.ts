@@ -5,6 +5,8 @@ export type TaskType =
   | "clustering"
   | "profiling"
   | "sockpuppet"
+  | "self_discovery"
+  | "clue_extraction"
   | "full";
 export type AnalysisStatus = "pending" | "running" | "completed" | "failed" | "canceled";
 export type ConclusionGrade =
@@ -134,6 +136,7 @@ export interface AgentFinding {
   evidence: string[];
   metadata?: Record<string, unknown>;
   opinion_kind?: "deterministic_evidence" | "interpretive_opinion";
+  interpretation?: string;
 }
 
 export interface LLMCallRecord {

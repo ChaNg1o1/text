@@ -6,6 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { conclusionCertaintyPercent } from "@/lib/forensic-math";
+import { motion } from "framer-motion";
+import { NumberTween } from "@/components/motion/number-tween";
+import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
+import { DURATION, EASE } from "@/lib/motion";
 
 interface ConfidenceOverviewProps {
   conclusions: ReportConclusion[];
@@ -55,40 +60,16 @@ function gradeLabel(grade: ReportConclusion["grade"]): string {
 function taskLabel(task: ReportConclusion["task"]): string {
   const labels: Record<ReportConclusion["task"], string> = {
     full: "综合分析",
-    verification: "作者验证",
+    verification: "来源比对",
     closed_set_id: "候选集识别",
     open_set_id: "开放集识别",
     clustering: "聚类分组",
     profiling: "写作画像",
     sockpuppet: "马甲检测",
+    self_discovery: "文字 DNA",
+    clue_extraction: "线索提取",
   };
   return labels[task];
-}
-
-function normalizedScore(conclusion: ReportConclusion): number {
-  if (typeof conclusion.score !== "number" || !Number.isFinite(conclusion.score)) {
-    return 0;
-  }
-  if (conclusion.score_type === "log10_lr") {
-    return Math.min(1, Math.abs(conclusion.score) / 4);
-  }
-  return Math.min(1, Math.abs(conclusion.score));
-}
-
-function certaintyPercent(conclusion: ReportConclusion): number {
-  const base: Record<ReportConclusion["grade"], number> = {
-    strong_support: 84,
-    moderate_support: 72,
-    inconclusive: 56,
-    moderate_against: 72,
-    strong_against: 84,
-  };
-  const cautionPenalty = Math.min(
-    16,
-    conclusion.limitations.length * 3 + conclusion.counter_evidence.length * 2,
-  );
-  const boost = Math.round(normalizedScore(conclusion) * 12);
-  return Math.max(24, Math.min(98, base[conclusion.grade] + boost - cautionPenalty));
 }
 
 function scoreLabel(conclusion: ReportConclusion): string | null {
@@ -99,12 +80,13 @@ function scoreLabel(conclusion: ReportConclusion): string | null {
 
 export function ConfidenceOverview({ conclusions, className }: ConfidenceOverviewProps) {
   const { t } = useI18n();
+  const reducedMotion = useReducedMotionPreference();
   const items = useMemo(
     () =>
       conclusions
         .map((conclusion) => ({
           conclusion,
-          percent: certaintyPercent(conclusion),
+          percent: conclusionCertaintyPercent(conclusion),
         }))
         .sort((a, b) => b.percent - a.percent),
     [conclusions],
@@ -145,14 +127,16 @@ export function ConfidenceOverview({ conclusions, className }: ConfidenceOvervie
                   </p>
                 </div>
                 <div className={cn("shrink-0 text-lg font-semibold tabular-nums", tone.value)}>
-                  {percent}%
+                  <NumberTween value={percent} decimals={0} suffix="%" />
                 </div>
               </div>
 
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted/45">
-                <div
-                  className={cn("h-full rounded-full transition-[width]", tone.bar)}
-                  style={{ width: `${percent}%` }}
+                <motion.div
+                  className={cn("h-full rounded-full", tone.bar)}
+                  initial={reducedMotion ? false : { width: 0 }}
+                  animate={{ width: `${percent}%` }}
+                  transition={{ duration: DURATION.slow, ease: EASE.outQuart, delay: 0.1 }}
                 />
               </div>
 
