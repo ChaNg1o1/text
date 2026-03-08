@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Text —— 基于多智能体协作的数字取证文本分析系统。结合 Rust 高性能特征提取与 Python NLP + LLM 多智能体推理，提供作者归属分析、作者画像、傀儡账号检测等能力。所有面向用户的输出使用简体中文。
+Text —— 基于多智能体协作的文本侦探与智能分析平台。结合 Rust 高性能特征提取与 Python NLP + LLM 多智能体推理，提供文字 DNA 自我发现、OSINT 线索提取、作者归属分析、作者画像、傀儡账号检测等能力。所有面向用户的输出使用简体中文。
 
 ## 构建与开发
 
@@ -58,7 +58,7 @@ cd web && npm run lint && npm run build       # 前端 lint + 构建检查
 ### 处理管道
 
 ```
-输入文本 → 数据摄取(ingest) → 特征提取(features) → 多智能体并行分析(agents) → 综合报告(report)
+输入文本 → 数据摄取(ingest) → 特征提取(features) → 多智能体并行分析(agents) → 三层发现(clue/portrait/evidence) → 综合报告(report)
 ```
 
 ### 混合 Rust + Python 核心
@@ -71,15 +71,15 @@ cd web && npm run lint && npm run build       # 前端 lint + 构建检查
 | 模块 | 职责 |
 |------|------|
 | `cli/main.py` | Typer CLI 入口，分组命令：`analyze`、`extract`、`config`、`serve` |
-| `ingest/schema.py` | Pydantic 数据模型：`TextEntry`, `AnalysisRequest`, `FeatureVector`, `ForensicReport` 等 |
+| `ingest/schema.py` | Pydantic 数据模型：`TextEntry`, `AnalysisRequest`, `FeatureVector`, `ForensicReport`, `FindingLayer` 等 |
 | `ingest/loader.py` | 多格式加载器（CSV/JSON/JSONL/TXT） |
 | `features/extractor.py` | 特征提取编排，协调 Rust 与 Python NLP 管道 |
 | `features/cache.py` | SQLite 特征缓存（BLAKE2b 内容哈希），存储于 `~/.cache/text/` |
 | `llm/backend.py` | LLM API 抽象层，通过 LiteLLM 支持多供应商 |
 | `agents/orchestrator.py` | 多智能体调度器，`asyncio.gather()` 并行执行 4 个专业 Agent |
-| `agents/stylometry.py` | 文体计量学 Agent + **共享 LLM 工具函数**（`_call_llm`, `_fmt_dict`, `_parse_findings`） |
-| `agents/computational.py` | 计算语言学 Agent（含本地统计：余弦相似度、DBSCAN 聚类、z-score） |
-| `agents/synthesis.py` | 综合 Agent：交叉验证、矛盾识别、置信度校准 |
+| `agents/stylometry.py` | 文体计量学 Agent（写作指纹）+ **共享 LLM 工具函数**（`_call_llm`, `_fmt_dict`, `_parse_findings`） |
+| `agents/computational.py` | 计算语言学 Agent（模式与关联：余弦相似度、DBSCAN 聚类、z-score） |
+| `agents/synthesis.py` | 综合 Agent（侦探总结）：交叉验证、矛盾识别、置信度校准 |
 | `report/renderer.py` | Markdown / JSON / Rich 终端报告渲染 |
 
 ### FastAPI 服务 (`src/text/api/`)
@@ -106,7 +106,8 @@ cd web && npm run lint && npm run build       # 前端 lint + 构建检查
 
 ### 重要设计特征
 
-- **Agent 共享 LLM 工具**：`_call_llm()` / `_parse_findings()` / `_fmt_dict()` 定义在 `stylometry.py`，被所有 Agent 导入。
+- **Agent 共享 LLM 工具**：`_call_llm()` / `_parse_findings()` / `_fmt_dict()` 定义在 `stylometry.py`，被所有 Agent 导入。`_parse_findings()` 返回 clue / portrait / evidence 三层结构。
+- **三层发现结构**：所有 Agent 输出包含 clue（线索）、portrait（画像）、evidence（证据）三层，对应 `FindingLayer` 枚举。任务类型之间的差异仅在叙事视角（`self_discovery` 用第二人称，其余用第三人称）。
 - **优雅降级**：scikit-learn、spaCy 模型、Rust 扩展均为可选依赖，缺失时跳过而非崩溃。Agent 失败时返回中文降级报告。
 - **异步管道**：特征提取和 Agent 分析均为 async，CLI 通过 `asyncio.run()` 驱动。
 - **SSE 进度机制**：`InstrumentedOrchestrator` 通过子类+包装注入 SSE 事件，不修改核心 Agent 代码。
