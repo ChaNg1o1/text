@@ -22,6 +22,8 @@ class TaskType(str, Enum):
     PROFILING = "profiling"
     SOCKPUPPET = "sockpuppet"
     FULL = "full"
+    SELF_DISCOVERY = "self_discovery"
+    CLUE_EXTRACTION = "clue_extraction"
 
 
 class ConclusionGrade(str, Enum):
@@ -203,6 +205,12 @@ class AnomalySample(BaseModel):
     outlier_dimensions: dict[str, float] = Field(default_factory=dict)
 
 
+class FindingLayer(str, Enum):
+    CLUE = "clue"
+    PORTRAIT = "portrait"
+    EVIDENCE = "evidence"
+
+
 class AgentFinding(BaseModel):
     """A single finding from a discipline agent."""
 
@@ -213,6 +221,8 @@ class AgentFinding(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     opinion_kind: Literal["deterministic_evidence", "interpretive_opinion"] = "interpretive_opinion"
+    interpretation: str = ""  # Plain-language explanation for non-expert readers
+    layer: FindingLayer = FindingLayer.CLUE
 
 
 class LLMCallRecord(BaseModel):
