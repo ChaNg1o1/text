@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from text.app_settings import apply_prompt_override
-from text.ingest.schema import AgentFinding, AgentReport, FeatureVector
+from text.ingest.schema import AgentFinding, AgentReport, FeatureVector, FindingLayer
 
 from .stylometry import (
     MAX_AUTO_FINDINGS,
@@ -104,6 +104,10 @@ Provide your analysis as a JSON array of finding objects. Each finding must have
 - "description": a clear, specific analytical statement (2-4 sentences)
 - "confidence": a float between 0.0 and 1.0
 - "evidence": a list of specific data points supporting this finding
+- "interpretation": one sentence in plain Chinese explaining what this finding means \
+for a non-technical reader. Use everyday analogies or comparisons. Avoid metric \
+names and formulas. Must be understandable by someone with no linguistics background. \
+Example: "这两段文字在措辞上极为接近，像是同一个人用略不同的说法写了两遍。"
 
 Return ONLY the JSON array, no other text.
 
@@ -258,13 +262,18 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                             discipline="computational_linguistics",
                             category="semantic_similarity",
                             description=(
-                                f"Very high semantic similarity ({sim:.3f}) detected "
-                                f"between texts '{tid_a}' and '{tid_b}'. "
-                                f"This exceeds the 0.85 threshold commonly used in "
-                                f"authorship attribution and warrants further investigation."
+                                f"文本 '{tid_a}' 与 '{tid_b}' 之间的语义相似度极高"
+                                f"（{sim:.3f}），超过作者归属常用的 0.85 阈值，"
+                                f"需要进一步调查。"
                             ),
                             confidence=min(0.9, sim),
                             evidence=[f"cosine_similarity({tid_a}, {tid_b}) = {sim:.4f}"],
+                            interpretation=(
+                                "这两段文字在措辞和表达方式上极为接近，"
+                                "像是同一个人用略不同的说法写了两遍。"
+                            ),
+                            opinion_kind="deterministic_evidence",
+                            layer=FindingLayer.EVIDENCE,
                         )
                     )
 
@@ -280,6 +289,12 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                         ),
                         confidence=0.7,
                         evidence=[f"total_high_similarity_pairs = {high_count}"],
+                        interpretation=(
+                            "相似度较高的文本对较多，需要进一步审查"
+                            "它们是否来自同一来源。"
+                        ),
+                        opinion_kind="deterministic_evidence",
+                        layer=FindingLayer.EVIDENCE,
                     )
                 )
 

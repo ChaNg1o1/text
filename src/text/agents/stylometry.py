@@ -10,7 +10,7 @@ import time
 import litellm
 
 from text.app_settings import apply_prompt_override
-from text.ingest.schema import AgentFinding, AgentReport, FeatureVector, LLMCallRecord
+from text.ingest.schema import AgentFinding, AgentReport, FeatureVector, FindingLayer, LLMCallRecord
 from text.llm.cache import get_cached_response, store_cached_response
 
 from .json_utils import parse_json_array_loose
@@ -85,6 +85,10 @@ Provide your analysis as a JSON array of finding objects. Each finding must have
 - "description": a clear, specific analytical statement (2-4 sentences)
 - "confidence": a float between 0.0 and 1.0
 - "evidence": a list of specific data points supporting this finding
+- "interpretation": one sentence in plain Chinese explaining what this finding means \
+for a non-technical reader. Use everyday analogies or comparisons. Avoid metric \
+names and formulas. Must be understandable by someone with no linguistics background. \
+Example: "这两位作者用词的'口味'非常接近——就像两个人总是点同一类菜。"
 
 Return ONLY the JSON array, no other text. Example:
 [
@@ -92,7 +96,8 @@ Return ONLY the JSON array, no other text. Example:
     "category": "vocabulary_richness",
     "description": "The author demonstrates...",
     "confidence": 0.85,
-    "evidence": ["TTR of 0.72 indicates...", "Hapax ratio of 0.55 suggests..."]
+    "evidence": ["TTR of 0.72 indicates...", "Hapax ratio of 0.55 suggests..."],
+    "interpretation": "这位作者的用词范围很广，像一个词汇量丰富的'杂食读者'。"
   }
 ]
 
@@ -364,6 +369,11 @@ def _parse_findings(
     findings: list[AgentFinding] = []
     for item in items:
         try:
+            layer_raw = item.get("layer", "clue")
+            try:
+                layer = FindingLayer(layer_raw)
+            except ValueError:
+                layer = FindingLayer.CLUE
             findings.append(
                 AgentFinding(
                     discipline=discipline,
@@ -372,6 +382,8 @@ def _parse_findings(
                     confidence=float(item.get("confidence", 0.5)),
                     evidence=item.get("evidence", []),
                     metadata=item.get("metadata", {}),
+                    interpretation=item.get("interpretation", ""),
+                    layer=layer,
                 )
             )
         except (ValueError, TypeError):
