@@ -103,14 +103,12 @@ export function BackendReadinessGuard({ children }: { children: ReactNode }) {
       >
         <div className="flex flex-col items-center gap-4 text-center">
           {status === "loading" && (
-            <video
-              src="/welcome.mp4"
-              autoPlay
-              loop
-              muted
-              playsInline
-              className="max-h-[60vh] max-w-[80vw] object-contain"
-            />
+            <>
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted-foreground/30 border-t-foreground" />
+              <p className="text-sm text-muted-foreground">
+                Starting analysis engine...
+              </p>
+            </>
           )}
           {status === "error" && (
             <div className="flex flex-col items-center gap-3 rounded-lg border bg-card p-6 shadow-lg">

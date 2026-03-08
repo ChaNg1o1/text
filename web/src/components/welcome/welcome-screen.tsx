@@ -40,6 +40,14 @@ export function WelcomeScreen() {
     return () => clearTimeout(timer);
   }, [phase]);
 
+  // Ensure autoplay kicks in (some webviews ignore the attribute)
+  useEffect(() => {
+    if (phase !== "playing") return;
+    const video = videoRef.current;
+    if (!video) return;
+    video.play().catch(() => {});
+  }, [phase]);
+
   // Sync video progress to the thin progress bar via rAF
   useEffect(() => {
     if (phase !== "playing") return;
@@ -103,7 +111,7 @@ export function WelcomeScreen() {
         muted
         playsInline
         onEnded={dismiss}
-        className="absolute inset-0 h-full w-full object-contain"
+        className="absolute inset-0 h-full w-full object-cover"
       />
 
       {/* Brand watermark — top left */}
