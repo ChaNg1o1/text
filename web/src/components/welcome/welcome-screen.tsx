@@ -31,13 +31,6 @@ export function WelcomeScreen() {
     return () => clearTimeout(timer);
   }, [phase]);
 
-  // Force autoplay once video has enough data loaded
-  const handleCanPlay = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.play().catch(() => {});
-  }, []);
-
   // Sync video progress to the thin progress bar via rAF
   useEffect(() => {
     if (phase !== "playing") return;
@@ -66,12 +59,8 @@ export function WelcomeScreen() {
   // Respect prefers-reduced-motion: skip entirely
   useEffect(() => {
     if (shouldRender && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      const timer = window.setTimeout(() => {
-        setShouldRender(false);
-      }, 0);
-      return () => window.clearTimeout(timer);
+      setShouldRender(false);
     }
-    return undefined;
   }, [shouldRender]);
 
   if (shouldRender === null || shouldRender === false || phase === "done") return null;
@@ -91,18 +80,14 @@ export function WelcomeScreen() {
       }}
       aria-hidden="true"
     >
-      {/* Video — no controls, force autoplay via onCanPlay */}
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      {/* Video */}
       <video
         ref={videoRef}
         src="/welcome.mp4"
         autoPlay
         muted
         playsInline
-        controls={false}
-        onCanPlay={handleCanPlay}
         onEnded={dismiss}
-        style={{ pointerEvents: "none" }}
         className="absolute inset-0 h-full w-full object-cover"
       />
 
