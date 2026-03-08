@@ -11,7 +11,7 @@ import litellm
 
 from text.app_settings import apply_prompt_override
 from text.ingest.schema import AgentFinding, AgentReport, FeatureVector, FindingLayer, LLMCallRecord
-from text.llm.cache import get_cached_response, store_cached_response
+
 
 from .json_utils import parse_json_array_loose
 
@@ -263,23 +263,6 @@ async def _call_llm(
     prompt_hash = hashlib.sha256(
         f"{system_prompt}\n\n{user_prompt}".encode("utf-8")
     ).hexdigest()
-    cache_key = hashlib.sha256(
-        f"{model}|{api_base or ''}|{temperature}|{max_tokens}|{prompt_hash}".encode("utf-8")
-    ).hexdigest()
-    cached = get_cached_response(cache_key)
-    if cached is not None:
-        response_hash = hashlib.sha256(cached.response_text.encode("utf-8")).hexdigest()
-        return cached.response_text, LLMCallRecord(
-            agent=agent_name or "unknown",
-            model_id=model,
-            timestamp=datetime.now(tz=timezone.utc),
-            prompt_hash=prompt_hash,
-            response_hash=response_hash,
-            token_count_in=cached.prompt_tokens,
-            token_count_out=cached.completion_tokens,
-            temperature=temperature,
-            cache_hit=True,
-        )
 
     kwargs: dict = {
         "model": model,
@@ -303,16 +286,6 @@ async def _call_llm(
             usage = getattr(response, "usage", None)
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) or None
             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) or None
-            store_cached_response(
-                cache_key,
-                model_id=model,
-                temperature=temperature,
-                prompt_hash=prompt_hash,
-                response_text=text,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                created_at=time.time(),
-            )
             response_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             return text, LLMCallRecord(
                 agent=agent_name or "unknown",
