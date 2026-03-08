@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { useI18n } from "@/components/providers/i18n-provider";
 
-const STORAGE_KEY = "text:welcome-seen";
 const SKIP_REVEAL_MS = 1800;
 const EXIT_DURATION_MS = 720;
 
@@ -19,18 +18,10 @@ export function WelcomeScreen() {
   const [skipVisible, setSkipVisible] = useState(false);
   const [shouldRender, setShouldRender] = useState<boolean | null>(null);
 
-  // Check localStorage once on mount
+  // Always show on mount
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const seen = localStorage.getItem(STORAGE_KEY);
-      if (seen) {
-        setShouldRender(false);
-      } else {
-        setShouldRender(true);
-        setPhase("playing");
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
+    setShouldRender(true);
+    setPhase("playing");
   }, []);
 
   // Reveal skip button after a short delay
@@ -68,7 +59,6 @@ export function WelcomeScreen() {
 
   const dismiss = useCallback(() => {
     if (phase === "exiting" || phase === "done") return;
-    localStorage.setItem(STORAGE_KEY, "1");
     cancelAnimationFrame(rafRef.current);
     setPhase("exiting");
     setTimeout(() => setPhase("done"), EXIT_DURATION_MS);
@@ -78,7 +68,6 @@ export function WelcomeScreen() {
   useEffect(() => {
     if (shouldRender && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       const timer = window.setTimeout(() => {
-        localStorage.setItem(STORAGE_KEY, "1");
         setShouldRender(false);
       }, 0);
       return () => window.clearTimeout(timer);
@@ -92,7 +81,7 @@ export function WelcomeScreen() {
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center overflow-hidden"
+      className="fixed inset-0 z-[10000] flex items-center justify-center overflow-hidden"
       style={{
         backgroundColor: "#000",
         transform: isExiting ? "translateY(-100%)" : "translateY(0)",
