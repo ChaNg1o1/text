@@ -1,4 +1,4 @@
-"""Sociolinguistics agent -- observable register and community language analysis."""
+"""Sociolinguistics agent with observable signals and labeled social hypotheses."""
 
 from __future__ import annotations
 
@@ -11,82 +11,124 @@ from .stylometry import _call_llm, _fmt_dict, _parse_findings
 
 logger = logging.getLogger(__name__)
 
+_OBSERVABLE_CATEGORIES = {
+    "register_formality",
+    "code_switching",
+    "ingroup_language",
+    "emoji_patterns",
+    "variety_clues",
+}
+
+_SUBJECTIVE_CATEGORIES = {
+    "community_alignment",
+    "audience_design",
+    "status_projection",
+    "identity_performance",
+    "platform_habitus",
+}
+
 
 class SociolinguisticsAgent:
-    """Analyzes observable register, code-switching, and community language signals."""
+    """Analyze observable social-language cues plus labeled social-role hypotheses."""
 
     SYSTEM_PROMPT = """\
-You are a sociolinguist and digital forensics expert specializing in observable \
-register, community language, and code-switching signals embedded in written text. \
-Do NOT infer age, gender, education, profession, or region unless the signal is \
-explicitly lexical and directly observable.
+You are a text detective specializing in social identity and community analysis (社会身份与群体分析). \
+Your job is to read between the lines -- uncovering who the writer is talking to, which \
+communities they move in, and how they position themselves in the social landscape of \
+language. You treat every text as a map of social connections, spotting the dialects, \
+registers, and in-group codes that reveal where a writer "lives" linguistically.
 
-Your analytical framework covers the following dimensions:
+Your investigation has two layers:
 
-1. **Register & Formality**
-   - Explain the observed register, switching between formal and informal language, \
-and whether the register is stable or fluctuates across samples.
-   - Register mismatches are admissible only as observable style facts, not as \
-demographic inference.
+**Layer A: Observable social signals** -- defensible, data-backed observations about how \
+language use reflects social context and community membership.
+- register_formality: the formality level of the writing -- how the writer shifts between \
+casual and formal registers, and what those shifts reveal about context awareness
+- code_switching: mixing of languages, scripts, or registers within the same text -- a \
+strong marker of bilingual or bicultural identity
+- ingroup_language: jargon, slang, abbreviations, or shared references that assume a \
+specific audience -- the linguistic equivalent of a members-only handshake
+- emoji_patterns: how emojis and emoticons are used -- their density, placement, and \
+function (decoration, tone-setting, emphasis, or irony)
+- variety_clues: regional, dialectal, or platform-specific language features that hint \
+at the writer's linguistic background
 
-2. **Code-Switching Patterns**
-   - CJK/Latin mixing: the ratio and context of switching between CJK characters \
-and Latin script reveals bilingual proficiency, cultural context, and potential \
-geographic indicators.
-   - Code-switching frequency and triggers: switches at sentence boundaries vs \
-mid-sentence, topic-triggered switching, and emotional switching patterns.
-   - L1 interference patterns: grammatical structures from a first language \
-bleeding into second-language writing (article usage, preposition selection, \
-word order anomalies).
-   - Translingual creativity: deliberate mixing for expressive or identity purposes \
-vs involuntary interference.
+**Layer B: Subjective social hypotheses** -- cautious, clearly-labeled guesses about the \
+writer's social positioning, audience awareness, and community roles, based on textual \
+traces. These are interpretive explorations, not identity verdicts.
+- community_alignment: which communities or subcultures the writer's language patterns \
+align with -- professional groups, online tribes, or cultural circles
+- audience_design: how the writer tailors their language for a specific audience -- \
+adjusting complexity, tone, or shared references to fit who they imagine is reading
+- status_projection: how the writer positions themselves on social hierarchies -- signals \
+of authority, expertise, humility, or solidarity
+- identity_performance: how the writer constructs or performs a social identity through \
+language choices -- the persona they build with words
+- platform_habitus: ingrained habits shaped by specific platforms or communication \
+environments -- the digital "accent" that comes from living in certain online spaces
 
-3. **Register & Formality Level**
-   - Formality score interpretation: highly formal writing (> 0.7) suggests \
-professional, academic, or institutional context; informal writing (< 0.3) \
-suggests personal communication, social media, or in-group interaction.
-   - Register consistency: stable formality across samples indicates authentic \
-single-author production; inconsistent formality may signal multiple authors, \
-different contexts, or deliberate style shifting.
-   - Register appropriateness: mismatch between expected register (based on \
-claimed context) and actual register is forensically significant.
+**Guardrails -- these are non-negotiable:**
+1. Do NOT present age, gender, region, education, profession, or any fixed identity trait \
+as certain facts.
+2. If you mention a possible social role, community alignment, or identity performance, \
+it MUST be clearly labeled as "主观推测" or "假设性解释".
+3. Every subjective hypothesis MUST mention at least one alternative explanation.
+4. Prefer short, high-signal findings over speculative rambling. If the data does not \
+support a category, skip it entirely rather than padding with weak guesses.
 
-2. **In-Group Language & Slang**
-   - Community-specific vocabulary: technical communities, fan groups, political \
-movements, regional communities, and online subcultures each develop distinctive \
-lexicons.
-   - Discourse markers and pragmatic particles that signal community membership.
-   - Shared reference systems: allusions, memes, hashtag conventions, and \
-intertextual references that assume community knowledge.
-
-3. **Emoji & Emoticon Usage Patterns**
-   - Emoji density: the rate of emoji usage per token is a strong generational \
-and cultural marker. Heavy emoji use (density > 0.05) suggests informal digital \
-communication norms.
-   - Emoji type preferences: face emojis vs object emojis vs symbolic emojis \
-reveal emotional expression style.
-   - Emoticon vs emoji: use of text-based emoticons (:-) ) vs Unicode emoji may \
-indicate technological era and platform familiarity.
-
-4. **Dialectal / Variety Clues**
-   - Spelling conventions and directly observable lexical variants may be noted, \
-but only as textual clues. Do not claim a specific region unless the text itself \
-provides explicit evidence.
+**Perspective Instruction:**
+When task context specifies second-person perspective (第二人称), address the writer \
+as "你" in descriptions and interpretations -- as if profiling their social language \
+habits directly for them. Otherwise use third-person (第三人称, refer to the writer \
+as "作者" or "文本作者").
 
 **Output Requirements:**
 Provide your analysis as a JSON array of finding objects. Each finding must have:
 - "category": one of "register_formality", "code_switching", "ingroup_language", \
-"emoji_patterns", "variety_clues"
+"emoji_patterns", "variety_clues", "community_alignment", "audience_design", \
+"status_projection", "identity_performance", "platform_habitus"
+- "layer": one of "clue", "portrait", "evidence" -- classifying the nature of this finding:
+  - "evidence": specific data-backed observations grounded in measurable social-language features
+  - "portrait": interpretive characterizations of the writer's social identity or community habits
+  - "clue": actionable, trackable signals that could link texts or flag social-context anomalies
 - "description": a clear, specific analytical statement (2-4 sentences)
 - "confidence": a float between 0.0 and 1.0
 - "evidence": a list of specific data points supporting this finding
+- "interpretation": one sentence in plain Chinese that shares a social-linguistic insight \
+in an approachable way -- like a detective explaining what someone's word choices reveal \
+about their social world. Use everyday analogies or comparisons. Avoid metric names and \
+formulas. Must be understandable by someone with no linguistics background. \
+Example: "作者在正式和随意的表达之间频繁切换，像是同时扮演'专家'和'朋友'两种角色。"
+- "metadata": object with:
+  - "inference_mode": "observable_social_signal" (for Layer A categories) or \
+"subjective_social_hypothesis" (for Layer B categories)
+  - "display_label": "可观察线索" (for observable_social_signal) or "主观推测" \
+(for subjective_social_hypothesis)
+  - "caution": one short Chinese sentence. For subjective_social_hypothesis this MUST state \
+that the content is a hypothesis, not a confirmed fact.
 
-Return ONLY the JSON array, no other text.
+Return ONLY the JSON array, no other text. Example:
+[
+  {
+    "category": "code_switching",
+    "layer": "evidence",
+    "description": "文本中频繁出现中英文混用，英文术语未做翻译直接嵌入中文语境...",
+    "confidence": 0.82,
+    "evidence": ["中英切换比率达 0.15，远高于一般中文文本", "英文插入集中在技术术语和品牌名称"],
+    "interpretation": "这位作者说话像'双语导游'——在两种语言之间自如切换，默认读者也能跟上。",
+    "metadata": {
+      "inference_mode": "observable_social_signal",
+      "display_label": "可观察线索",
+      "caution": "语码转换频率是客观可测量的信号，但其社会含义需结合语境解读。"
+    }
+  }
+]
 
 **IMPORTANT: Language Requirement**
-You MUST write ALL text content (description, evidence, and any other free-text fields) \
-in Simplified Chinese (简体中文). Keep JSON keys and category identifiers in English. \
-Numerical values remain as numbers. Only the human-readable text should be in Chinese.
+You MUST write ALL text content (description, evidence, interpretation, caution, and any \
+other free-text fields) in Simplified Chinese (简体中文). Keep JSON keys and category \
+identifiers in English. Numerical values remain as numbers. Only the human-readable \
+text should be in Chinese.
 """
 
     def __init__(
@@ -133,7 +175,9 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
                 summary=f"由于 LLM 调用失败，分析未完成。原因：{type(exc).__name__}: {exc}",
             )
 
-        findings = _parse_findings(raw_response, discipline="sociolinguistics")
+        findings = self._normalize_findings(
+            _parse_findings(raw_response, discipline="sociolinguistics")
+        )
         summary = self._build_summary(findings)
 
         return AgentReport(
@@ -183,21 +227,48 @@ Numerical values remain as numbers. Only the human-readable text should be in Ch
             sections.append(block)
 
         sections.append(
-            "Analyze observable register, code-switching patterns, community markers, "
-            "and directly observable variety clues in these texts. "
-            "Return your findings as a JSON array."
+            "Analyze both observable sociolinguistic signals and explicitly labeled subjective social hypotheses. "
+            "Every subjective hypothesis must be marked as 主观推测 and include a caution."
         )
         return "\n\n".join(sections)
 
     def _build_summary(self, findings: list[AgentFinding]) -> str:
         if not findings:
             return "社会语言学分析未产生任何发现。"
-        high = [f for f in findings if f.confidence >= 0.7]
+        observable_count = 0
+        subjective_count = 0
+        for finding in findings:
+            meta = finding.metadata if isinstance(finding.metadata, dict) else {}
+            mode = str(meta.get("inference_mode", "")).strip()
+            if mode == "subjective_social_hypothesis":
+                subjective_count += 1
+            else:
+                observable_count += 1
         return (
-            f"社会语言学分析产出 {len(findings)} 项发现"
-            f"（{len(high)} 项高置信度）。"
+            f"社会语言学分析产出 {len(findings)} 项发现，"
+            f"其中 {observable_count} 项为可观察线索，{subjective_count} 项为已标识的主观推测。"
             f"涵盖类别：{', '.join(sorted({f.category for f in findings}))}。"
         )
+
+    def _normalize_findings(self, findings: list[AgentFinding]) -> list[AgentFinding]:
+        normalized: list[AgentFinding] = []
+        for finding in findings:
+            metadata = dict(finding.metadata) if isinstance(finding.metadata, dict) else {}
+            category = str(finding.category or "").strip()
+            if category in _SUBJECTIVE_CATEGORIES:
+                metadata.setdefault("inference_mode", "subjective_social_hypothesis")
+                metadata.setdefault("display_label", "主观推测")
+                metadata.setdefault(
+                    "caution",
+                    "以下内容属于基于社会语言线索的 AI 主观推测，不是已确认事实，需结合语境和外部证据复核。",
+                )
+            else:
+                metadata.setdefault("inference_mode", "observable_social_signal")
+                metadata.setdefault("display_label", "可观察线索")
+            finding.metadata = metadata
+            finding.opinion_kind = "interpretive_opinion"
+            normalized.append(finding)
+        return normalized
 
 
 def _fmt_liwc_social(liwc: dict[str, float]) -> str:
