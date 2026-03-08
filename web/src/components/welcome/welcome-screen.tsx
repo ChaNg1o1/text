@@ -31,13 +31,12 @@ export function WelcomeScreen() {
     return () => clearTimeout(timer);
   }, [phase]);
 
-  // Ensure autoplay kicks in (some webviews ignore the attribute)
-  useEffect(() => {
-    if (phase !== "playing") return;
+  // Force autoplay once video has enough data loaded
+  const handleCanPlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
     video.play().catch(() => {});
-  }, [phase]);
+  }, []);
 
   // Sync video progress to the thin progress bar via rAF
   useEffect(() => {
@@ -92,14 +91,18 @@ export function WelcomeScreen() {
       }}
       aria-hidden="true"
     >
-      {/* Video */}
+      {/* Video — no controls, force autoplay via onCanPlay */}
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video
         ref={videoRef}
         src="/welcome.mp4"
         autoPlay
         muted
         playsInline
+        controls={false}
+        onCanPlay={handleCanPlay}
         onEnded={dismiss}
+        style={{ pointerEvents: "none" }}
         className="absolute inset-0 h-full w-full object-cover"
       />
 
