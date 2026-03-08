@@ -145,6 +145,22 @@ class OrchestratorAgent:
             lines.append("Goal: group texts by robust writing fingerprints without proving authorship.")
         elif request.task == TaskType.PROFILING:
             lines.append("Goal: describe observable writing habits and process-level clues.")
+        elif request.task == TaskType.SELF_DISCOVERY:
+            lines.append(
+                "Narrative perspective: second person (address the writer as '你').\n"
+                "Goal: Build a comprehensive 'Writing DNA' portrait of the author — "
+                "writing style fingerprint, psychological tendencies, cognitive patterns, "
+                "social identity clues, and emotional spectrum. "
+                "Output all findings with clue, portrait, and evidence layers."
+            )
+        elif request.task == TaskType.CLUE_EXTRACTION:
+            lines.append(
+                "Narrative perspective: third person (refer to the author as '文本作者').\n"
+                "Goal: Extract investigative clues from the text — "
+                "trackable linguistic markers, author background signals, "
+                "behavioral anomalies, and any patterns useful for open-source intelligence analysis. "
+                "Output all findings with clue, portrait, and evidence layers."
+            )
         elif request.task == TaskType.SOCKPUPPET:
             lines.append("Goal: assess possible common control using text, time, and interaction evidence.")
         else:

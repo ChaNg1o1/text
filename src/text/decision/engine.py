@@ -144,6 +144,8 @@ class DecisionEngine:
             self._build_profiling(report, request, feature_map, text_map)
         elif request.task == TaskType.SOCKPUPPET:
             self._build_sockpuppet(report, request, feature_map, text_map)
+        elif request.task in {TaskType.SELF_DISCOVERY, TaskType.CLUE_EXTRACTION}:
+            self._build_profiling(report, request, feature_map, text_map)
         else:
             self._build_full(report, request, feature_map, text_map)
 
@@ -1506,15 +1508,66 @@ class DecisionEngine:
             "confidence_note": confidence_note,
         }
 
+    def _interpret_metric(self, key: str, value: float) -> str:
+        """Map a metric key + value to a plain-Chinese explanation sentence."""
+        interpretations: dict[str, Any] = {
+            "log10_lr": lambda v: (
+                f"综合证据{'强烈' if abs(v) > 2 else '一定程度上'}支持两组文本"
+                f"出自同一作者（似然比约为 {10**abs(v):.0f}:1）。"
+            ),
+            "char_similarity": lambda v: (
+                f"字符使用习惯{'极为' if v > 0.85 else '较为'}相似"
+                f"（{v:.2f}/1.0），包括标点偏好和特殊符号使用。"
+            ),
+            "function_similarity": lambda v: (
+                f"虚词和功能词的使用频率{'高度一致' if v > 0.85 else '存在一定相似性'}"
+                "——这类习惯通常难以刻意模仿。"
+            ),
+            "burrows_delta": lambda v: (
+                f"用词偏好{'非常接近' if v < 0.3 else '存在一定差异'}"
+                f"（Delta {v:.2f}，越低越相似），特别是常见词的使用比例。"
+            ),
+            "ncd": lambda v: (
+                f"两段文字的'压缩距离'{'较小' if v < 0.5 else '较大'}，"
+                f"表明它们{'共享大量' if v < 0.5 else '较少共享'}重复的表达模式。"
+            ),
+            "embedding_similarity": lambda v: (
+                f"语义上{'高度' if v > 0.85 else '中等程度'}相似——"
+                f"两段文字在'表达什么'这一层面{'极为' if v > 0.85 else '有所'}接近。"
+            ),
+        }
+        fn = interpretations.get(key)
+        if fn:
+            return fn(value)
+        return f"{key} = {value:.3f}"
+
     def _infer_evidence_finding(self, item: EvidenceItem) -> str:
         if item.summary:
             return item.summary
-        return f"{item.evidence_id} 提供了一条需要结合上下文解释的结构化证据。"
+        if item.metrics:
+            parts = [
+                self._interpret_metric(k, v)
+                for k, v in sorted(
+                    item.metrics.items(), key=lambda x: abs(x[1]), reverse=True
+                )[:2]
+            ]
+            if parts:
+                return " ".join(parts)
+        return f"{item.evidence_id} 提供了一条结构化证据，需要结合上下文解读。"
 
     def _infer_evidence_importance(self, item: EvidenceItem) -> str:
+        if item.strength == "core" and item.linked_conclusion_keys:
+            return (
+                f"这是支撑主结论的核心证据，直接影响"
+                f" {', '.join(item.linked_conclusion_keys)} 的判定方向。"
+            )
+        if item.strength == "conflicting":
+            return "这条证据与主结论方向相矛盾，审阅时需要特别关注其是否改变整体判断。"
         if item.linked_conclusion_keys:
-            return f"它直接支撑结论键 {', '.join(item.linked_conclusion_keys)} 的解释。"
-        return "它主要用于补足当前报告中的证据链和人工复核入口。"
+            return (
+                f"它为结论 {', '.join(item.linked_conclusion_keys)} 提供了辅助性支持。"
+            )
+        return "它补充了证据链的完整性，可在人工复核时作为参考。"
 
     def _infer_evidence_strength(self, item: EvidenceItem) -> str:
         if any("counter" in reading or "差异" in reading for reading in item.counter_readings):
