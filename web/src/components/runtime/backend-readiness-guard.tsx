@@ -26,12 +26,20 @@ function markBackendReady(): void {
   window.dispatchEvent(new Event("text:backend-ready"));
 }
 
+function markHomeReady(): void {
+  const root = document.documentElement;
+  if (root.dataset.homeReady === "true") return;
+  root.dataset.homeReady = "true";
+  window.dispatchEvent(new Event("text:home-ready"));
+}
+
 export function BackendReadinessGuard({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isTauriRuntime()) return;
 
     let cancelled = false;
     let teardown: (() => void) | undefined;
+    let failOpenTimer = 0;
 
     async function setup() {
       const { listen } = await import("@tauri-apps/api/event");
@@ -45,6 +53,7 @@ export function BackendReadinessGuard({ children }: { children: ReactNode }) {
       const unlistenError = await listen<string>("backend-error", (e) => {
         if (cancelled) return;
         console.error("[text/backend] startup error", e.payload);
+        markHomeReady();
       });
 
       try {
@@ -58,24 +67,34 @@ export function BackendReadinessGuard({ children }: { children: ReactNode }) {
       } catch (error) {
         if (!cancelled) {
           console.error("[text/backend] failed to resolve api origin", error);
+          markHomeReady();
         }
       }
 
       teardown = () => {
         cancelled = true;
+        window.clearTimeout(failOpenTimer);
         unlistenReady();
         unlistenError();
       };
     }
 
+    failOpenTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      console.warn("[text/backend] startup timed out; revealing app shell");
+      markHomeReady();
+    }, 8000);
+
     setup().catch((error) => {
       if (!cancelled) {
         console.error("[text/backend] background bootstrap failed", error);
+        markHomeReady();
       }
     });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(failOpenTimer);
       teardown?.();
     };
   }, []);
