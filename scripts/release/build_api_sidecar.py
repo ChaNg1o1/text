@@ -59,8 +59,6 @@ def main() -> None:
             "setuptools",
             "--exclude-module",
             "pip",
-            "--exclude-module",
-            "wheel",
             "--paths",
             str(ROOT_DIR / "src"),
             "--distpath",
