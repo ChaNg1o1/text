@@ -1,27 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, MessageSquare, RefreshCcw, SendHorizonal } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useChat } from "@ai-sdk/react";
+import {
+  DefaultChatTransport,
+  getToolName,
+  isToolUIPart,
+  type DynamicToolUIPart,
+  type ToolUIPart,
+  type UIMessage,
+} from "ai";
+import { AnimatePresence, motion } from "framer-motion";
+import { Loader2, RefreshCcw, SendHorizonal } from "lucide-react";
 import Markdown from "react-markdown";
 import type { ForensicReport } from "@/lib/types";
-import { api } from "@/lib/api-client";
+import { FADE_FAST_VARIANTS } from "@/lib/motion";
+import { api as apiClient } from "@/lib/api-client";
+import { normalizeUiMessageStreamResponse } from "@/lib/normalize-ui-message-stream";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { ChatChart, type ChatChartData } from "@/components/chat/chat-chart";
+import { ChatRadar, type ChatRadarData } from "@/components/chat/chat-radar";
+import { ChatTable, type ChatTableData } from "@/components/chat/chat-table";
+import { ChatHeatmap, type ChatHeatmapData } from "@/components/chat/chat-heatmap";
+import { ToolSkeleton } from "@/components/chat/tool-skeleton";
 
 interface ReportQaPanelProps {
   analysisId: string;
   report: ForensicReport;
-}
-
-type Role = "user" | "assistant";
-
-interface QaMessage {
-  id: string;
-  role: Role;
-  content: string;
 }
 
 interface SuggestionItem {
@@ -29,16 +37,32 @@ interface SuggestionItem {
   label: string;
 }
 
-const SUGGESTION_PAGE_SIZE = 4;
+type ReportQaDataParts = {
+  reportFocus: {
+    mode: string;
+    items: Array<{ label: string; detail: string; accent?: string }>;
+  };
+  reportSnapshot: {
+    summary: string;
+    topConclusion: string | null;
+    backend: string;
+    evidenceCount: number;
+    limitationCount: number;
+    agentCount: number;
+  };
+};
 
-function asText(data: unknown): string {
-  if (typeof data === "string") return data;
-  if (data && typeof data === "object" && "detail" in data) {
-    const detail = (data as { detail?: unknown }).detail;
-    if (typeof detail === "string") return detail;
-  }
-  return "";
-}
+type ReportQaTools = {
+  displayChart: { input: ChatChartData; output: ChatChartData };
+  displayRadar: { input: ChatRadarData; output: ChatRadarData };
+  displayTable: { input: ChatTableData; output: ChatTableData };
+  displayHeatmap: { input: ChatHeatmapData; output: ChatHeatmapData };
+};
+
+type ReportQaMessage = UIMessage<unknown, ReportQaDataParts, ReportQaTools>;
+type ReportQaToolPart = ToolUIPart<ReportQaTools> | DynamicToolUIPart;
+
+const SUGGESTION_PAGE_SIZE = 4;
 
 function compactText(raw: string, limit: number): string {
   const normalized = raw.replace(/\s+/g, " ").trim();
@@ -46,48 +70,88 @@ function compactText(raw: string, limit: number): string {
   return `${normalized.slice(0, limit).trim()}...`;
 }
 
+function readUserText(message: ReportQaMessage): string {
+  return message.parts
+    .filter((part): part is Extract<ReportQaMessage["parts"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim();
+}
+
+function hasRenderableAssistantParts(message: ReportQaMessage): boolean {
+  return message.parts.some((part) => {
+    if (part.type === "text") return part.text.trim().length > 0;
+    return isToolUIPart(part);
+  });
+}
+
+function renderToolPart(part: ReportQaToolPart, key: string) {
+  const toolName = getToolName(part);
+  if (part.state === "output-available") {
+    switch (toolName) {
+      case "displayChart":
+        return <ChatChart key={key} {...(part.output as ChatChartData)} />;
+      case "displayRadar":
+        return <ChatRadar key={key} {...(part.output as ChatRadarData)} />;
+      case "displayTable":
+        return <ChatTable key={key} {...(part.output as ChatTableData)} />;
+      case "displayHeatmap":
+        return <ChatHeatmap key={key} {...(part.output as ChatHeatmapData)} />;
+      default:
+        return null;
+    }
+  }
+
+  if (part.state === "output-error") {
+    return (
+      <Badge key={key} variant="destructive" className="max-w-full whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-xs leading-6">
+        {part.errorText}
+      </Badge>
+    );
+  }
+
+  return <ToolSkeleton key={key} toolName={toolName} />;
+}
+
 export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [question, setQuestion] = useState("");
-  const [messages, setMessages] = useState<QaMessage[]>([]);
   const [suggestions, setSuggestions] = useState<SuggestionItem[]>([]);
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamError, setStreamError] = useState<string | null>(null);
   const [thinkingTick, setThinkingTick] = useState(0);
-  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
-
-  const sourceRef = useRef<EventSource | null>(null);
-  const assistantIdRef = useRef<string | null>(null);
-  const streamDoneRef = useRef(false);
-  const messagesRef = useRef<QaMessage[]>([]);
 
   const fallbackSuggestions = useMemo(() => {
     const list: string[] = [];
     if (report.conclusions.length > 0) {
-      list.push("先用最简单的话告诉我，这次最值得关注的线索是什么？");
-      list.push("这些发现更像初步线索，还是已经形成比较稳定的判断？");
+      list.push(t("report.qa.suggestion.topClue"));
+      list.push(t("report.qa.suggestion.clueStability"));
     }
     if (report.evidence_items.length > 0) {
-      list.push("最关键的几条依据分别是什么？");
+      list.push(t("report.qa.suggestion.keyEvidence"));
     }
     if (report.limitations.length > 0) {
-      list.push("这份结果最需要小心的地方是什么？");
+      list.push(t("report.qa.suggestion.caution"));
     }
     if (report.writing_profiles.length > 0) {
-      list.push("从写作习惯看，这个人最明显的特征是什么？");
+      list.push(t("report.qa.suggestion.writingHabit"));
     }
     list.push(t("report.qaSuggestionCore"));
     return Array.from(new Set(list))
       .slice(0, SUGGESTION_PAGE_SIZE)
       .map((prompt) => ({ prompt, label: compactText(prompt, 38) }));
-  }, [report.conclusions.length, report.evidence_items.length, report.limitations.length, report.writing_profiles.length, t]);
+  }, [
+    report.conclusions.length,
+    report.evidence_items.length,
+    report.limitations.length,
+    report.writing_profiles.length,
+    t,
+  ]);
 
   const loadSuggestions = useCallback(
     async (exclude: string[] = []) => {
       setIsLoadingSuggestions(true);
       try {
-        const response = await api.getQaSuggestions(analysisId, {
+        const response = await apiClient.getQaSuggestions(analysisId, {
           count: SUGGESTION_PAGE_SIZE,
           exclude,
         });
@@ -109,173 +173,90 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
   );
 
   useEffect(() => {
-    return () => {
-      sourceRef.current?.close();
-      sourceRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
     void loadSuggestions();
   }, [loadSuggestions]);
 
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport<ReportQaMessage>({
+        body: { locale },
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          if (response.ok) {
+            return normalizeUiMessageStreamResponse(response);
+          }
+
+          let detail = response.statusText || t("report.qaStreamFailed");
+          try {
+            const payload = await response.clone().json();
+            if (
+              payload
+              && typeof payload === "object"
+              && "detail" in payload
+              && typeof (payload as { detail?: unknown }).detail === "string"
+            ) {
+              detail = (payload as { detail: string }).detail;
+            }
+          } catch {
+            const text = await response.text().catch(() => "");
+            if (text.trim().length > 0) {
+              detail = text;
+            }
+          }
+
+          throw new Error(detail);
+        },
+        prepareSendMessagesRequest: async ({ id, messages, body, trigger, messageId }) => ({
+          api: await apiClient.qaChatUrl(analysisId),
+          body: {
+            ...(body ?? {}),
+            id,
+            messages,
+            trigger,
+            messageId,
+          },
+        }),
+      }),
+    [analysisId, locale, t],
+  );
+
+  const { messages, sendMessage, status, error, clearError } = useChat<ReportQaMessage>({
+    transport,
+  });
+
+  const isBusy = status === "submitted" || status === "streaming";
+  const streamError = error?.message ?? null;
+  const lastMessage = messages.at(-1);
+  const showPendingBubble = isBusy && lastMessage?.role !== "assistant";
 
   useEffect(() => {
-    if (!isStreaming) return;
+    if (!isBusy) {
+      setThinkingTick(0);
+      return;
+    }
     const timer = setInterval(() => {
       setThinkingTick((prev) => (prev + 1) % 4);
     }, 420);
     return () => clearInterval(timer);
-  }, [isStreaming]);
-
-  const appendAssistantDelta = (delta: string) => {
-    const assistantId = assistantIdRef.current;
-    if (!assistantId) return;
-
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.id !== assistantId) return msg;
-        return { ...msg, content: `${msg.content}${delta}` };
-      }),
-    );
-  };
-
-  const finalizeAssistant = (fallback?: string) => {
-    const assistantId = assistantIdRef.current;
-    if (!assistantId) return;
-
-    if (fallback) {
-      setMessages((prev) =>
-        prev.map((msg) => {
-          if (msg.id !== assistantId) return msg;
-          if (msg.content.trim().length > 0) return msg;
-          return { ...msg, content: fallback };
-        }),
-      );
-    }
-  };
-
-  const closeStream = () => {
-    sourceRef.current?.close();
-    sourceRef.current = null;
-    setIsStreaming(false);
-    setActiveAssistantId(null);
-    assistantIdRef.current = null;
-    streamDoneRef.current = false;
-  };
+  }, [isBusy]);
 
   const askQuestion = async (rawQuestion: string) => {
     const trimmed = rawQuestion.trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed || isBusy) return;
 
-    setStreamError(null);
+    clearError();
     setQuestion("");
-    streamDoneRef.current = false;
-
-    const now = Date.now();
-    const userId = `user-${now}`;
-    const assistantId = `assistant-${now}`;
-    assistantIdRef.current = assistantId;
-    setActiveAssistantId(assistantId);
-
-    setMessages((prev) => [
-      ...prev,
-      { id: userId, role: "user", content: trimmed },
-      { id: assistantId, role: "assistant", content: "" },
-    ]);
-
-    setIsStreaming(true);
-
     try {
-      const url = await api.qaStreamUrl(analysisId, trimmed);
-      const source = new EventSource(url);
-      sourceRef.current = source;
-
-      source.addEventListener("qa_chunk", (event) => {
-        try {
-          const payload = JSON.parse((event as MessageEvent).data) as { delta?: string };
-          if (payload.delta) appendAssistantDelta(payload.delta);
-        } catch {
-          // ignore malformed chunks
-        }
-      });
-
-      source.addEventListener("qa_heartbeat", () => {
-        // keep-alive only
-      });
-
-      source.addEventListener("qa_completed", (event) => {
-        try {
-          const payload = JSON.parse((event as MessageEvent).data) as { answer?: string };
-          finalizeAssistant(payload.answer || t("report.qaEmptyAnswer"));
-        } catch {
-          finalizeAssistant(t("report.qaEmptyAnswer"));
-        }
-        streamDoneRef.current = true;
-        closeStream();
-      });
-
-      source.addEventListener("qa_error", (event) => {
-        try {
-          const payload = JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
-          const detail = asText(payload) || t("report.qaStreamFailed");
-          setStreamError(detail);
-          finalizeAssistant(detail);
-        } catch {
-          const fallback = t("report.qaStreamFailed");
-          setStreamError(fallback);
-          finalizeAssistant(fallback);
-        }
-        streamDoneRef.current = true;
-        closeStream();
-      });
-
-      source.onerror = () => {
-        // Ignore onerror fired after normal stream completion (server closes connection).
-        if (!sourceRef.current || streamDoneRef.current) return;
-
-        // If we already have streamed answer content, treat abrupt close as end-of-stream.
-        const assistantId = assistantIdRef.current;
-        if (assistantId) {
-          const currentAssistant = messagesRef.current.find((msg) => msg.id === assistantId);
-          if (currentAssistant && currentAssistant.content.trim().length > 0) {
-            closeStream();
-            return;
-          }
-        }
-
-        // Let browser reconnect attempts continue instead of failing immediately.
-        if (source.readyState === EventSource.CONNECTING) {
-          return;
-        }
-
-        const fallback = t("report.qaStreamDisconnected");
-        setStreamError(fallback);
-        finalizeAssistant(fallback);
-        closeStream();
-      };
+      await sendMessage({ text: trimmed });
     } catch {
-      const fallback = t("report.qaRequestFailed");
-      setStreamError(fallback);
-      finalizeAssistant(fallback);
-      closeStream();
+      setQuestion(trimmed);
     }
   };
 
   const refreshSuggestions = () => loadSuggestions(suggestions.map((item) => item.prompt));
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <MessageSquare className="h-4 w-4" />
-          {t("report.qaTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4 pt-1">
+    <div className="space-y-4">
         <div className="flex items-start gap-3">
           <div className="flex flex-1 flex-wrap gap-2.5">
             {suggestions.map((item) => (
@@ -285,8 +266,8 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
                 size="xs"
                 className="h-auto max-w-full px-3 py-1.5 text-xs leading-relaxed"
                 title={item.prompt}
-                onClick={() => setQuestion(item.prompt)}
-                disabled={isStreaming || isLoadingSuggestions}
+                onClick={() => void askQuestion(item.prompt)}
+                disabled={isBusy || isLoadingSuggestions}
               >
                 {item.label}
               </Button>
@@ -306,7 +287,7 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
             title={t("report.qaRefreshSuggestions")}
             aria-label={t("report.qaRefreshSuggestions")}
             onClick={() => void refreshSuggestions()}
-            disabled={isStreaming || isLoadingSuggestions}
+            disabled={isBusy || isLoadingSuggestions}
           >
             {isLoadingSuggestions ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -316,59 +297,104 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
           </Button>
         </div>
 
-        <div className="rounded-xl border border-border/60 bg-background/35 p-4 md:p-5">
-          {messages.length === 0 ? (
+        <div className="rounded-xl bg-background/35 p-4 md:p-5">
+          {messages.length === 0 && !showPendingBubble ? (
             <p className="text-sm text-muted-foreground">{t("report.qaEmpty")}</p>
           ) : (
-            <div className="space-y-4 max-h-[32rem] overflow-y-auto pr-2">
+            <div className="max-h-[32rem] space-y-4 overflow-y-auto overscroll-y-contain pr-2" aria-live="polite" role="log">
               {messages.map((message) => (
-                <div
+                <motion.div
                   key={message.id}
+                  variants={FADE_FAST_VARIANTS}
+                  initial="initial"
+                  animate="animate"
                   className={message.role === "user" ? "text-right" : "text-left"}
                 >
                   {message.role === "user" ? (
                     <div className="inline-block max-w-[74%] rounded-2xl bg-primary px-4 py-2.5 text-sm leading-7 text-primary-foreground whitespace-pre-wrap">
-                      {message.content}
+                      {readUserText(message)}
                     </div>
                   ) : (
                     <div className="inline-block max-w-[86%] rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-7">
-                      {message.content ? (
-                        <div className="prose prose-sm max-w-none break-words dark:prose-invert prose-headings:my-2 prose-p:my-2.5 prose-p:leading-7 prose-li:leading-7 prose-ul:my-2.5 prose-ol:my-2.5 prose-pre:my-2.5">
-                          <Markdown>{message.content}</Markdown>
-                        </div>
-                      ) : (
-                        <div className="inline-flex items-center gap-2 text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>{`${t("report.qaThinking")}${".".repeat(Math.max(1, thinkingTick))}`}</span>
-                        </div>
-                      )}
-                      {isStreaming && message.id === activeAssistantId && message.content.trim().length > 0 && (
-                        <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted-foreground">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          <span>{`${t("report.qaThinking")}${".".repeat(Math.max(1, thinkingTick))}`}</span>
-                        </div>
-                      )}
+                      <div className="space-y-3">
+                        {message.parts.map((part, index) => {
+                          if (part.type === "text" && part.text.trim().length > 0) {
+                            return (
+                              <div
+                                key={`${message.id}-${index}`}
+                                className="prose prose-sm max-w-none break-words dark:prose-invert prose-headings:my-2 prose-p:my-2.5 prose-p:leading-7 prose-li:leading-7 prose-ul:my-2.5 prose-ol:my-2.5 prose-pre:my-2.5"
+                              >
+                                <Markdown>{part.text}</Markdown>
+                              </div>
+                            );
+                          }
+
+                          if (isToolUIPart(part)) {
+                            return renderToolPart(part, `${message.id}-${index}`);
+                          }
+
+                          return null;
+                        })}
+
+                        {isBusy && lastMessage?.id === message.id && hasRenderableAssistantParts(message) && (
+                          <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>{`${t("report.qaThinking")}${".".repeat(Math.max(1, thinkingTick))}`}</span>
+                          </div>
+                        )}
+
+                        {!hasRenderableAssistantParts(message) && isBusy && lastMessage?.id === message.id && (
+                          <div className="inline-flex items-center gap-2 text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>{`${t("report.qaThinking")}${".".repeat(Math.max(1, thinkingTick))}`}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
-                </div>
+                </motion.div>
               ))}
+
+              {showPendingBubble && (
+                <motion.div variants={FADE_FAST_VARIANTS} initial="initial" animate="animate">
+                  <div className="inline-block max-w-[86%] rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-7">
+                    <div className="inline-flex items-center gap-2 text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>{`${t("report.qaThinking")}${".".repeat(Math.max(1, thinkingTick))}`}</span>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
             </div>
           )}
         </div>
 
-        {streamError && (
-          <Badge variant="destructive" className="whitespace-normal">
-            {streamError}
-          </Badge>
-        )}
+        <AnimatePresence>
+          {streamError && (
+            <motion.div variants={FADE_FAST_VARIANTS} initial="initial" animate="animate" exit="exit">
+              <Badge
+                variant="destructive"
+                className="max-w-full whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-xs leading-6"
+              >
+                {streamError}
+              </Badge>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="space-y-3">
           <Textarea
             value={question}
-            onChange={(event) => setQuestion(event.target.value)}
+            onChange={(event) => {
+              if (streamError) {
+                clearError();
+              }
+              setQuestion(event.target.value);
+            }}
             placeholder={t("report.qaPlaceholder")}
+            aria-label={t("report.qaPlaceholder")}
             rows={4}
-            disabled={isStreaming}
+            disabled={isBusy}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
@@ -377,11 +403,8 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
             }}
           />
           <div className="flex justify-end">
-            <Button
-              onClick={() => void askQuestion(question)}
-              disabled={isStreaming || question.trim().length === 0}
-            >
-              {isStreaming ? (
+            <Button onClick={() => void askQuestion(question)} disabled={isBusy || question.trim().length === 0}>
+              {isBusy ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   {t("report.qaStreaming")}
@@ -395,7 +418,6 @@ export function ReportQaPanel({ analysisId, report }: ReportQaPanelProps) {
             </Button>
           </div>
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 }

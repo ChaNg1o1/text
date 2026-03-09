@@ -15,6 +15,9 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import { ReportMetaLabel } from "@/components/report/report-primitives";
+import { FadeIn } from "@/components/motion/fade-in";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 interface WritingPortraitCardProps {
   profile: WritingProfile;
@@ -22,6 +25,7 @@ interface WritingPortraitCardProps {
 }
 
 export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardProps) {
+  const { t } = useI18n();
   const radarData = profile.dimensions
     .filter((dim) => dim.dimension_type === "observable")
     .slice(0, 6)
@@ -32,8 +36,9 @@ export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardPro
   const aliasMap = new Map(aliases.map((item) => [item.text_id, item.alias]));
 
   return (
-    <Card className="overflow-hidden border-border/60 bg-card/90">
-      <CardContent className="p-0">
+    <FadeIn>
+      <Card className="card-interactive overflow-hidden border-border/60 bg-card/90">
+        <CardContent className="p-0">
         <div className="grid gap-0 lg:grid-cols-[minmax(0,1.15fr)_380px]">
           <div className="space-y-5 p-6">
             <div className="flex flex-wrap items-center gap-2">
@@ -47,12 +52,12 @@ export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardPro
               </p>
             </div>
 
-            <PortraitList title="稳定习惯" items={profile.stable_habits ?? []} tone="cyan" />
-            <PortraitList title="过程线索" items={profile.process_clues ?? []} tone="amber" />
-            <PortraitList title="异常点" items={profile.anomalies ?? []} tone="rose" />
+            <PortraitList title={t("report.writingPortrait.stableHabits")} items={profile.stable_habits ?? []} tone="cyan" />
+            <PortraitList title={t("report.writingPortrait.processClues")} items={profile.process_clues ?? []} tone="amber" />
+            <PortraitList title={t("report.writingPortrait.anomalies")} items={profile.anomalies ?? []} tone="rose" />
 
             {profile.confidence_note && (
-              <div className="rounded-[20px] border border-border/60 bg-background/35 p-5 text-sm leading-7 text-muted-foreground">
+              <div className="rounded-[20px] bg-background/35 p-5 text-sm leading-7 text-muted-foreground">
                 {profile.confidence_note}
               </div>
             )}
@@ -69,11 +74,11 @@ export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardPro
           </div>
 
           <div className="border-t border-border/60 bg-card/50 p-6 lg:border-t-0 lg:border-l">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-              Feature Portrait
-            </div>
+            <ReportMetaLabel>{t("report.writingPortrait.featureProfile")}</ReportMetaLabel>
             <ChartContainer
               className="mt-4 h-[320px] w-full"
+              role="img"
+              aria-label={`Feature portrait radar chart for ${profile.subject}`}
               config={{
                 score: {
                   label: "Score",
@@ -99,6 +104,7 @@ export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardPro
         </div>
       </CardContent>
     </Card>
+    </FadeIn>
   );
 }
 
@@ -123,16 +129,14 @@ function PortraitList({
 
   return (
     <section className="space-y-3">
-      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-        {title}
-      </div>
+      <ReportMetaLabel>{title}</ReportMetaLabel>
       <div className="grid gap-3">
         {items.map((item) => (
           <div
             key={`${title}-${item}`}
-            className="flex gap-3 rounded-[20px] border border-border/60 bg-background/35 px-5 py-4"
+            className="flex gap-3 rounded-[20px] bg-background/35 px-5 py-4"
           >
-            <span className={`mt-2 size-2 shrink-0 rounded-full ${bulletTone}`} />
+            <span className={`mt-2 size-2 shrink-0 rounded-full ${bulletTone}`} aria-hidden="true" />
             <p className="text-sm leading-7 text-foreground/88">{item}</p>
           </div>
         ))}

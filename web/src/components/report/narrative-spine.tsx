@@ -1,9 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { ForensicReport, NarrativeSection } from "@/lib/types";
+import { FADE_VARIANTS, TRANSITION_ENTER } from "@/lib/motion";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ReportMetaLabel, ReportSectionIntro } from "@/components/report/report-primitives";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 interface NarrativeSpineProps {
   report: ForensicReport;
@@ -19,7 +23,8 @@ const SECTION_COLORS: Record<string, string> = {
   next_actions: "bg-violet-400",
 };
 
-export function NarrativeSpine({ report, onFocusEvidence, onFocusCluster }: NarrativeSpineProps) {
+export const NarrativeSpine = memo(function NarrativeSpine({ report, onFocusEvidence, onFocusCluster }: NarrativeSpineProps) {
+  const { t } = useI18n();
   const sections = useMemo(() => report.narrative?.sections ?? [], [report.narrative?.sections]);
   const defaultKey = sections.find((section) => section.default_expanded)?.key ?? sections[0]?.key;
   const [activeKeyOverride, setActiveKeyOverride] = useState<string | null>(null);
@@ -35,13 +40,12 @@ export function NarrativeSpine({ report, onFocusEvidence, onFocusCluster }: Narr
   return (
     <section className="rounded-[28px] border border-border/60 bg-card/88 p-7 shadow-[0_28px_72px_-58px_rgba(15,23,42,0.95)]">
       <div className="mb-5 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-            Narrative Spine
-          </div>
-          <h3 className="mt-1 text-lg font-semibold">结论主轴</h3>
-        </div>
-        <Badge variant="outline">{sections.length} sections</Badge>
+        <ReportSectionIntro
+          kicker={t("report.narrativeSpine.kicker")}
+          title={t("report.narrativeSpine.title")}
+          description={t("report.narrativeSpine.description")}
+        />
+        <Badge variant="outline">{t("report.narrativeSpine.sectionCount", { count: sections.length })}</Badge>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[260px_minmax(0,1fr)]">
@@ -58,9 +62,10 @@ export function NarrativeSpine({ report, onFocusEvidence, onFocusCluster }: Narr
                     onFocusCluster?.(report.cluster_view.clusters[0].cluster_id);
                   }
                 }}
+                aria-pressed={active}
                 className={cn(
-                  "group flex w-full items-start gap-3 rounded-[22px] border border-border/60 bg-background/30 px-4 py-3.5 text-left transition-all",
-                  active && "border-cyan-400/35 bg-cyan-500/[0.08] shadow-[0_18px_36px_-28px_rgba(14,165,233,0.8)]",
+                  "group flex w-full items-start gap-3 rounded-[22px] border border-border/60 bg-background/30 px-4 py-3.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                  active && "border-cyan-400/35 bg-cyan-500/[0.08]",
                 )}
               >
                 <div className="flex flex-col items-center">
@@ -75,9 +80,7 @@ export function NarrativeSpine({ report, onFocusEvidence, onFocusCluster }: Narr
                   )}
                 </div>
                 <div className="min-w-0 space-y-1">
-                  <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    {section.key.replaceAll("_", " ")}
-                  </div>
+                  <ReportMetaLabel>{section.key.replaceAll("_", " ")}</ReportMetaLabel>
                   <div className="font-medium">{section.title}</div>
                   <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
                     {section.summary}
@@ -88,19 +91,29 @@ export function NarrativeSpine({ report, onFocusEvidence, onFocusCluster }: Narr
           })}
         </div>
 
-        {sections
-          .filter((section) => section.key === activeKey)
-          .map((section) => (
-            <NarrativeSectionPanel
-              key={section.key}
-              section={section}
-              onFocusEvidence={onFocusEvidence}
-            />
-          ))}
+        <AnimatePresence mode="wait">
+          {sections
+            .filter((section) => section.key === activeKey)
+            .map((section) => (
+              <motion.div
+                key={section.key}
+                variants={FADE_VARIANTS}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={TRANSITION_ENTER}
+              >
+                <NarrativeSectionPanel
+                  section={section}
+                  onFocusEvidence={onFocusEvidence}
+                />
+              </motion.div>
+            ))}
+        </AnimatePresence>
       </div>
     </section>
   );
-}
+});
 
 function NarrativeSectionPanel({
   section,
@@ -110,12 +123,10 @@ function NarrativeSectionPanel({
   onFocusEvidence?: (evidenceId: string) => void;
 }) {
   return (
-    <div className="rounded-[26px] border border-border/60 bg-background/40 p-6">
+    <div className="rounded-[26px] bg-background/40 p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
-          <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-            {section.key.replaceAll("_", " ")}
-          </div>
+          <ReportMetaLabel>{section.key.replaceAll("_", " ")}</ReportMetaLabel>
           <h4 className="text-xl font-semibold">{section.title}</h4>
           <p className="text-base leading-8 text-foreground/90">{section.summary}</p>
         </div>
@@ -125,13 +136,14 @@ function NarrativeSectionPanel({
               key={evidenceId}
               type="button"
               onClick={() => onFocusEvidence?.(evidenceId)}
+              className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center px-1 py-1 cursor-pointer hover:bg-muted/30 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-md"
             >
               <Badge variant="outline">{evidenceId}</Badge>
             </button>
           ))}
         </div>
       </div>
-      <div className="mt-5 rounded-[22px] border border-border/50 bg-card/70 p-5">
+      <div className="mt-5 rounded-[22px] bg-card/70 p-5">
         <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">
           {section.detail}
         </p>

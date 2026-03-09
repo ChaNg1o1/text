@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -18,6 +18,10 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { cn } from "@/lib/utils";
+import { useSimilarityMatrix } from "@/hooks/use-similarity-matrix";
+import { FadeIn } from "@/components/motion/fade-in";
+import { ReportMetaLabel, ReportSectionIntro } from "@/components/report/report-primitives";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 interface ClusterLandscapeProps {
   report: ForensicReport;
@@ -27,35 +31,25 @@ interface ClusterLandscapeProps {
   onFocusCluster?: (clusterId: number) => void;
 }
 
-function cosine(a: number[], b: number[]) {
-  if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    dot += a[index] * b[index];
-    magA += a[index] * a[index];
-    magB += b[index] * b[index];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
+const HEAT_LEVELS = [
+  "var(--heat-0)", "var(--heat-1)", "var(--heat-2)",
+  "var(--heat-3)", "var(--heat-4)",
+];
 
 function heatColor(value: number) {
   const clamped = Math.max(0, Math.min(1, value));
-  const cyan = Math.round(32 + 170 * clamped);
-  const green = Math.round(70 + 120 * clamped);
-  const blue = Math.round(110 + 130 * (1 - clamped * 0.7));
-  return `rgba(${cyan}, ${green}, ${blue}, ${0.32 + clamped * 0.48})`;
+  const idx = Math.min(4, Math.floor(clamped * 5));
+  return HEAT_LEVELS[idx];
 }
 
-export function ClusterLandscape({
+export const ClusterLandscape = memo(function ClusterLandscape({
   report,
   features,
   featuresLoading = false,
   focusedClusterId = null,
   onFocusCluster,
 }: ClusterLandscapeProps) {
+  const { t } = useI18n();
   const clusters = useMemo(() => report.cluster_view?.clusters ?? [], [report.cluster_view?.clusters]);
   const aliases = useMemo(() => report.entity_aliases?.text_aliases ?? [], [report.entity_aliases?.text_aliases]);
   const aliasMap = useMemo(
@@ -77,20 +71,7 @@ export function ClusterLandscape({
     return features.map((feature) => feature.text_id);
   }, [aliases, features]);
 
-  const matrix = useMemo(() => {
-    if (features.length < 2) {
-      return null;
-    }
-    const featureMap = new Map(features.map((item) => [item.text_id, item]));
-    return items.map((firstId) =>
-      items.map((secondId) => {
-        const first = featureMap.get(firstId);
-        const second = featureMap.get(secondId);
-        if (!first || !second) return 0;
-        return cosine(first.nlp_features.embedding, second.nlp_features.embedding);
-      }),
-    );
-  }, [features, items]);
+  const matrix = useSimilarityMatrix(features, items);
 
   const [activeClusterIdState, setActiveClusterIdState] = useState<number | null>(null);
   const activeClusterId = focusedClusterId ?? activeClusterIdState ?? clusters[0]?.cluster_id ?? null;
@@ -105,30 +86,28 @@ export function ClusterLandscape({
   }));
 
   return (
+    <FadeIn>
     <section className="space-y-6">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-          Cluster Landscape
-        </div>
-        <h3 className="mt-1 text-2xl font-semibold">聚类地貌</h3>
-        <p className="mt-2 text-sm leading-7 text-muted-foreground">
-          先看样本内部被分成了几种写法，再看每组之间到底差在哪，最后用异常样本确认哪些文本需要拆开单独复核。
-        </p>
-      </div>
+      <ReportSectionIntro
+        kicker={t("report.cluster.kicker")}
+        title={t("report.cluster.title")}
+        description={t("report.cluster.description")}
+      />
 
       <div className="flex flex-wrap gap-2">
         {clusters.map((cluster) => (
           <button
             key={cluster.cluster_id}
             type="button"
+            aria-pressed={activeClusterId === cluster.cluster_id}
             onClick={() => {
               setActiveClusterIdState(cluster.cluster_id);
               onFocusCluster?.(cluster.cluster_id);
             }}
             className={cn(
-              "rounded-full border px-4 py-2 text-sm transition-all",
+              "rounded-full border px-4 py-2 text-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
               activeClusterId === cluster.cluster_id
-                ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-100"
+                ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-100"
                 : "border-border/60 bg-card/70 text-foreground",
             )}
           >
@@ -142,18 +121,16 @@ export function ClusterLandscape({
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                  Similarity Map
-                </div>
-                <div className="mt-1 text-base font-semibold">样本相似度热力图</div>
+                <ReportMetaLabel>{t("report.cluster.heatmapLabel")}</ReportMetaLabel>
+                <div className="mt-1 text-base font-semibold">{t("report.cluster.heatmapTitle")}</div>
               </div>
-              {featuresLoading && <Badge variant="secondary">loading features…</Badge>}
+              {featuresLoading && <Badge variant="secondary">{t("report.cluster.featuresLoading")}</Badge>}
             </div>
 
             {matrix ? (
               <div className="mt-5 overflow-x-auto">
                 <div
-                  className="inline-grid gap-1 rounded-[24px] border border-border/50 bg-background/25 p-4"
+                  className="inline-grid gap-1 rounded-[24px] bg-background/25 p-4"
                   style={{ gridTemplateColumns: `repeat(${items.length}, 22px)` }}
                 >
                   {matrix.flatMap((row, rowIndex) =>
@@ -168,8 +145,10 @@ export function ClusterLandscape({
                       return (
                         <div
                           key={`${firstId}-${secondId}`}
+                          role="img"
+                          aria-label={`${aliasMap.get(firstId) ?? firstId} vs ${aliasMap.get(secondId) ?? secondId}: ${value.toFixed(2)}`}
                           className={cn(
-                            "size-[22px] rounded-[6px] border border-white/5 transition-all",
+                            "size-[22px] rounded-[6px] transition-all",
                             !active && activeClusterId != null && "opacity-35",
                           )}
                           style={{ backgroundColor: heatColor(value) }}
@@ -181,8 +160,8 @@ export function ClusterLandscape({
                 </div>
               </div>
             ) : (
-              <div className="mt-5 rounded-[22px] border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
-                当前缺少足够的 features 数据，先用右侧的簇解释卡阅读分组结构。
+              <div className="mt-5 rounded-[22px] bg-background/30 p-4 text-sm text-muted-foreground">
+                {t("report.cluster.noFeatures")}
               </div>
             )}
           </CardContent>
@@ -196,7 +175,7 @@ export function ClusterLandscape({
                 key={cluster.cluster_id}
                 className={cn(
                   "border-border/60 bg-card/90 transition-all",
-                  active && "border-cyan-400/35 shadow-[0_24px_60px_-46px_rgba(34,211,238,0.8)]",
+                  active && "border-cyan-400/35 bg-cyan-500/[0.05]",
                 )}
               >
                 <CardContent className="p-6">
@@ -215,7 +194,7 @@ export function ClusterLandscape({
                     {cluster.separation_summary}
                   </p>
                   {cluster.representative_excerpt && (
-                    <div className="mt-4 rounded-[18px] border border-border/60 bg-background/30 p-5 text-sm leading-7 text-muted-foreground">
+                    <div className="mt-4 rounded-[18px] bg-background/30 p-5 text-sm leading-7 text-muted-foreground">
                       {cluster.representative_excerpt}
                     </div>
                   )}
@@ -236,10 +215,8 @@ export function ClusterLandscape({
       {anomalyData.length > 0 && (
         <Card className="border-border/60 bg-card/90">
           <CardContent className="p-6">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-              Outlier Ribbon
-            </div>
-            <div className="mt-1 text-base font-semibold">异常样本条带</div>
+            <ReportMetaLabel>{t("report.cluster.anomalyLabel")}</ReportMetaLabel>
+            <div className="mt-1 text-base font-semibold">{t("report.cluster.anomalyTitle")}</div>
             <ChartContainer
               className="mt-4 h-[220px] w-full"
               config={{
@@ -265,5 +242,6 @@ export function ClusterLandscape({
         </Card>
       )}
     </section>
+    </FadeIn>
   );
-}
+});

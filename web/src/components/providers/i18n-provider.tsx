@@ -757,7 +757,9 @@ const messages: Record<Locale, Record<string, string>> = {
     "detail.scroll.topology.zoomIn": "Zoom in",
     "detail.scroll.topology.activeSection": "Active section",
     "detail.scroll.topology.linkedTexts": "{count} linked texts",
-    "detail.scroll.sectionIndex": "Section {index}",: "Grouping View",
+    "detail.scroll.sectionIndex": "Section {index}",
+
+    "report.cluster.kicker": "Grouping View",
     "report.cluster.title": "Cluster Landscape",
     "report.cluster.description": "Start by seeing how samples split into distinct writing styles, then compare what separates each group, and finally flag anomalous texts for individual review.",
     "report.cluster.heatmapLabel": "Similarity Heatmap",
@@ -1548,6 +1550,53 @@ const messages: Record<Locale, Record<string, string>> = {
     "detail.scroll.topology.activeSection": "当前线索",
     "detail.scroll.topology.linkedTexts": "{count} 条关联文本",
     "detail.scroll.sectionIndex": "第 {index} 段",
+
+    "report.cluster.kicker": "分组视角",
+    "report.cluster.title": "聚类地貌",
+    "report.cluster.description": "先看样本内部被分成了几种写法，再看每组之间到底差在哪，最后用异常样本确认哪些文本需要拆开单独复核。",
+    "report.cluster.heatmapLabel": "相似度热力图",
+    "report.cluster.heatmapTitle": "样本相似度热力图",
+    "report.cluster.featuresLoading": "特征加载中",
+    "report.cluster.noFeatures": "当前缺少足够的 features 数据，先用右侧的簇解释卡阅读分组结构。",
+    "report.cluster.anomalyLabel": "异常条带",
+    "report.cluster.anomalyTitle": "异常样本条带",
+
+    "report.qa.suggestion.topClue": "先用最简单的话告诉我，这次最值得关注的线索是什么？",
+    "report.qa.suggestion.clueStability": "这些发现更像初步线索，还是已经形成比较稳定的判断？",
+    "report.qa.suggestion.keyEvidence": "最关键的几条依据分别是什么？",
+    "report.qa.suggestion.caution": "这份结果最需要小心的地方是什么？",
+    "report.qa.suggestion.writingHabit": "从写作习惯看，这个人最明显的特征是什么？",
+
+    "report.evidenceGraph.kicker": "关系图",
+    "report.evidenceGraph.title": "证据关系图",
+    "report.evidenceGraph.description": "把结论、证据、画像和分组放进同一张关系图里，用户能直接看到哪条证据支撑哪段结论。",
+
+    "report.evidenceInspector.label": "当前解释",
+    "report.evidenceInspector.empty": "点击左侧任意节点，这里会显示它到底说明什么、为什么重要，以及有哪些需要防止误读的地方。",
+    "report.evidenceInspector.counterReadings": "反向解释",
+    "report.evidenceInspector.conclusionMeta": "分级：{grade}，证据锚点：{anchors}",
+    "report.evidenceInspector.noAnchors": "无",
+
+    "report.narrativeSpine.kicker": "阅读主轴",
+    "report.narrativeSpine.title": "结论主轴",
+    "report.narrativeSpine.description": "用一条压缩后的阅读路径把结论、冲突和下一步动作串起来，避免在报告里来回跳。",
+    "report.narrativeSpine.sectionCount": "{count} 段",
+
+    "report.portraitGallery.kicker": "写作侧写",
+    "report.portraitGallery.title": "写作习惯画像",
+    "report.portraitGallery.description": "这里展示每个主体最稳定的写作习惯、只可谨慎解读的过程线索，以及需要单独复核的异常点。",
+
+    "report.writingPortrait.stableHabits": "稳定习惯",
+    "report.writingPortrait.processClues": "过程线索",
+    "report.writingPortrait.anomalies": "异常点",
+    "report.writingPortrait.featureProfile": "特征剖面",
+
+    "report.grade.strongSupport": "强支持",
+    "report.grade.moderateSupport": "中等支持",
+    "report.grade.against": "偏向不支持",
+    "report.grade.inconclusive": "暂无法判断",
+
+    "report.sourceGroupPrefix": "来源组：",
 };
 
 const I18nContext = createContext<I18nContextValue | null>(null);

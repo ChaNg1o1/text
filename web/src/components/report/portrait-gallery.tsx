@@ -2,12 +2,16 @@
 
 import type { ForensicReport } from "@/lib/types";
 import { WritingPortraitCard } from "@/components/report/writing-portrait-card";
+import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
+import { ReportSectionIntro } from "@/components/report/report-primitives";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 interface PortraitGalleryProps {
   report: ForensicReport;
 }
 
 export function PortraitGallery({ report }: PortraitGalleryProps) {
+  const { t } = useI18n();
   if (report.writing_profiles.length === 0) {
     return null;
   }
@@ -16,24 +20,21 @@ export function PortraitGallery({ report }: PortraitGalleryProps) {
 
   return (
     <section className="space-y-6">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-          Portrait Gallery
-        </div>
-        <h3 className="mt-1 text-2xl font-semibold">写作习惯画像</h3>
-        <p className="mt-2 text-sm leading-7 text-muted-foreground">
-          这里展示每个主体最稳定的写作习惯、只可谨慎解读的过程线索，以及需要单独复核的异常点。
-        </p>
-      </div>
-      <div className="grid gap-6">
+      <ReportSectionIntro
+        kicker={t("report.portraitGallery.kicker")}
+        title={t("report.portraitGallery.title")}
+        description={t("report.portraitGallery.description")}
+      />
+      <StaggerContainer className="grid gap-6" delayChildren={0.06} staggerChildren={0.08}>
         {report.writing_profiles.map((profile) => (
-          <WritingPortraitCard
-            key={profile.subject}
-            profile={profile}
-            aliases={aliases}
-          />
+          <StaggerItem key={profile.subject}>
+            <WritingPortraitCard
+              profile={profile}
+              aliases={aliases}
+            />
+          </StaggerItem>
         ))}
-      </div>
+      </StaggerContainer>
     </section>
   );
 }

@@ -16,6 +16,8 @@ import {
 import type { ForensicReport } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { EvidenceInspector } from "@/components/report/evidence-inspector";
+import { ReportSectionIntro } from "@/components/report/report-primitives";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 interface EvidenceGraphProps {
   report: ForensicReport;
@@ -59,6 +61,7 @@ export function EvidenceGraph({
   activeEvidenceId = null,
   activeClusterId = null,
 }: EvidenceGraphProps) {
+  const { t } = useI18n();
   const [selectedState, setSelectedState] = useState<SelectedState>(null);
 
   const graph = useMemo(() => {
@@ -78,12 +81,12 @@ export function EvidenceGraph({
           width: NODE_W,
           height: NODE_H,
           borderRadius: 22,
-          border: "1px solid rgba(56,189,248,0.35)",
-          background: "rgba(3, 15, 28, 0.95)",
-          color: "#f8fafc",
+          border: "1px solid var(--graph-conclusion-border)",
+          background: "var(--graph-conclusion-bg)",
+          color: "var(--graph-conclusion-text)",
           padding: 14,
           fontSize: 12,
-          boxShadow: "0 18px 50px -36px rgba(34,211,238,0.9)",
+          boxShadow: "0 18px 50px -36px var(--graph-conclusion-shadow)",
         },
         position: { x: 0, y: 0 },
       });
@@ -97,9 +100,9 @@ export function EvidenceGraph({
           width: NODE_W,
           height: NODE_H,
           borderRadius: 20,
-          border: "1px solid rgba(251,191,36,0.28)",
-          background: "rgba(25, 20, 7, 0.94)",
-          color: "#fef3c7",
+          border: "1px solid var(--graph-evidence-border)",
+          background: "var(--graph-evidence-bg)",
+          color: "var(--graph-evidence-text)",
           padding: 14,
           fontSize: 12,
         },
@@ -112,7 +115,7 @@ export function EvidenceGraph({
           target: `conclusion:${key}`,
           type: "smoothstep",
           markerEnd: { type: MarkerType.ArrowClosed },
-          style: { stroke: "#38bdf8", strokeWidth: 1.4 },
+          style: { stroke: "var(--graph-edge-conclusion)", strokeWidth: 1.4 },
         });
       });
     });
@@ -125,9 +128,9 @@ export function EvidenceGraph({
           width: NODE_W,
           height: NODE_H,
           borderRadius: 20,
-          border: "1px solid rgba(16,185,129,0.28)",
-          background: "rgba(6, 20, 16, 0.94)",
-          color: "#d1fae5",
+          border: "1px solid var(--graph-cluster-border)",
+          background: "var(--graph-cluster-bg)",
+          color: "var(--graph-cluster-text)",
           padding: 14,
           fontSize: 12,
         },
@@ -140,7 +143,7 @@ export function EvidenceGraph({
           target: `evidence:${evidenceId}`,
           type: "smoothstep",
           markerEnd: { type: MarkerType.ArrowClosed },
-          style: { stroke: "#34d399", strokeWidth: 1.2 },
+          style: { stroke: "var(--graph-edge-cluster)", strokeWidth: 1.2 },
         });
       });
     });
@@ -155,9 +158,9 @@ export function EvidenceGraph({
           width: NODE_W,
           height: NODE_H,
           borderRadius: 20,
-          border: "1px solid rgba(168,85,247,0.28)",
-          background: "rgba(22, 11, 34, 0.94)",
-          color: "#ede9fe",
+          border: "1px solid var(--graph-profile-border)",
+          background: "var(--graph-profile-bg)",
+          color: "var(--graph-profile-text)",
           padding: 14,
           fontSize: 12,
         },
@@ -177,7 +180,7 @@ export function EvidenceGraph({
             type: "smoothstep",
             markerEnd: { type: MarkerType.ArrowClosed },
             label: alias,
-            style: { stroke: "#c084fc", strokeWidth: 1.2 },
+            style: { stroke: "var(--graph-edge-profile)", strokeWidth: 1.2 },
           });
         }
       });
@@ -223,15 +226,11 @@ export function EvidenceGraph({
 
   return (
     <section className="space-y-6">
-      <div>
-        <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-          Evidence Graph
-        </div>
-        <h3 className="mt-1 text-2xl font-semibold">证据关系图</h3>
-        <p className="mt-2 text-sm leading-7 text-muted-foreground">
-          把结论、证据、画像和分组放进同一张关系图里，用户能直接看到“哪条证据支撑哪段结论”。
-        </p>
-      </div>
+      <ReportSectionIntro
+        kicker={t("report.evidenceGraph.kicker")}
+        title={t("report.evidenceGraph.title")}
+        description={t("report.evidenceGraph.description")}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <Card className="border-border/60 bg-card/95">
