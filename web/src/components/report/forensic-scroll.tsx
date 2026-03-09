@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -17,7 +16,9 @@ import type {
   ForensicReport,
   ReportConclusion,
   WritingProfile,
+  WritingProfileDimension,
 } from "@/lib/types";
+import { conclusionCertaintyPercent, cosineSimilarity } from "@/lib/forensic-math";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,12 +36,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AnimatePresence, motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { FADE_VARIANTS, TRANSITION_ENTER } from "@/lib/motion";
+import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { EvidenceAppendix } from "@/components/report/evidence-appendix";
 import {
   type FocusContext,
   useReportVisualizationStore,
 } from "@/stores/report-visualization-store";
+import { ReportMetaLabel } from "@/components/report/report-primitives";
 
 type SectionKey =
   | "case-header"
@@ -48,8 +54,7 @@ type SectionKey =
   | "evidence-chain"
   | "writing-profiles"
   | "cluster-view"
-  | "narrative-spine"
-  | "appendix";
+  | "narrative-spine";
 
 type DrawerEntity =
   | { kind: "conclusion"; conclusion: ReportConclusion }
@@ -58,87 +63,86 @@ type DrawerEntity =
   | { kind: "profile"; profile: WritingProfile }
   | { kind: "cluster"; cluster: ClusterViewCluster };
 
-type LensKey = "feature" | "cluster" | "anomaly";
-
 const SECTION_ORDER: Array<{
   key: SectionKey;
   labelKey: string;
   color: string;
-  borderClass: string;
-  tintClass: string;
 }> = [
   {
     key: "case-header",
     labelKey: "detail.scroll.section.caseHeader",
-    color: "#0EA5E9",
-    borderClass: "border-sky-300/60 dark:border-sky-500/45",
-    tintClass: "bg-sky-50 dark:bg-sky-500/8",
-  },
-  {
-    key: "conclusion-rail",
-    labelKey: "detail.scroll.section.conclusionRail",
-    color: "#0EA5E9",
-    borderClass: "border-sky-300/60 dark:border-sky-500/45",
-    tintClass: "bg-sky-50 dark:bg-sky-500/8",
-  },
-  {
-    key: "evidence-chain",
-    labelKey: "detail.scroll.section.evidenceChain",
-    color: "#F59E0B",
-    borderClass: "border-amber-300/60 dark:border-amber-500/45",
-    tintClass: "bg-amber-50 dark:bg-amber-500/8",
-  },
-  {
-    key: "writing-profiles",
-    labelKey: "detail.scroll.section.writingProfiles",
-    color: "#8B5CF6",
-    borderClass: "border-violet-300/60 dark:border-violet-500/45",
-    tintClass: "bg-violet-50 dark:bg-violet-500/8",
-  },
-  {
-    key: "cluster-view",
-    labelKey: "detail.scroll.section.clusterView",
-    color: "#10B981",
-    borderClass: "border-emerald-300/60 dark:border-emerald-500/45",
-    tintClass: "bg-emerald-50 dark:bg-emerald-500/8",
+    color: "var(--section-narrative)",
   },
   {
     key: "narrative-spine",
     labelKey: "detail.scroll.section.narrativeSpine",
-    color: "#64748B",
-    borderClass: "border-slate-300/70 dark:border-slate-500/45",
-    tintClass: "bg-slate-50 dark:bg-slate-500/8",
+    color: "var(--section-evidence)",
   },
   {
-    key: "appendix",
-    labelKey: "detail.scroll.section.appendix",
-    color: "#6366F1",
-    borderClass: "border-indigo-300/60 dark:border-indigo-500/45",
-    tintClass: "bg-indigo-50 dark:bg-indigo-500/8",
+    key: "writing-profiles",
+    labelKey: "detail.scroll.section.writingProfiles",
+    color: "var(--section-writing)",
+  },
+  {
+    key: "cluster-view",
+    labelKey: "detail.scroll.section.clusterView",
+    color: "var(--section-cluster)",
+  },
+  {
+    key: "conclusion-rail",
+    labelKey: "detail.scroll.section.conclusionRail",
+    color: "var(--section-graph)",
+  },
+  {
+    key: "evidence-chain",
+    labelKey: "detail.scroll.section.evidenceChain",
+    color: "var(--section-timeline)",
   },
 ];
 
-const PROFILE_COLORS = ["#0EA5E9", "#8B5CF6", "#10B981", "#F59E0B", "#EF4444", "#6366F1"];
-const HEAT_COLORS = ["#E2E8F0", "#BFDBFE", "#7DD3FC", "#34D399", "#0F766E"];
-
-const FEATURE_SIGNATURE = [
-  { key: "type_token_ratio", source: "rust" as const, label: "TTR", min: 0, max: 1 },
-  { key: "avg_sentence_length", source: "rust" as const, label: "Sentence", min: 0, max: 60 },
-  { key: "formality_score", source: "rust" as const, label: "Formality", min: 0, max: 1 },
-  { key: "emotional_tone", source: "nlp" as const, label: "Emotion", min: 0, max: 1 },
+const PROFILE_COLORS = [
+  "var(--profile-0)", "var(--profile-1)", "var(--profile-2)",
+  "var(--profile-3)", "var(--profile-4)", "var(--profile-5)",
+];
+const HEAT_COLORS = [
+  "var(--heat-0)", "var(--heat-1)", "var(--heat-2)",
+  "var(--heat-3)", "var(--heat-4)",
 ];
 
-function certainty(conclusion: ReportConclusion) {
-  const base = {
-    strong_support: 88,
-    moderate_support: 76,
-    inconclusive: 58,
-    moderate_against: 72,
-    strong_against: 86,
-  }[conclusion.grade];
-  const penalty = conclusion.limitations.length * 4 + conclusion.counter_evidence.length * 3;
-  return Math.max(22, Math.min(97, base - penalty));
-}
+const FEATURE_SIGNATURE = [
+  {
+    key: "type_token_ratio",
+    source: "rust" as const,
+    labelKey: "detail.scroll.feature.vocabDiversity",
+    hintKey: "detail.scroll.feature.vocabDiversityHint",
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "avg_sentence_length",
+    source: "rust" as const,
+    labelKey: "detail.scroll.feature.sentenceLength",
+    hintKey: "detail.scroll.feature.sentenceLengthHint",
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "formality_score",
+    source: "rust" as const,
+    labelKey: "detail.scroll.feature.formality",
+    hintKey: "detail.scroll.feature.formalityHint",
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "emotional_tone",
+    source: "nlp" as const,
+    labelKey: "detail.scroll.feature.emotionalTone",
+    hintKey: "detail.scroll.feature.emotionalToneHint",
+    min: 0,
+    max: 1,
+  },
+];
 
 function conclusionTone(grade: ReportConclusion["grade"]) {
   switch (grade) {
@@ -177,20 +181,6 @@ function heatColor(value: number) {
   return HEAT_COLORS[0];
 }
 
-function cosineSimilarity(a: number[], b: number[]) {
-  if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    dot += a[index] * b[index];
-    magA += a[index] * a[index];
-    magB += b[index] * b[index];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
 function normalizeMetric(value: number, min: number, max: number) {
   if (!Number.isFinite(value) || max <= min) return 0.5;
   return Math.max(0, Math.min(1, (value - min) / (max - min)));
@@ -205,24 +195,164 @@ function stripPreview(content?: string) {
   return content.replace(/\s+/g, " ").trim();
 }
 
+const FOCUS_ENTITY_LABEL_KEYS: Record<FocusContext["entityType"], string> = {
+  conclusion: "detail.scroll.focusEntity.conclusion",
+  evidence: "detail.scroll.focusEntity.evidence",
+  text: "detail.scroll.focusEntity.text",
+  cluster: "detail.scroll.focusEntity.cluster",
+  profile: "detail.scroll.focusEntity.profile",
+};
+
+type SubjectiveCueTone = "neutral" | "accent" | "warning";
+
+interface SubjectiveCue {
+  title: string;
+  value: string;
+  detail: string;
+  tone: SubjectiveCueTone;
+}
+
+function matchDimensionScore(profile: WritingProfile | undefined, patterns: string[]) {
+  if (!profile) return null;
+  const match = profile.dimensions.find((dimension) => {
+    const haystack = `${dimension.key} ${dimension.label}`.toLowerCase();
+    return patterns.some((pattern) => haystack.includes(pattern));
+  });
+  return match ? Math.max(0, Math.min(100, match.score)) : null;
+}
+
+function includesAnyKeyword(pool: string, keywords: string[]) {
+  return keywords.some((keyword) => pool.includes(keyword));
+}
+
+function buildSubjectivePortrait({
+  t,
+  analysis,
+  report,
+  leadProfile,
+  leadCluster,
+  fragmentedClusterCount,
+  leadConclusion,
+}: {
+  t: (key: string, params?: Record<string, string | number>) => string;
+  analysis: AnalysisDetail;
+  report: ForensicReport;
+  leadProfile?: WritingProfile;
+  leadCluster?: ClusterViewCluster;
+  fragmentedClusterCount: number;
+  leadConclusion?: ReportConclusion;
+}): SubjectiveCue[] {
+  const signalPool = [
+    leadProfile?.headline,
+    leadProfile?.observable_summary,
+    leadProfile?.summary,
+    ...(leadProfile?.stable_habits ?? []),
+    ...(leadProfile?.process_clues ?? []),
+    ...(leadCluster?.top_markers ?? []),
+    leadCluster?.label,
+  ]
+    .filter(Boolean)
+    .join(“ “)
+    .toLowerCase();
+
+  const formalityScore = matchDimensionScore(leadProfile, [“正式”, “formal”, “formality”]);
+  const sentenceScore = matchDimensionScore(leadProfile, [“句”, “sentence”, “complex”, “复杂”]);
+  const anomalyCount = report.anomaly_samples.length;
+  const clusterCount = report.cluster_view?.clusters.length ?? 0;
+  const representativeCount = leadProfile?.representative_text_ids?.length ?? 0;
+  const dominantClusterLabel =
+    leadCluster?.label ?? t(“detail.scroll.portrait.noDominantCluster”);
+
+  let roleValue = t(“detail.scroll.role.documentation”);
+  let roleDetail = t(“detail.scroll.role.documentationDetail”, { cluster: dominantClusterLabel });
+  if (includesAnyKeyword(signalPool, [“技术”, “工程”, “分析”, “复盘”, “debug”, “code”, “产品”])) {
+    roleValue = t(“detail.scroll.role.technical”);
+    roleDetail = t(“detail.scroll.role.technicalDetail”);
+  } else if (
+    includesAnyKeyword(signalPool, [“运营”, “协调”, “流程”, “通知”, “跟进”, “排期”, “对接”])
+  ) {
+    roleValue = t(“detail.scroll.role.coordination”);
+    roleDetail = t(“detail.scroll.role.coordinationDetail”);
+  } else if ((formalityScore ?? 0) >= 70 && (sentenceScore ?? 0) >= 60) {
+    roleValue = t(“detail.scroll.role.professional”);
+    roleDetail = t(“detail.scroll.role.professionalDetail”);
+  }
+
+  let postureValue = t(“detail.scroll.posture.structured”);
+  if ((sentenceScore ?? 0) >= 68 && (formalityScore ?? 0) >= 65) {
+    postureValue = t(“detail.scroll.posture.contextFirst”);
+  } else if ((sentenceScore ?? 0) < 40 && (formalityScore ?? 0) < 45) {
+    postureValue = t(“detail.scroll.posture.reactive”);
+  }
+  const postureDetail = t(“detail.scroll.posture.detail”, {
+    sentenceScore: Math.round(sentenceScore ?? 50),
+    formalityScore: Math.round(formalityScore ?? 50),
+    leadType: leadConclusion ? t(“detail.scroll.posture.evidenceLed”) : t(“detail.scroll.posture.underBuilt”),
+  });
+
+  let rhythmValue = t(“detail.scroll.rhythm.sustained”);
+  if (analysis.text_count < 20) {
+    rhythmValue = t(“detail.scroll.rhythm.phaseSpecific”);
+  } else if (clusterCount >= 5 || fragmentedClusterCount >= 2) {
+    rhythmValue = t(“detail.scroll.rhythm.parallel”);
+  }
+  const rhythmDetail = t(“detail.scroll.rhythm.detail”, {
+    textCount: analysis.text_count,
+    representativeCount,
+    clusterCount,
+  });
+
+  const riskValue =
+    anomalyCount > 0 || fragmentedClusterCount > 0
+      ? t(“detail.scroll.risk.contextDrift”)
+      : t(“detail.scroll.risk.stable”);
+  const riskDetail = t(“detail.scroll.risk.detail”, {
+    anomalyCount,
+    fragmentedClusterCount,
+  });
+
+  return [
+    {
+      title: t(“detail.scroll.portrait.likelyRole”),
+      value: roleValue,
+      detail: roleDetail,
+      tone: “accent”,
+    },
+    {
+      title: t(“detail.scroll.portrait.expressionPosture”),
+      value: postureValue,
+      detail: postureDetail,
+      tone: “neutral”,
+    },
+    {
+      title: t(“detail.scroll.portrait.workRhythm”),
+      value: rhythmValue,
+      detail: rhythmDetail,
+      tone: “neutral”,
+    },
+    {
+      title: t(“detail.scroll.portrait.riskWatch”),
+      value: riskValue,
+      detail: riskDetail,
+      tone: anomalyCount > 0 || fragmentedClusterCount > 0 ? “warning” : “neutral”,
+    },
+  ];
+}
+
 interface ForensicScrollProps {
   analysis: AnalysisDetail;
   features: FeatureVector[];
-  featuresLoading?: boolean;
 }
 
 export function ForensicScroll({
   analysis,
   features,
-  featuresLoading = false,
 }: ForensicScrollProps) {
   const { t } = useI18n();
   const report = analysis.report as ForensicReport;
   const focus = useReportVisualizationStore((state) => state.focus);
-  const lenses = useReportVisualizationStore((state) => state.lenses);
   const setFocus = useReportVisualizationStore((state) => state.setFocus);
   const clearFocus = useReportVisualizationStore((state) => state.clearFocus);
-  const toggleLens = useReportVisualizationStore((state) => state.toggleLens);
   const resetVisualization = useReportVisualizationStore((state) => state.reset);
 
   const [drawerEntity, setDrawerEntity] = useState<DrawerEntity | null>(null);
@@ -231,7 +361,6 @@ export function ForensicScroll({
       report.narrative?.sections[0]?.key ??
       null,
   );
-  const [currentSection, setCurrentSection] = useState<SectionKey>("case-header");
 
   const sectionRefs = useRef<Record<SectionKey, HTMLElement | null>>({
     "case-header": null,
@@ -240,38 +369,12 @@ export function ForensicScroll({
     "writing-profiles": null,
     "cluster-view": null,
     "narrative-spine": null,
-    appendix: null,
   });
 
   useEffect(() => {
     resetVisualization();
     return () => resetVisualization();
   }, [analysis.id, resetVisualization]);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        const next = visible[0]?.target.getAttribute("data-section-key") as SectionKey | null;
-        if (next) {
-          setCurrentSection(next);
-        }
-      },
-      {
-        rootMargin: "-18% 0px -60% 0px",
-        threshold: [0.1, 0.3, 0.55],
-      },
-    );
-
-    SECTION_ORDER.forEach((section) => {
-      const node = sectionRefs.current[section.key];
-      if (node) observer.observe(node);
-    });
-
-    return () => observer.disconnect();
-  }, []);
 
   const evidenceById = useMemo(
     () => new Map(report.evidence_items.map((item) => [item.evidence_id, item])),
@@ -332,31 +435,6 @@ export function ForensicScroll({
     [evidenceById, report.conclusions],
   );
 
-  const evidenceScopeTextIds = useMemo(() => {
-    const ordered = Array.from(
-      new Set(
-        report.evidence_items.flatMap((item) => item.source_text_ids),
-      ),
-    );
-    if (ordered.length >= 4) {
-      return ordered.slice(0, 8);
-    }
-    return report.request.texts.slice(0, 8).map((text) => text.id);
-  }, [report.evidence_items, report.request.texts]);
-
-  const groupedEvidence = useMemo(() => {
-    const groups: Record<"core" | "supporting" | "conflicting", EvidenceItem[]> = {
-      core: [],
-      supporting: [],
-      conflicting: [],
-    };
-    report.evidence_items.forEach((item) => {
-      const key = item.strength ?? "supporting";
-      groups[key].push(item);
-    });
-    return groups;
-  }, [report.evidence_items]);
-
   const humanizeNarrative = useMemo(() => {
     let replacers: Array<[string, string]> = textMeta.map((item) => [item.textId, item.alias]);
     replacers = replacers.concat(
@@ -368,44 +446,6 @@ export function ForensicScroll({
         value,
       );
   }, [report.entity_aliases?.author_aliases, textMeta]);
-
-  const profileDimensions = useMemo(() => {
-    const dimensionMap = new Map<
-      string,
-      { key: string; label: string; avgConfidence: number; sampleCount: number }
-    >();
-    report.writing_profiles.forEach((profile) => {
-      profile.dimensions.forEach((dimension) => {
-        const prev = dimensionMap.get(dimension.key);
-        if (prev) {
-          prev.avgConfidence += dimension.confidence;
-          prev.sampleCount += 1;
-        } else {
-          dimensionMap.set(dimension.key, {
-            key: dimension.key,
-            label: dimension.label,
-            avgConfidence: dimension.confidence,
-            sampleCount: 1,
-          });
-        }
-      });
-    });
-    return Array.from(dimensionMap.values())
-      .map((item) => ({
-        ...item,
-        avgConfidence: item.avgConfidence / item.sampleCount,
-      }))
-      .sort((a, b) => b.avgConfidence - a.avgConfidence)
-      .slice(0, 6);
-  }, [report.writing_profiles]);
-
-  const clusterPalette = useMemo(() => {
-    const palette = new Map<number, string>();
-    (report.cluster_view?.clusters ?? []).forEach((cluster, index) => {
-      palette.set(cluster.cluster_id, PROFILE_COLORS[index % PROFILE_COLORS.length]);
-    });
-    return palette;
-  }, [report.cluster_view?.clusters]);
 
   const dominantClusterForTexts = useCallback((textIds: string[]) => {
     const counts = new Map<number, number>();
@@ -455,7 +495,46 @@ export function ForensicScroll({
   }, [clusterByTextId, featureMap, visibleClusterTextIds]);
 
   const leadConclusion = report.conclusions[0];
-  const leadPercent = leadConclusion ? certainty(leadConclusion) : null;
+  const leadPercent = leadConclusion ? conclusionCertaintyPercent(leadConclusion) : null;
+  const sortedClusters = useMemo(
+    () =>
+      [...(report.cluster_view?.clusters ?? [])].sort(
+        (first, second) => second.member_text_ids.length - first.member_text_ids.length,
+      ),
+    [report.cluster_view?.clusters],
+  );
+  const leadCluster = sortedClusters[0];
+  const fragmentedClusterCount = sortedClusters.filter(
+    (cluster) => cluster.member_text_ids.length <= 2,
+  ).length;
+  const leadProfile = useMemo(() => {
+    return [...report.writing_profiles].sort(
+      (first, second) =>
+        (second.representative_text_ids?.length ?? 0) -
+        (first.representative_text_ids?.length ?? 0),
+    )[0];
+  }, [report.writing_profiles]);
+  const subjectivePortrait = useMemo(
+    () =>
+      buildSubjectivePortrait({
+        t,
+        analysis,
+        report,
+        leadProfile,
+        leadCluster,
+        fragmentedClusterCount,
+        leadConclusion,
+      }),
+    [
+      t,
+      analysis,
+      report,
+      leadProfile,
+      leadCluster,
+      fragmentedClusterCount,
+      leadConclusion,
+    ],
+  );
 
   const scrollToSection = (section: SectionKey) => {
     sectionRefs.current[section]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -616,8 +695,13 @@ export function ForensicScroll({
                 </div>
               </TooltipTrigger>
               <TooltipContent side="top">
-                <div>{metric.label}</div>
+                <div className="font-medium">{t(metric.labelKey)}</div>
                 <div>{value.toFixed(3)}</div>
+                {metric.hintKey && (
+                  <div className="mt-1 max-w-48 text-xs text-muted-foreground">
+                    {t(metric.hintKey)}
+                  </div>
+                )}
               </TooltipContent>
             </Tooltip>
           );
@@ -641,7 +725,7 @@ export function ForensicScroll({
             <div className="space-y-6 p-5">
               <MetricList
                 items={[
-                  [t("detail.scroll.drawer.signalStrength"), `${certainty(conclusion)}%`],
+                  [t("detail.scroll.drawer.signalStrength"), `${conclusionCertaintyPercent(conclusion)}%`],
                   [t("detail.scroll.drawer.evidenceCount"), String(conclusion.evidence_ids.length)],
                   [t("detail.scroll.drawer.counterCount"), String(conclusion.counter_evidence.length)],
                 ]}
@@ -684,7 +768,8 @@ export function ForensicScroll({
 
     if (drawerEntity.kind === "evidence") {
       const item = drawerEntity.evidence;
-      const compareIds = item.source_text_ids.slice(0, 2);
+      const relatedTextIds = Array.from(new Set(item.source_text_ids));
+      const compareIds = relatedTextIds.slice(0, 2);
       return (
         <>
           <SheetHeader className="border-b border-border/60 pb-5">
@@ -697,7 +782,7 @@ export function ForensicScroll({
                 items={[
                   [t("detail.scroll.drawer.strength"), item.strength ?? t("detail.scroll.notSpecified")],
                   [t("detail.scroll.drawer.linkedConclusions"), String(item.linked_conclusion_keys?.length ?? 0)],
-                  [t("detail.scroll.drawer.relatedTexts"), String(item.source_text_ids.length)],
+                  [t("detail.scroll.drawer.relatedTexts"), String(relatedTextIds.length)],
                 ]}
               />
               {item.why_it_matters && (
@@ -707,7 +792,7 @@ export function ForensicScroll({
               )}
               <DrawerBlock title={t("detail.scroll.drawer.relatedTexts")}>
                 <div className="flex flex-wrap gap-2">
-                  {item.source_text_ids.map((textId) => (
+                  {relatedTextIds.map((textId) => (
                     <Button
                       key={textId}
                       variant="outline"
@@ -729,7 +814,7 @@ export function ForensicScroll({
                 <DrawerBlock title={t("detail.scroll.drawer.featureSignature")}>
                   <div className="space-y-3">
                     {compareIds.map((textId) => (
-                      <div key={textId} className="rounded-lg border border-border/60 p-3">
+                      <div key={textId} className="rounded-lg bg-muted/20 p-3">
                         <div className="text-sm font-medium">
                           {textMetaMap.get(textId)?.alias ?? textId}
                         </div>
@@ -819,6 +904,11 @@ export function ForensicScroll({
               <DrawerBlock title={t("detail.scroll.drawer.anomalyWatch")}>
                 <BulletedList items={profile.anomalies ?? []} emptyLabel={t("detail.scroll.empty")} />
               </DrawerBlock>
+              {profile.confidence_note && (
+                <DrawerBlock title={t("detail.scroll.drawer.confidenceNote")}>
+                  <p className="text-xs text-muted-foreground/80 italic">{profile.confidence_note}</p>
+                </DrawerBlock>
+              )}
             </div>
           </ScrollArea>
         </>
@@ -844,6 +934,11 @@ export function ForensicScroll({
             {cluster.separation_summary && (
               <DrawerBlock title={t("detail.scroll.drawer.separationSummary")}>
                 <p className="text-sm leading-7 text-foreground/88">{cluster.separation_summary}</p>
+              </DrawerBlock>
+            )}
+            {cluster.confidence_note && (
+              <DrawerBlock title={t("detail.scroll.drawer.confidenceNote")}>
+                <p className="text-xs text-muted-foreground/80 italic">{cluster.confidence_note}</p>
               </DrawerBlock>
             )}
             <DrawerBlock title={t("detail.scroll.drawer.members")}>
@@ -874,104 +969,49 @@ export function ForensicScroll({
 
   return (
     <TooltipProvider>
-      <div className="grid gap-6 xl:grid-cols-[228px_minmax(0,1fr)]">
-        <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
-          <div className="rounded-2xl border border-border/70 bg-card/96 p-4">
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              {t("detail.scroll.lenses")}
-            </div>
-            <div className="mt-3 space-y-2">
-              {(["feature", "cluster", "anomaly"] as LensKey[]).map((lens) => (
-                <button
-                  key={lens}
-                  type="button"
-                  onClick={() => toggleLens(lens)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-                    lenses[lens]
-                      ? "border-foreground/20 bg-muted text-foreground"
-                      : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground",
-                  )}
-                >
-                  <span>{t(`detail.scroll.lens.${lens}`)}</span>
-                  <span className="text-xs uppercase">{lenses[lens] ? t("detail.scroll.on") : t("detail.scroll.off")}</span>
-                </button>
-              ))}
-            </div>
-            <div className="mt-4 text-xs leading-6 text-muted-foreground">
-              {featuresLoading ? t("detail.scroll.featuresLoading") : t("detail.scroll.focusHint")}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-border/70 bg-card/96 p-4">
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              {t("detail.scroll.minimap")}
-            </div>
-            <div className="mt-3 space-y-2">
-              {SECTION_ORDER.map((section) => (
-                <button
-                  key={section.key}
-                  type="button"
-                  onClick={() => scrollToSection(section.key)}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors",
-                    currentSection === section.key
-                      ? "bg-muted text-foreground"
-                      : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                  )}
-                >
-                  <span
-                    className="h-8 w-1.5 rounded-full"
-                    style={{ backgroundColor: section.color }}
-                  />
-                  <span>{t(section.labelKey)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {focus && (
-            <div className="rounded-2xl border border-border/70 bg-card/96 p-4">
-              <div className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                {t("detail.scroll.focused")}
-              </div>
-              <div className="mt-2 text-sm text-foreground">
-                {focus.entityType} · {focus.entityId}
-              </div>
-              <Button variant="ghost" size="xs" className="mt-3" onClick={() => clearFocus()}>
-                {t("detail.scroll.clearFocus")}
-              </Button>
-            </div>
-          )}
-        </aside>
-
-        <div className="space-y-6">
-          {SECTION_ORDER.map((section) => {
+      <div className="space-y-5">
+        {SECTION_ORDER.map((section) => {
             if (section.key === "case-header") {
               return (
+                <RevealOnScroll key={section.key}>
                 <section
-                  key={section.key}
                   ref={(node) => {
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className={cn(
-                    "rounded-[28px] border bg-card/96 p-6",
-                    section.borderClass,
-                    section.tintClass,
-                  )}
+                  className="rounded-[30px] border border-border/50 bg-card/96 p-5 lg:p-6"
                 >
-                  <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
-                  <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(320px,0.7fr)]">
-                    <div className="space-y-4">
-                      <div className="rounded-2xl border border-border/60 bg-background/80 p-5">
-                        <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          {t("detail.scroll.verdictBar")}
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <ReportMetaLabel className="tracking-[0.2em] uppercase">
+                      {t(section.labelKey)}
+                    </ReportMetaLabel>
+                    {focus && (
+                      <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/45 px-3 py-1.5 text-xs text-muted-foreground">
+                        <span>
+                          {t("detail.scroll.focused")} · {t(FOCUS_ENTITY_LABEL_KEYS[focus.entityType])} ·{" "}
+                          {focus.entityId}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => clearFocus()}
+                          className="text-foreground transition-colors hover:text-muted-foreground"
+                        >
+                          {t("detail.scroll.clearFocus")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.22fr)_400px]">
+                    <div className="space-y-3 rounded-[24px] border border-white/5 bg-background/35 p-4 lg:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <ReportMetaLabel>{t("detail.scroll.verdictBar")}</ReportMetaLabel>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {t("detail.scroll.readingHint")}
+                          </p>
                         </div>
-                        <div className="mt-3 text-2xl font-semibold leading-9 text-foreground">
-                          {report.narrative?.lead || report.summary || t("detail.scroll.empty")}
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-2">
                           {leadConclusion && (
                             <>
                               <Badge variant="outline" className={conclusionTone(leadConclusion.grade).badgeClass}>
@@ -982,64 +1022,115 @@ export function ForensicScroll({
                               </Badge>
                             </>
                           )}
-                          <Badge variant="outline">{analysis.llm_backend}</Badge>
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-border/60 bg-background/80 p-5">
-                        <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          {t("detail.scroll.readingPath")}
-                        </div>
-                        <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                          {t("detail.scroll.readingHint")}
-                        </p>
+                      <div className="text-[clamp(1.35rem,2.25vw,2rem)] font-semibold leading-[1.42] tracking-tight text-foreground">
+                        {report.narrative?.lead || report.summary || t("detail.scroll.empty")}
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        {[
+                          [t("detail.scroll.evidenceCount"), String(report.evidence_items.length)],
+                          [t("detail.scroll.clusterCount"), String(report.cluster_view?.clusters.length ?? 0)],
+                          [t("report.textCountSuffix"), String(analysis.text_count)],
+                          [t("detail.scroll.sourceGroups"), String(analysis.author_count)],
+                          [t("detail.scroll.anomalyWatch"), String(report.anomaly_samples.length)],
+                          [
+                            t("detail.scroll.drawer.representativeTexts"),
+                            String(leadProfile?.representative_text_ids?.length ?? 0),
+                          ],
+                          [
+                            t("detail.scroll.drawer.memberCount"),
+                            String(leadCluster?.member_text_ids.length ?? 0),
+                          ],
+                          [t("detail.scroll.drawer.cluster"), leadCluster?.label ?? t("detail.scroll.notSpecified")],
+                        ].map(([label, value]) => (
+                          <div
+                            key={`${label}-${value}`}
+                            className="rounded-[16px] border border-border/35 bg-background/30 px-3 py-2.5"
+                          >
+                            <ReportMetaLabel className="truncate">{label}</ReportMetaLabel>
+                            <div className="mt-1 text-sm font-semibold leading-5 text-foreground">
+                              {value}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="xs" variant="outline" onClick={() => scrollToSection("narrative-spine")}>
+                          {t("detail.scroll.section.narrativeSpine")} &rarr;
+                        </Button>
+                        <Button size="xs" variant="outline" onClick={() => scrollToSection("writing-profiles")}>
+                          {t("detail.scroll.section.writingProfiles")} &rarr;
+                        </Button>
+                        <Button size="xs" variant="outline" onClick={() => scrollToSection("conclusion-rail")}>
+                          {t("detail.scroll.section.conclusionRail")} &rarr;
+                        </Button>
+                        <Button size="xs" variant="outline" onClick={() => scrollToSection("evidence-chain")}>
+                          {t("detail.scroll.section.evidenceChain")} &rarr;
+                        </Button>
                       </div>
                     </div>
 
-                    <div className="space-y-4">
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                        <MetricCard label={t("report.textCountSuffix")} value={String(analysis.text_count)} />
-                        <MetricCard label={t("detail.scroll.sourceGroups")} value={String(analysis.author_count)} />
-                        <MetricCard label={t("detail.scroll.evidenceCount")} value={String(report.evidence_items.length)} />
-                        <MetricCard label={t("detail.scroll.clusterCount")} value={String(report.cluster_view?.clusters.length ?? 0)} />
-                      </div>
-                      <div className="rounded-2xl border border-border/60 bg-background/80 p-5">
-                        <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          {t("detail.scroll.nextStep")}
+                    <div className="rounded-[24px] border border-border/45 bg-muted/10 p-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <ReportMetaLabel>{t("detail.scroll.subjectivePortrait")}</ReportMetaLabel>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            {t("detail.scroll.subjectivePortraitHint")}
+                          </p>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Button asChild size="sm" variant="outline">
-                            <Link href={`/analyses/features?id=${encodeURIComponent(analysis.id)}`}>
-                              {t("detail.scroll.openFeatureWorkbench")}
-                            </Link>
-                          </Button>
-                          {report.anomaly_samples.length > 0 && (
-                            <Button size="sm" variant="ghost" onClick={() => scrollToSection("cluster-view")}>
-                              {t("detail.scroll.openAnomalyView")}
-                            </Button>
-                          )}
-                        </div>
+                        <Badge variant="outline">{t("detail.scroll.subjectivePortraitBadge")}</Badge>
                       </div>
+
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {subjectivePortrait.map((cue) => (
+                          <PortraitCueCard
+                            key={cue.title}
+                            title={cue.title}
+                            value={cue.value}
+                            detail={cue.detail}
+                            tone={cue.tone}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {leadProfile?.headline && <Badge variant="outline">{leadProfile.headline}</Badge>}
+                        {leadCluster?.label && <Badge variant="outline">{leadCluster.label}</Badge>}
+                        {fragmentedClusterCount > 0 && (
+                          <Badge variant="outline">
+                            {t("detail.scroll.isolatedClusters", { count: fragmentedClusterCount })}
+                          </Badge>
+                        )}
+                      </div>
+
+                      <p className="mt-3 text-[11px] leading-5 text-muted-foreground/85">
+                        {t("detail.scroll.subjectivePortraitCaveat")}
+                      </p>
                     </div>
                   </div>
                 </section>
+                </RevealOnScroll>
               );
             }
 
             if (section.key === "conclusion-rail") {
               return (
+                <RevealOnScroll key={section.key}>
                 <section
-                  key={section.key}
                   ref={(node) => {
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className="rounded-[28px] border border-border/70 bg-card/96 p-6"
+                  className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
-                  <div className="space-y-4">
+                  <div className="space-y-2.5">
                     {report.conclusions.map((conclusion) => {
-                      const percent = certainty(conclusion);
+                      const percent = conclusionCertaintyPercent(conclusion);
                       const tone = conclusionTone(conclusion.grade);
                       const focused = isConclusionFocused(conclusion);
                       return (
@@ -1048,13 +1139,13 @@ export function ForensicScroll({
                           type="button"
                           onClick={() => openDrawer({ kind: "conclusion", conclusion }, "conclusion-rail")}
                           className={cn(
-                            "w-full rounded-2xl border border-border/60 bg-background/80 p-5 text-left transition-colors",
-                            focused ? "opacity-100" : "opacity-35",
-                            focus && focused && "border-foreground/20",
+                            "w-full rounded-[22px] border border-transparent bg-muted/15 px-4 py-3.5 text-left transition-colors hover:bg-muted/24 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                            focused ? "opacity-100" : "opacity-50",
+                            focus && focused && "border-foreground/10 ring-1 ring-foreground/12",
                           )}
                         >
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0 space-y-2">
+                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_92px] md:items-center">
+                            <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
                                 <Badge variant="outline" className={tone.badgeClass}>
                                   {t(`detail.scroll.grade.${conclusion.grade}`)}
@@ -1064,377 +1155,523 @@ export function ForensicScroll({
                                   <Badge variant="outline">{conclusion.counter_evidence.length} {t("detail.scroll.counterSignals")}</Badge>
                                 )}
                               </div>
-                              <div className="text-lg font-semibold text-foreground">
-                                {conclusion.subject || conclusion.statement}
+                              <div className="mt-2 flex items-start gap-3">
+                                <span className={cn("mt-1 h-8 w-1 shrink-0 rounded-full", tone.barClass)} />
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-foreground">
+                                    {conclusion.subject || conclusion.statement}
+                                  </div>
+                                  {conclusion.subject && (
+                                    <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
+                                      {conclusion.statement}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                              <p className="text-sm leading-7 text-muted-foreground">
-                                {conclusion.statement}
-                              </p>
                             </div>
-                            <div className={cn("shrink-0 text-2xl font-semibold", tone.valueClass)}>
-                              {percent}%
+                            <div className="flex items-center justify-between gap-3 md:block md:text-right">
+                              <div className={cn("text-lg font-semibold tabular-nums md:text-xl", tone.valueClass)}>
+                                {percent}%
+                              </div>
+                              <div className="h-1.5 w-20 rounded-full bg-muted md:ml-auto md:mt-2">
+                                <div className={cn("h-1.5 rounded-full", tone.barClass)} style={{ width: `${percent}%` }} />
+                              </div>
                             </div>
-                          </div>
-                          <div className="mt-4 h-2 rounded-full bg-muted">
-                            <div className={cn("h-2 rounded-full", tone.barClass)} style={{ width: `${percent}%` }} />
                           </div>
                         </button>
                       );
                     })}
                   </div>
                 </section>
+                </RevealOnScroll>
               );
             }
 
             if (section.key === "evidence-chain") {
               return (
+                <RevealOnScroll key={section.key}>
                 <section
-                  key={section.key}
                   ref={(node) => {
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
                   className={cn(
-                    "rounded-[28px] border border-border/70 bg-card/96 p-6",
-                    lenses.feature && "border-dashed border-indigo-400/45",
+                    "rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6",
                   )}
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
-                  <div className="overflow-x-auto">
-                    <div className="min-w-[760px] space-y-5">
-                      <div className="grid gap-3" style={{ gridTemplateColumns: `minmax(320px,1.1fr) repeat(${evidenceScopeTextIds.length}, minmax(64px, 1fr))` }}>
-                        <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                          {t("detail.scroll.evidenceSummary")}
-                        </div>
-                        {evidenceScopeTextIds.map((textId) => (
-                          <button
-                            key={`column-${textId}`}
-                            type="button"
-                            onClick={() =>
-                              openDrawer(
-                                { kind: "text", textId },
-                                "evidence-chain",
-                                { entityType: "text", entityId: textId, source: "evidence-chain" },
-                              )
-                            }
-                            className={cn(
-                              "rounded-lg border border-border/60 px-2 py-2 text-center text-xs text-muted-foreground transition-colors",
-                              isTextFocused(textId) ? "opacity-100" : "opacity-30",
-                            )}
-                          >
-                            <div className="font-medium text-foreground">{textMetaMap.get(textId)?.alias ?? textId}</div>
-                            <div className="mt-1 truncate">{textMetaMap.get(textId)?.group ?? textId}</div>
-                          </button>
-                        ))}
-                      </div>
-
-                      {(["core", "supporting", "conflicting"] as const).map((strength) =>
-                        groupedEvidence[strength].length > 0 ? (
-                          <div key={strength} className="space-y-3">
-                            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                              {t(`detail.scroll.strength.${strength}`)}
-                            </div>
-                            {groupedEvidence[strength].map((item) => (
-                              <div
-                                key={item.evidence_id}
-                                className={cn(
-                                  "grid gap-3 rounded-2xl border border-border/60 bg-background/80 p-4 transition-colors",
-                                  isEvidenceFocused(item) ? "opacity-100" : "opacity-35",
-                                )}
-                                style={{ gridTemplateColumns: `minmax(320px,1.1fr) repeat(${evidenceScopeTextIds.length}, minmax(64px, 1fr))` }}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => openDrawer({ kind: "evidence", evidence: item }, "evidence-chain")}
-                                  className="space-y-2 text-left"
-                                >
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <Badge variant="outline">{item.evidence_id}</Badge>
-                                    <div className="text-sm font-semibold text-foreground">{item.label}</div>
-                                  </div>
-                                  <p className="text-sm leading-7 text-muted-foreground">
-                                    {item.finding || item.summary}
-                                  </p>
-                                  {lenses.feature && item.source_text_ids[0] && renderFeatureSignature(item.source_text_ids[0])}
-                                </button>
-                                {evidenceScopeTextIds.map((textId) => {
-                                  const isDirect = item.source_text_ids.includes(textId);
-                                  const sharesCluster =
-                                    !isDirect &&
-                                    clusterByTextId.get(textId) != null &&
-                                    item.source_text_ids.some(
-                                      (sourceTextId) => clusterByTextId.get(sourceTextId) === clusterByTextId.get(textId),
-                                    );
-                                  const anomaly = anomaliesByTextId.get(textId);
-                                  return (
-                                    <Tooltip key={`${item.evidence_id}-${textId}`}>
-                                      <TooltipTrigger asChild>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            openDrawer(
-                                              { kind: "text", textId },
-                                              "evidence-cell",
-                                              { entityType: "text", entityId: textId, source: "evidence-cell" },
-                                            )
-                                          }
-                                          className={cn(
-                                            "flex min-h-16 items-center justify-center rounded-xl border border-border/60 transition-colors",
-                                            isDirect && "border-amber-300/70 bg-amber-50 dark:border-amber-500/35 dark:bg-amber-500/10",
-                                            !isDirect && sharesCluster && lenses.cluster && "border-emerald-300/70 bg-emerald-50 dark:border-emerald-500/35 dark:bg-emerald-500/10",
-                                            anomaly && lenses.anomaly && "outline outline-1 outline-red-400",
-                                            !isTextFocused(textId) && "opacity-30",
-                                          )}
-                                        >
-                                          <span
-                                            className={cn(
-                                              "h-3 w-3 rounded-full border",
-                                              isDirect
-                                                ? "border-amber-500 bg-amber-500"
-                                                : sharesCluster && lenses.cluster
-                                                  ? "border-emerald-500 bg-transparent"
-                                                  : "border-muted-foreground/35 bg-transparent",
-                                            )}
-                                          />
-                                        </button>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        <div className="max-w-56 space-y-1">
-                                          <div className="font-medium">{textMetaMap.get(textId)?.alias ?? textId}</div>
-                                          <div>{item.why_it_matters || item.summary}</div>
-                                          {item.counter_readings?.[0] && (
-                                            <div className="text-muted-foreground">
-                                              {item.counter_readings[0]}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  );
-                                })}
-                              </div>
-                            ))}
-                          </div>
-                        ) : null,
-                      )}
-                    </div>
-                  </div>
+                  <EvidenceAppendix
+                    report={report}
+                    textMetaMap={textMetaMap}
+                    anomaliesByTextId={anomaliesByTextId}
+                    isEvidenceFocused={isEvidenceFocused}
+                    isTextFocused={isTextFocused}
+                    isConclusionFocused={isConclusionFocused}
+                    onOpenEvidence={(item, source) => {
+                      openDrawer({ kind: "evidence", evidence: item }, source);
+                    }}
+                    onOpenText={(textId, source) => {
+                      openDrawer(
+                        { kind: "text", textId },
+                        source,
+                        { entityType: "text", entityId: textId, source },
+                      );
+                    }}
+                    onOpenConclusion={(conclusion, source) => {
+                      openDrawer(
+                        { kind: "conclusion", conclusion },
+                        source,
+                        { entityType: "conclusion", entityId: conclusion.key, source },
+                      );
+                    }}
+                  />
                 </section>
+                </RevealOnScroll>
               );
             }
 
             if (section.key === "writing-profiles") {
-              const chartWidth = Math.max(760, profileDimensions.length * 120);
-              const chartHeight = 300;
-              const axisYTop = 26;
-              const axisYBottom = chartHeight - 44;
-              const xStep = profileDimensions.length > 1 ? (chartWidth - 80) / (profileDimensions.length - 1) : 0;
-              const axisX = profileDimensions.map((_, index) => 40 + xStep * index);
+              const activeProfile =
+                report.writing_profiles.find(
+                  (profile) => focus?.entityType === "profile" && profile.subject === focus.entityId,
+                ) ??
+                report.writing_profiles.find((profile) => isProfileFocused(profile)) ??
+                report.writing_profiles[0];
+              const activeProfileIndex = Math.max(
+                0,
+                report.writing_profiles.findIndex((profile) => profile.subject === activeProfile?.subject),
+              );
+              const activeColor = PROFILE_COLORS[activeProfileIndex % PROFILE_COLORS.length];
+              const activeCluster =
+                activeProfile ? profileClusterMap.get(activeProfile.subject) : null;
+              const flaggedProfilesCount = report.writing_profiles.filter(
+                (profile) => (profile.anomalies?.length ?? 0) > 0,
+              ).length;
+              const activeDimensionRows = [...(activeProfile?.dimensions ?? [])].sort((first, second) => {
+                if (first.dimension_type !== second.dimension_type) {
+                  return first.dimension_type === "observable" ? -1 : 1;
+                }
+                if (second.confidence !== first.confidence) {
+                  return second.confidence - first.confidence;
+                }
+                return second.score - first.score;
+              });
+              const observableDimensionCount = activeDimensionRows.filter(
+                (dimension) => dimension.dimension_type === "observable",
+              ).length;
+              const evidenceSpanCount = activeDimensionRows.reduce(
+                (sum, dimension) => sum + dimension.evidence_spans.length,
+                0,
+              );
+              const counterSignalCount = activeDimensionRows.reduce(
+                (sum, dimension) => sum + dimension.counter_evidence.length,
+                0,
+              );
+              const multiProfileMode = report.writing_profiles.length > 1;
               return (
+                <RevealOnScroll key={section.key}>
                 <section
-                  key={section.key}
                   ref={(node) => {
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
                   className={cn(
-                    "rounded-[28px] border border-border/70 bg-card/96 p-6",
-                    lenses.cluster && "border-dashed border-emerald-400/45",
+                    "rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6",
                   )}
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
-                  {report.writing_profiles.length > 0 && profileDimensions.length > 0 ? (
-                    <div className="space-y-5">
-                      <div className="overflow-x-auto rounded-2xl border border-border/60 bg-background/80 p-4">
-                        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="min-w-full">
-                          {profileDimensions.map((dimension, index) => (
-                            <g key={dimension.key}>
-                              <line
-                                x1={axisX[index]}
-                                x2={axisX[index]}
-                                y1={axisYTop}
-                                y2={axisYBottom}
-                                stroke="currentColor"
-                                opacity={0.18}
-                              />
-                              <text
-                                x={axisX[index]}
-                                y={chartHeight - 16}
-                                textAnchor="middle"
-                                fontSize="11"
-                                fill="currentColor"
-                              >
-                                {dimension.label}
-                              </text>
-                            </g>
-                          ))}
+                  {report.writing_profiles.length > 0 && activeDimensionRows.length > 0 ? (
+                    <div className={cn("grid gap-4", multiProfileMode && "xl:grid-cols-[248px_minmax(0,1fr)]")}>
+                      {multiProfileMode && (
+                        <aside className="space-y-3">
+                          <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                            <MetricCard
+                              label={t("detail.scroll.profileCount")}
+                              value={String(report.writing_profiles.length)}
+                            />
+                            <MetricCard
+                              label={t("detail.scroll.drawer.dimensionCount")}
+                              value={String(activeDimensionRows.length)}
+                            />
+                            <MetricCard
+                              label={t("detail.scroll.anomalyWatch")}
+                              value={String(flaggedProfilesCount)}
+                            />
+                          </div>
 
-                          {report.writing_profiles.map((profile, profileIndex) => {
-                            const points = profileDimensions.map((dimension, index) => {
-                              const current = profile.dimensions.find((item) => item.key === dimension.key);
-                              const score = current?.score ?? 0;
-                              const y = axisYBottom - (Math.max(0, Math.min(100, score)) / 100) * (axisYBottom - axisYTop);
-                              return `${axisX[index]},${y}`;
-                            });
-                            const clusterId = profileClusterMap.get(profile.subject) ?? null;
-                            const color = lenses.cluster && clusterId != null
-                              ? clusterPalette.get(clusterId) ?? PROFILE_COLORS[profileIndex % PROFILE_COLORS.length]
-                              : PROFILE_COLORS[profileIndex % PROFILE_COLORS.length];
-                            return (
-                              <g key={profile.subject} opacity={isProfileFocused(profile) ? 1 : 0.25}>
-                                <polyline
-                                  points={points.join(" ")}
-                                  fill="none"
-                                  stroke={color}
-                                  strokeWidth="2.5"
-                                  onClick={() => openDrawer({ kind: "profile", profile }, "writing-profiles")}
-                                  className="cursor-pointer"
-                                />
-                                {points.map((point, index) => {
-                                  const [cx, cy] = point.split(",").map(Number);
-                                  return (
-                                    <circle
-                                      key={`${profile.subject}-${profileDimensions[index]?.key}`}
-                                      cx={cx}
-                                      cy={cy}
-                                      r="4"
-                                      fill={color}
-                                      className="cursor-pointer"
-                                      onClick={() => openDrawer({ kind: "profile", profile }, "writing-profiles")}
-                                    />
-                                  );
-                                })}
-                              </g>
-                            );
-                          })}
-                        </svg>
-                      </div>
+                          <div className="rounded-[20px] bg-muted/15 p-3">
+                            <ReportMetaLabel>{t("detail.scroll.profileIndex")}</ReportMetaLabel>
+                            <div className="mt-2 space-y-2">
+                              {report.writing_profiles.map((profile, index) => {
+                                const profileCluster = profileClusterMap.get(profile.subject);
+                                const anomalyCount = profile.anomalies?.length ?? 0;
+                                const selected = profile.subject === activeProfile?.subject;
+                                return (
+                                  <button
+                                    key={profile.subject}
+                                    type="button"
+                                    onClick={() => openDrawer({ kind: "profile", profile }, "writing-profile-index")}
+                                    className={cn(
+                                      "w-full rounded-[16px] border border-transparent bg-background/40 px-3 py-2.5 text-left transition-colors hover:bg-background/70 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                                      selected && "border-border/70 bg-background/78",
+                                      !selected &&
+                                        (isProfileFocused(profile) ? "opacity-100" : "opacity-50"),
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span
+                                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                            style={{
+                                              backgroundColor:
+                                                PROFILE_COLORS[index % PROFILE_COLORS.length],
+                                            }}
+                                          />
+                                          <div className="truncate text-sm font-semibold text-foreground">
+                                            {profile.headline || profile.subject}
+                                          </div>
+                                        </div>
+                                        <div className="mt-1 truncate text-xs text-muted-foreground">
+                                          {profileCluster != null
+                                            ? `${t("detail.scroll.drawer.cluster")} ${profileCluster}`
+                                            : t("detail.scroll.notSpecified")}
+                                        </div>
+                                      </div>
+                                      <div className="text-right text-xs text-muted-foreground">
+                                        <div>{profile.representative_text_ids?.length ?? 0}</div>
+                                        {anomalyCount > 0 && (
+                                          <div className="mt-1 text-red-300">{anomalyCount}</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </aside>
+                      )}
 
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {report.writing_profiles.map((profile, index) => {
-                          const clusterId = profileClusterMap.get(profile.subject) ?? null;
-                          return (
-                            <button
-                              key={profile.subject}
-                              type="button"
-                              onClick={() => openDrawer({ kind: "profile", profile }, "writing-profile-list")}
-                              className={cn(
-                                "rounded-2xl border border-border/60 bg-background/80 p-4 text-left transition-colors",
-                                isProfileFocused(profile) ? "opacity-100" : "opacity-35",
-                              )}
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-base font-semibold text-foreground">
-                                  {profile.headline || profile.subject}
-                                </div>
-                                <span
-                                  className="h-3 w-3 rounded-full"
-                                  style={{
-                                    backgroundColor:
-                                      lenses.cluster && clusterId != null
-                                        ? clusterPalette.get(clusterId) ?? PROFILE_COLORS[index % PROFILE_COLORS.length]
-                                        : PROFILE_COLORS[index % PROFILE_COLORS.length],
-                                  }}
-                                />
+                      <div className="space-y-3">
+                        <div className="rounded-[20px] bg-muted/15 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-base font-semibold text-foreground">
+                                {activeProfile?.headline || activeProfile?.subject}
                               </div>
-                              <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                                {profile.observable_summary || profile.summary}
-                              </p>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {(profile.stable_habits ?? []).slice(0, 2).map((habit) => (
-                                  <Badge key={habit} variant="outline">
-                                    {habit}
-                                  </Badge>
-                                ))}
-                                {lenses.cluster && clusterId != null && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {activeProfile?.headline && (
+                                  <Badge variant="outline">{activeProfile.subject}</Badge>
+                                )}
+                                {activeCluster != null && (
                                   <Badge variant="outline">
-                                    Cluster {clusterId}
+                                    {t("detail.scroll.drawer.cluster")} {activeCluster}
+                                  </Badge>
+                                )}
+                                <Badge variant="outline">
+                                  {activeProfile?.representative_text_ids?.length ?? 0}{" "}
+                                  {t("detail.scroll.drawer.representativeTexts")}
+                                </Badge>
+                                <Badge variant="outline">
+                                  {t("detail.scroll.observableDimensions", { count: observableDimensionCount })}
+                                </Badge>
+                                {(activeProfile?.anomalies?.length ?? 0) > 0 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-red-300/60 text-red-700 dark:border-red-500/35 dark:text-red-300"
+                                  >
+                                    {activeProfile?.anomalies?.length ?? 0}{" "}
+                                    {t("detail.scroll.anomalyWatch")}
                                   </Badge>
                                 )}
                               </div>
-                            </button>
-                          );
-                        })}
+                            </div>
+                            <span
+                              className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full"
+                              style={{ backgroundColor: activeColor }}
+                            />
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                            {activeProfile?.observable_summary || activeProfile?.summary}
+                          </p>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                            {[
+                              [t("detail.scroll.drawer.dimensionCount"), String(activeDimensionRows.length)],
+                              [t("detail.scroll.evidenceSpans"), String(evidenceSpanCount)],
+                              [t("detail.scroll.counterSignals"), String(counterSignalCount)],
+                              [t("report.confidence"), `${Math.round((activeDimensionRows[0]?.confidence ?? 0) * 100)}%`],
+                            ].map(([label, value]) => (
+                              <div
+                                key={`${label}-${value}`}
+                                className="rounded-[14px] border border-border/35 bg-background/35 px-3 py-2.5"
+                              >
+                                <ReportMetaLabel>{label}</ReportMetaLabel>
+                                <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
+                              </div>
+                            ))}
+                          </div>
+                          {activeProfile?.confidence_note && (
+                            <p className="mt-3 text-xs italic leading-5 text-muted-foreground/85">
+                              {activeProfile.confidence_note}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="rounded-[20px] bg-muted/15 p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <ReportMetaLabel>{t("detail.scroll.dimensionLedger")}</ReportMetaLabel>
+                            <div className="text-xs text-muted-foreground">
+                              {t("detail.scroll.dimensionCount2", { count: activeDimensionRows.length })}
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                            {activeDimensionRows.map((dimension) => (
+                              <ProfileDimensionLedgerCard
+                                key={`${activeProfile?.subject}-${dimension.key}`}
+                                dimension={dimension}
+                                color={activeColor}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid gap-2 xl:grid-cols-3">
+                          <CompactSignalPanel
+                            title={t("detail.scroll.drawer.stableHabits")}
+                            items={(activeProfile?.stable_habits ?? []).slice(0, 4)}
+                          />
+                          <CompactSignalPanel
+                            title={t("detail.scroll.drawer.processClues")}
+                            items={(activeProfile?.process_clues ?? []).slice(0, 4)}
+                          />
+                          <CompactSignalPanel
+                            title={t("detail.scroll.drawer.anomalyWatch")}
+                            items={(activeProfile?.anomalies ?? []).slice(0, 4)}
+                            tone="warning"
+                          />
+                        </div>
+
+                        {(activeProfile?.representative_text_ids?.length ?? 0) > 0 && (
+                          <section className="rounded-[20px] bg-muted/15 p-3.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <ReportMetaLabel>{t("detail.scroll.relatedTexts")}</ReportMetaLabel>
+                              <div className="text-xs text-muted-foreground">
+                                {activeProfile?.representative_text_ids?.length ?? 0}
+                              </div>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {(activeProfile?.representative_text_ids ?? []).map((textId) => (
+                                <Button
+                                  key={`${activeProfile?.subject}-${textId}`}
+                                  variant="outline"
+                                  size="xs"
+                                  onClick={() =>
+                                    openDrawer(
+                                      { kind: "text", textId },
+                                      "writing-profile-texts",
+                                      {
+                                        entityType: "text",
+                                        entityId: textId,
+                                        source: "writing-profile-texts",
+                                      },
+                                    )
+                                  }
+                                >
+                                  {textMetaMap.get(textId)?.alias ?? textId}
+                                </Button>
+                              ))}
+                            </div>
+                          </section>
+                        )}
                       </div>
                     </div>
                   ) : (
                     <EmptyBlock label={t("detail.scroll.empty")} />
                   )}
                 </section>
+                </RevealOnScroll>
               );
             }
 
             if (section.key === "cluster-view") {
+              const clusters = report.cluster_view?.clusters ?? [];
+              const maxClusterMembers = Math.max(
+                1,
+                ...clusters.map((cluster) => cluster.member_text_ids.length),
+              );
+              const comparedAnomalyCount = visibleClusterTextIds.filter((textId) => anomaliesByTextId.has(textId)).length;
               return (
+                <RevealOnScroll key={section.key}>
                 <section
-                  key={section.key}
                   ref={(node) => {
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className={cn(
-                    "rounded-[28px] border border-border/70 bg-card/96 p-6",
-                    lenses.anomaly && "border-dashed border-red-400/45",
-                  )}
+                  className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
-                  {(report.cluster_view?.clusters.length ?? 0) > 0 ? (
+                  {clusters.length > 0 ? (
                     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
                       <div className="space-y-4">
-                        <div className="overflow-x-auto rounded-2xl border border-border/60 bg-background/80 p-4">
-                          <div
-                            className="inline-grid gap-1"
-                            style={{ gridTemplateColumns: `repeat(${visibleClusterTextIds.length}, 26px)` }}
-                          >
-                            {clusterSimilarity.flatMap((row, rowIndex) =>
-                              row.map((value, columnIndex) => {
+                        <div className="grid gap-4 xl:grid-cols-[minmax(340px,0.96fr)_minmax(220px,0.74fr)]">
+                          <div className="overflow-x-auto rounded-[22px] bg-muted/15 p-4">
+                            <div
+                              className="inline-grid gap-1.5"
+                              style={{
+                                gridTemplateColumns: `72px repeat(${visibleClusterTextIds.length}, 30px)`,
+                              }}
+                            >
+                              <div />
+                              {visibleClusterTextIds.map((textId) => (
+                                <button
+                                  key={`cluster-column-${textId}`}
+                                  type="button"
+                                  onClick={() =>
+                                    openDrawer(
+                                      { kind: "text", textId },
+                                      "cluster-heatmap-label",
+                                      { entityType: "text", entityId: textId, source: "cluster-heatmap-label" },
+                                    )
+                                  }
+                                  className={cn(
+                                    "truncate px-1 text-center text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground",
+                                    isTextFocused(textId) ? "opacity-100" : "opacity-55",
+                                  )}
+                                >
+                                  {textMetaMap.get(textId)?.alias ?? textId}
+                                </button>
+                              ))}
+
+                              {clusterSimilarity.flatMap((row, rowIndex) => {
                                 const firstId = visibleClusterTextIds[rowIndex];
-                                const secondId = visibleClusterTextIds[columnIndex];
-                                const pairSelected =
-                                  focus?.entityType === "text" &&
-                                  (focus.entityId === firstId || focus.entityId === secondId);
+                                return [
+                                  <button
+                                    key={`cluster-row-${firstId}`}
+                                    type="button"
+                                    onClick={() =>
+                                      openDrawer(
+                                        { kind: "text", textId: firstId },
+                                        "cluster-heatmap-label",
+                                        { entityType: "text", entityId: firstId, source: "cluster-heatmap-label" },
+                                      )
+                                    }
+                                    className={cn(
+                                      "truncate pr-2 text-right text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
+                                      isTextFocused(firstId) ? "opacity-100" : "opacity-55",
+                                    )}
+                                  >
+                                    {textMetaMap.get(firstId)?.alias ?? firstId}
+                                  </button>,
+                                  ...row.map((value, columnIndex) => {
+                                    const secondId = visibleClusterTextIds[columnIndex];
+                                    const pairSelected =
+                                      focus?.entityType === "text" &&
+                                      (focus.entityId === firstId || focus.entityId === secondId);
+                                    return (
+                                      <Tooltip key={`${firstId}-${secondId}`}>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              openDrawer(
+                                                { kind: "text", textId: firstId },
+                                                "cluster-heatmap",
+                                                { entityType: "text", entityId: firstId, source: "cluster-heatmap" },
+                                              )
+                                            }
+                                            className={cn(
+                                              "h-7 w-7 rounded-[8px] transition-opacity",
+                                              pairSelected ? "opacity-100" : focus ? "opacity-40" : "opacity-100",
+                                            )}
+                                            style={{ backgroundColor: heatColor(value) }}
+                                          />
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          <div className="space-y-1">
+                                            <div>
+                                              {textMetaMap.get(firstId)?.alias ?? firstId} ↔ {textMetaMap.get(secondId)?.alias ?? secondId}
+                                            </div>
+                                            <div>{value.toFixed(3)}</div>
+                                          </div>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    );
+                                  }),
+                                ];
+                              })}
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap items-center gap-3">
+                              {[0.54, 0.72, 0.9].map((value) => (
+                                <div key={value} className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                                  <span
+                                    className="h-3 w-3 rounded-[4px]"
+                                    style={{ backgroundColor: heatColor(value) }}
+                                  />
+                                  <span>{value.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="rounded-[22px] bg-muted/15 p-4">
+                            <div className="space-y-3">
+                              {clusters.map((cluster) => {
+                                const anomalyCount = cluster.member_text_ids.filter((textId) => anomaliesByTextId.has(textId)).length;
+                                const share = `${(cluster.member_text_ids.length / maxClusterMembers) * 100}%`;
                                 return (
-                                  <Tooltip key={`${firstId}-${secondId}`}>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          openDrawer(
-                                            { kind: "text", textId: firstId },
-                                            "cluster-heatmap",
-                                            { entityType: "text", entityId: firstId, source: "cluster-heatmap" },
-                                          )
-                                        }
-                                        className={cn(
-                                          "h-6 w-6 rounded-[6px] border border-border/50 transition-opacity",
-                                          pairSelected ? "opacity-100" : focus ? "opacity-40" : "opacity-100",
-                                        )}
-                                        style={{ backgroundColor: heatColor(value) }}
-                                      />
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      <div className="space-y-1">
-                                        <div>
-                                          {textMetaMap.get(firstId)?.alias ?? firstId} ↔ {textMetaMap.get(secondId)?.alias ?? secondId}
-                                        </div>
-                                        <div>{value.toFixed(3)}</div>
+                                  <button
+                                    key={`cluster-strip-${cluster.cluster_id}`}
+                                    type="button"
+                                    onClick={() => openDrawer({ kind: "cluster", cluster }, "cluster-strip")}
+                                    className={cn(
+                                      "w-full rounded-xl px-3 py-3 text-left transition-colors hover:bg-muted/35",
+                                      isClusterFocused(cluster) ? "bg-background/50" : "bg-transparent",
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="truncate text-sm font-semibold text-foreground">
+                                        {cluster.label}
                                       </div>
-                                    </TooltipContent>
-                                  </Tooltip>
+                                      <span className="text-sm font-semibold text-foreground">
+                                        {cluster.member_text_ids.length}
+                                      </span>
+                                    </div>
+                                    <div className="mt-2 h-1.5 rounded-full bg-muted">
+                                      <div
+                                        className="h-1.5 rounded-full bg-emerald-500"
+                                        style={{ width: share }}
+                                      />
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {(cluster.top_markers ?? []).slice(0, 2).map((marker) => (
+                                        <Badge key={`${cluster.cluster_id}-${marker}`} variant="outline">
+                                          {marker}
+                                        </Badge>
+                                      ))}
+                                      {anomalyCount > 0 && (
+                                        <Badge variant="outline" className="border-red-300/60 text-red-700 dark:border-red-500/35 dark:text-red-300">
+                                          {anomalyCount} {t("detail.scroll.anomalyWatch")}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </button>
                                 );
-                              }),
-                            )}
+                              })}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="grid gap-3 sm:grid-cols-3">
                           <MetricCard label={t("detail.scroll.samplesCompared")} value={String(visibleClusterTextIds.length)} />
-                          <MetricCard label={t("detail.scroll.clusterCount")} value={String(report.cluster_view?.clusters.length ?? 0)} />
+                          <MetricCard label={t("detail.scroll.clusterCount")} value={String(clusters.length)} />
+                          <MetricCard label={t("detail.scroll.anomalyWatch")} value={String(comparedAnomalyCount)} />
                         </div>
                       </div>
 
-                      <div className="space-y-3 rounded-2xl border border-border/60 bg-background/80 p-4">
-                        {(report.cluster_view?.clusters ?? []).map((cluster) => {
+                      <div className="space-y-3">
+                        {clusters.map((cluster) => {
                           const anomalyCount = cluster.member_text_ids.filter((textId) => anomaliesByTextId.has(textId)).length;
                           return (
                             <button
@@ -1442,8 +1679,8 @@ export function ForensicScroll({
                               type="button"
                               onClick={() => openDrawer({ kind: "cluster", cluster }, "cluster-view")}
                               className={cn(
-                                "w-full rounded-xl border border-border/60 p-4 text-left transition-colors",
-                                isClusterFocused(cluster) ? "opacity-100" : "opacity-35",
+                                "w-full rounded-[22px] bg-muted/15 p-4 text-left transition-colors hover:bg-muted/28 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                                isClusterFocused(cluster) ? "opacity-100" : "opacity-50",
                               )}
                             >
                               <div className="flex items-center justify-between gap-3">
@@ -1459,7 +1696,7 @@ export function ForensicScroll({
                                     {marker}
                                   </Badge>
                                 ))}
-                                {lenses.anomaly && anomalyCount > 0 && (
+                                {anomalyCount > 0 && (
                                   <Badge variant="outline" className="border-red-300/60 text-red-700 dark:border-red-500/35 dark:text-red-300">
                                     {anomalyCount} {t("detail.scroll.anomalyWatch")}
                                   </Badge>
@@ -1474,27 +1711,29 @@ export function ForensicScroll({
                     <EmptyBlock label={t("detail.scroll.empty")} />
                   )}
                 </section>
+                </RevealOnScroll>
               );
             }
 
             if (section.key === "narrative-spine") {
               const narrativeSections = report.narrative?.sections ?? [];
               const activeSection = narrativeSections.find((item) => item.key === activeNarrativeKey) ?? narrativeSections[0];
+              const sectionEvidence = (activeSection?.evidence_ids ?? [])
+                .map((evidenceId) => evidenceById.get(evidenceId))
+                .filter((item): item is EvidenceItem => Boolean(item));
               const relatedTextIds = Array.from(
                 new Set(
-                  (activeSection?.evidence_ids ?? []).flatMap(
-                    (evidenceId) => evidenceById.get(evidenceId)?.source_text_ids ?? [],
-                  ),
+                  sectionEvidence.flatMap((item) => item.source_text_ids),
                 ),
               );
               return (
+                <RevealOnScroll key={section.key}>
                 <section
-                  key={section.key}
                   ref={(node) => {
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className="rounded-[28px] border border-border/70 bg-card/96 p-6"
+                  className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
                   {narrativeSections.length > 0 ? (
@@ -1506,10 +1745,10 @@ export function ForensicScroll({
                             type="button"
                             onClick={() => setActiveNarrativeKey(sectionItem.key)}
                             className={cn(
-                              "flex w-full gap-3 rounded-xl border px-3 py-3 text-left transition-colors",
+                              "flex w-full gap-3 rounded-xl px-3 py-3 text-left transition-colors",
                               activeSection?.key === sectionItem.key
-                                ? "border-slate-400/45 bg-slate-50 text-foreground dark:bg-slate-500/10"
-                                : "border-border/60 bg-background/80 text-muted-foreground hover:text-foreground",
+                                ? "bg-slate-50 text-foreground dark:bg-slate-500/10"
+                                : "bg-muted/25 text-muted-foreground hover:bg-muted/40 hover:text-foreground",
                             )}
                           >
                             <span
@@ -1520,9 +1759,7 @@ export function ForensicScroll({
                               }}
                             />
                             <div className="space-y-1">
-                              <div className="text-xs uppercase tracking-[0.16em]">
-                                {index + 1}
-                              </div>
+                              <ReportMetaLabel>{t("detail.scroll.sectionIndex", { index: index + 1 })}</ReportMetaLabel>
                               <div className="font-medium">{sectionItem.title}</div>
                               <div className="text-sm leading-6">
                                 {humanizeNarrative(sectionItem.summary)}
@@ -1532,68 +1769,86 @@ export function ForensicScroll({
                         ))}
                       </div>
 
-                      {activeSection ? (
-                        <div className="rounded-2xl border border-border/60 bg-background/80 p-5">
-                          <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                            {activeSection.title}
-                          </div>
-                          <div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-foreground/88">
-                            {humanizeNarrative(activeSection.detail || activeSection.summary)}
-                          </div>
-                          {relatedTextIds.length > 0 && (
-                            <div className="mt-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                                {t("detail.scroll.relatedTexts")}
-                              </div>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {relatedTextIds.map((textId) => (
-                                  <Button
-                                    key={textId}
-                                    variant="outline"
-                                    size="xs"
-                                    onClick={() =>
+                      <AnimatePresence mode="wait">
+                        {activeSection ? (
+                          <motion.div
+                            key={activeSection.key}
+                            variants={FADE_VARIANTS}
+                            initial="initial"
+                            animate="animate"
+                            exit="exit"
+                            transition={TRANSITION_ENTER}
+                            className="rounded-2xl bg-muted/15 p-5"
+                          >
+                            <ReportMetaLabel>{activeSection.title}</ReportMetaLabel>
+                            <div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-foreground/88">
+                              {humanizeNarrative(activeSection.detail || activeSection.summary)}
+                            </div>
+                            {relatedTextIds.length > 0 && (
+                              <div className="mt-5">
+                                <ReportMetaLabel>{t("detail.scroll.relatedTexts")}</ReportMetaLabel>
+                                <div className="mt-3">
+                                  <NarrativeTopologyGraph
+                                    sectionTitle={activeSection.title}
+                                    evidenceItems={sectionEvidence}
+                                    relatedTextIds={relatedTextIds}
+                                    textMetaMap={textMetaMap}
+                                    clusterByTextId={clusterByTextId}
+                                    isTextFocused={isTextFocused}
+                                    isEvidenceFocused={isEvidenceFocused}
+                                    onOpenText={(textId) =>
                                       openDrawer(
                                         { kind: "text", textId },
-                                        "narrative-spine",
-                                        { entityType: "text", entityId: textId, source: "narrative-spine" },
+                                        "narrative-topology",
+                                        { entityType: "text", entityId: textId, source: "narrative-topology" },
                                       )
                                     }
-                                  >
-                                    {textMetaMap.get(textId)?.alias ?? textId}
-                                  </Button>
-                                ))}
+                                    onOpenEvidence={(evidence) =>
+                                      openDrawer(
+                                        { kind: "evidence", evidence },
+                                        "narrative-topology",
+                                        {
+                                          entityType: "evidence",
+                                          entityId: evidence.evidence_id,
+                                          source: "narrative-topology",
+                                        },
+                                      )
+                                    }
+                                  />
+                                </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <EmptyBlock label={t("detail.scroll.empty")} />
-                      )}
+                            )}
+                          </motion.div>
+                        ) : (
+                          <EmptyBlock label={t("detail.scroll.empty")} />
+                        )}
+                      </AnimatePresence>
                     </div>
                   ) : (
                     <EmptyBlock label={t("detail.scroll.empty")} />
                   )}
                 </section>
+                </RevealOnScroll>
               );
             }
 
             return (
+              <RevealOnScroll key={section.key}>
               <section
-                key={section.key}
                 ref={(node) => {
                   sectionRefs.current[section.key] = node;
                 }}
                 data-section-key={section.key}
-                className="rounded-[28px] border border-border/70 bg-card/96 p-6"
+                className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
               >
                 <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
                 <Accordion type="multiple" className="space-y-3">
-                  <AccordionItem value="methods" className="rounded-2xl border border-border/60 bg-background/80 px-4">
+                  <AccordionItem value="methods" className="rounded-2xl bg-muted/15 px-4">
                     <AccordionTrigger>{t("detail.scroll.methods")}</AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-2">
                       {report.methods.length > 0 ? (
                         report.methods.map((method) => (
-                          <div key={method.key} className="rounded-xl border border-border/60 p-4">
+                          <div key={method.key} className="rounded-xl bg-muted/20 p-4">
                             <div className="text-sm font-semibold">{method.title}</div>
                             <div className="mt-1 text-sm leading-7 text-muted-foreground">{method.description}</div>
                           </div>
@@ -1603,7 +1858,7 @@ export function ForensicScroll({
                       )}
                     </AccordionContent>
                   </AccordionItem>
-                  <AccordionItem value="reproducibility" className="rounded-2xl border border-border/60 bg-background/80 px-4">
+                  <AccordionItem value="reproducibility" className="rounded-2xl bg-muted/15 px-4">
                     <AccordionTrigger>{t("detail.scroll.reproducibility")}</AccordionTrigger>
                     <AccordionContent className="pt-2">
                       <MetricList
@@ -1615,12 +1870,12 @@ export function ForensicScroll({
                       />
                     </AccordionContent>
                   </AccordionItem>
-                  <AccordionItem value="results" className="rounded-2xl border border-border/60 bg-background/80 px-4">
+                  <AccordionItem value="results" className="rounded-2xl bg-muted/15 px-4">
                     <AccordionTrigger>{t("detail.scroll.rawSignals")}</AccordionTrigger>
                     <AccordionContent className="space-y-3 pt-2">
                       {report.results.length > 0 ? (
                         report.results.map((result) => (
-                          <div key={result.key} className="rounded-xl border border-border/60 p-4">
+                          <div key={result.key} className="rounded-xl bg-muted/20 p-4">
                             <div className="text-sm font-semibold">{result.title}</div>
                             <div className="mt-1 text-sm leading-7 text-muted-foreground">{result.body}</div>
                           </div>
@@ -1632,9 +1887,9 @@ export function ForensicScroll({
                   </AccordionItem>
                 </Accordion>
               </section>
+              </RevealOnScroll>
             );
-          })}
-        </div>
+        })}
       </div>
 
       <Sheet open={drawerEntity !== null} onOpenChange={(open) => {
@@ -1653,18 +1908,550 @@ export function ForensicScroll({
 
 function SectionHeader({ title, accentColor }: { title: string; accentColor: string }) {
   return (
-    <div className="mb-5 flex items-center gap-3">
-      <span className="h-10 w-1.5 rounded-full" style={{ backgroundColor: accentColor }} />
-      <div className="text-lg font-semibold text-foreground">{title}</div>
+    <div className="mb-4 flex items-center gap-3">
+      <span className="h-9 w-1.5 rounded-full" style={{ backgroundColor: accentColor }} />
+      <h2 className="text-lg font-semibold tracking-tight text-foreground">{title}</h2>
     </div>
   );
 }
 
+function PortraitCueCard({
+  title,
+  value,
+  detail,
+  tone,
+}: SubjectiveCue) {
+  const toneClass = {
+    neutral: "border-border/40 bg-background/28",
+    accent: "border-amber-400/20 bg-amber-500/[0.06]",
+    warning: "border-rose-400/20 bg-rose-500/[0.06]",
+  }[tone];
+
+  return (
+    <div className={cn("rounded-[16px] border px-3 py-2.5", toneClass)}>
+      <ReportMetaLabel>{title}</ReportMetaLabel>
+      <div className="mt-1 text-sm font-semibold leading-5 text-foreground">{value}</div>
+      <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
+function ProfileDimensionLedgerCard({
+  dimension,
+  color,
+}: {
+  dimension: WritingProfileDimension;
+  color: string;
+}) {
+  const { t } = useI18n();
+  const score = Math.max(0, Math.min(100, dimension.score));
+  const confidence = Math.max(0, Math.min(100, Math.round(dimension.confidence * 100)));
+
+  return (
+    <div className="rounded-[16px] border border-border/40 bg-background/35 px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-foreground">{dimension.label}</div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            <Badge variant="outline" className="text-[11px]">
+              {dimension.dimension_type === "observable"
+                ? t("detail.scroll.dimension.observable")
+                : t("detail.scroll.dimension.speculative")}
+            </Badge>
+            <Badge variant="outline" className="text-[11px]">
+              {t("detail.scroll.dimension.confidence", { confidence })}
+            </Badge>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-semibold tabular-nums text-foreground">
+            {Number(score.toFixed(1))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-2 h-1.5 rounded-full bg-muted">
+        <div
+          className="h-1.5 rounded-full"
+          style={{ width: `${Math.max(score, 4)}%`, backgroundColor: color }}
+        />
+      </div>
+
+      <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] leading-4 text-muted-foreground">
+        <div>
+          <div>{t("detail.scroll.dimension.evidenceSpans")}</div>
+          <div className="mt-0.5 font-medium text-foreground">
+            {dimension.evidence_spans.length}
+          </div>
+        </div>
+        <div>
+          <div>{t("detail.scroll.dimension.counter")}</div>
+          <div className="mt-0.5 font-medium text-foreground">
+            {dimension.counter_evidence.length}
+          </div>
+        </div>
+        <div>
+          <div>{t("detail.scroll.dimension.type")}</div>
+          <div className="mt-0.5 font-medium text-foreground">
+            {dimension.dimension_type === "observable"
+              ? t("detail.scroll.dimension.obs")
+              : t("detail.scroll.dimension.spec")}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompactSignalPanel({
+  title,
+  items,
+  tone = "neutral",
+}: {
+  title: string;
+  items: string[];
+  tone?: "neutral" | "warning";
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <section
+      className={cn(
+        "rounded-[18px] bg-muted/15 p-3.5",
+        tone === "warning" && "border border-red-500/15 bg-red-500/[0.04]",
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <ReportMetaLabel>{title}</ReportMetaLabel>
+        <div className="text-xs text-muted-foreground">{items.length}</div>
+      </div>
+      <ul className="mt-2 space-y-1.5 text-sm leading-6 text-foreground/88">
+        {items.map((item) => (
+          <li key={`${title}-${item}`} className="flex gap-2">
+            <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-foreground/45" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function NarrativeTopologyGraph({
+  sectionTitle,
+  evidenceItems,
+  relatedTextIds,
+  textMetaMap,
+  clusterByTextId,
+  isTextFocused,
+  isEvidenceFocused,
+  onOpenText,
+  onOpenEvidence,
+}: {
+  sectionTitle: string;
+  evidenceItems: EvidenceItem[];
+  relatedTextIds: string[];
+  textMetaMap: Map<string, { textId: string; alias: string; preview: string; group: string }>;
+  clusterByTextId: Map<string, number>;
+  isTextFocused: (textId: string) => boolean;
+  isEvidenceFocused: (item: EvidenceItem) => boolean;
+  onOpenText: (textId: string) => void;
+  onOpenEvidence: (item: EvidenceItem) => void;
+}) {
+  const { t } = useI18n();
+  const visibleEvidence = evidenceItems.slice(0, 4);
+  const visibleTextIds = relatedTextIds.slice(0, 8);
+  const hiddenEvidenceCount = Math.max(0, evidenceItems.length - visibleEvidence.length);
+  const hiddenTextCount = Math.max(0, relatedTextIds.length - visibleTextIds.length);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState<number>(0);
+  const [isFitMode, setIsFitMode] = useState(true);
+  const [manualZoom, setManualZoom] = useState(1);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClickUntilRef = useRef(0);
+
+  useEffect(() => {
+    const node = viewportRef.current;
+    if (!node) return;
+
+    const updateWidth = () => {
+      setViewportWidth(node.clientWidth);
+    };
+
+    updateWidth();
+    const observer = new ResizeObserver(() => updateWidth());
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const canvasPaddingX = 24;
+  const canvasPaddingY = 22;
+  const rootWidth = 176;
+  const rootHeight = 68;
+  const evidenceWidth = 170;
+  const evidenceHeight = 62;
+  const textWidth = 160;
+  const textHeight = 58;
+  const sectionGap = 52;
+  const evidenceGap = 20;
+  const evidenceToTextGap = 82;
+  const textColumnGap = 24;
+  const textRowGap = 18;
+  const textColumns = visibleTextIds.length > 4 ? 2 : 1;
+  const textRows = Math.ceil(visibleTextIds.length / textColumns);
+  const evidenceStackHeight =
+    visibleEvidence.length * evidenceHeight + Math.max(0, visibleEvidence.length - 1) * evidenceGap;
+  const textStackHeight =
+    textRows * textHeight + Math.max(0, textRows - 1) * textRowGap;
+  const canvasHeight = Math.max(
+    248,
+    rootHeight + canvasPaddingY * 2,
+    evidenceStackHeight + canvasPaddingY * 2,
+    textStackHeight + canvasPaddingY * 2,
+  );
+  const rootX = canvasPaddingX;
+  const evidenceX = rootX + rootWidth + sectionGap;
+  const textStartX = evidenceX + evidenceWidth + evidenceToTextGap;
+  const canvasWidth =
+    textStartX +
+    textColumns * textWidth +
+    Math.max(0, textColumns - 1) * textColumnGap +
+    canvasPaddingX;
+  const evidenceStartY = Math.max(canvasPaddingY, (canvasHeight - evidenceStackHeight) / 2);
+  const textStartY = Math.max(canvasPaddingY, (canvasHeight - textStackHeight) / 2);
+  const rootPosition = {
+    x: rootX,
+    y: Math.max(canvasPaddingY, canvasHeight / 2 - rootHeight / 2),
+  };
+  const evidencePositions = visibleEvidence.map((item, index) => ({
+    item,
+    x: evidenceX,
+    y: evidenceStartY + index * (evidenceHeight + evidenceGap),
+  }));
+  const textPositions = visibleTextIds.map((textId, index) => {
+    const column = textColumns === 1 ? 0 : index % 2;
+    const row = textColumns === 1 ? index : Math.floor(index / 2);
+    return {
+      textId,
+      x: textStartX + column * (textWidth + textColumnGap),
+      y: textStartY + row * (textHeight + textRowGap),
+    };
+  });
+  const textPositionMap = new Map(textPositions.map((item) => [item.textId, item]));
+
+  const rootToEvidencePaths = evidencePositions.map(({ item, x, y }) => ({
+    id: `root-${item.evidence_id}`,
+    path: curvedPath(
+      rootPosition.x + rootWidth,
+      rootPosition.y + rootHeight / 2,
+      x,
+      y + evidenceHeight / 2,
+    ),
+  }));
+
+  const evidenceToTextPaths = evidencePositions.flatMap(({ item, x, y }) =>
+    Array.from(new Set(item.source_text_ids))
+      .filter((textId) => textPositionMap.has(textId))
+      .map((textId) => {
+        const textPosition = textPositionMap.get(textId);
+        return textPosition
+          ? {
+              id: `${item.evidence_id}-${textId}`,
+              path: curvedPath(
+                x + evidenceWidth,
+                y + evidenceHeight / 2,
+                textPosition.x,
+                textPosition.y + textHeight / 2,
+              ),
+            }
+          : null;
+      })
+      .filter((edge): edge is { id: string; path: string } => Boolean(edge)),
+  );
+  const fitZoom = viewportWidth > 0 ? Math.min(1, Math.max(0.72, (viewportWidth - 8) / canvasWidth)) : 1;
+  const MIN_ZOOM = 0.6;
+  const MAX_ZOOM = 1.45;
+  const zoom = isFitMode ? fitZoom : manualZoom;
+
+  const viewportHeight = Math.min(440, Math.max(220, Math.round(canvasHeight * zoom)));
+  const scaledWidth = Math.round(canvasWidth * zoom);
+  const scaledHeight = Math.round(canvasHeight * zoom);
+  const stageWidth = Math.max(viewportWidth, scaledWidth);
+  const stageHeight = Math.max(viewportHeight, scaledHeight);
+  const stageOffsetX = Math.max(0, Math.round((stageWidth - scaledWidth) / 2));
+
+  const clampZoom = useCallback((value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value)), []);
+
+  const handleZoomIn = useCallback(() => {
+    setManualZoom(clampZoom(zoom + 0.12));
+    setIsFitMode(false);
+  }, [clampZoom, zoom]);
+
+  const handleZoomOut = useCallback(() => {
+    setManualZoom(clampZoom(zoom - 0.12));
+    setIsFitMode(false);
+  }, [clampZoom, zoom]);
+
+  const handleFitView = useCallback(() => {
+    setIsFitMode(true);
+    setManualZoom(fitZoom);
+    const node = viewportRef.current;
+    if (node) {
+      node.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+    }
+  }, [fitZoom]);
+
+  const handleViewportPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      return;
+    }
+    const node = viewportRef.current;
+    if (!node) return;
+
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: node.scrollLeft,
+      scrollTop: node.scrollTop,
+      moved: false,
+    };
+    node.setPointerCapture(event.pointerId);
+  }, []);
+
+  const handleViewportPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const node = viewportRef.current;
+    const dragState = dragStateRef.current;
+    if (!node || !dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - dragState.startX;
+    const deltaY = event.clientY - dragState.startY;
+    if (!dragState.moved && Math.abs(deltaX) + Math.abs(deltaY) < 4) {
+      return;
+    }
+
+    dragState.moved = true;
+    node.scrollLeft = dragState.scrollLeft - deltaX;
+    node.scrollTop = dragState.scrollTop - deltaY;
+  }, []);
+
+  const handleViewportPointerEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const node = viewportRef.current;
+    const dragState = dragStateRef.current;
+    if (node?.hasPointerCapture(event.pointerId)) {
+      node.releasePointerCapture(event.pointerId);
+    }
+    if (dragState?.moved) {
+      suppressClickUntilRef.current = Date.now() + 180;
+    }
+    dragStateRef.current = null;
+  }, []);
+
+  const shouldSuppressClick = useCallback(() => Date.now() < suppressClickUntilRef.current, []);
+
+  if (visibleEvidence.length === 0 || visibleTextIds.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-[20px] border border-border/45 bg-background/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs text-muted-foreground">
+          {t("detail.scroll.topology.description")}
+        </div>
+        {(hiddenEvidenceCount > 0 || hiddenTextCount > 0) && (
+          <div className="text-[11px] text-muted-foreground">
+            {hiddenEvidenceCount > 0
+              ? `+${hiddenEvidenceCount} ${t("detail.scroll.topology.hiddenEvidence")}`
+              : null}
+            {hiddenEvidenceCount > 0 && hiddenTextCount > 0 ? " · " : null}
+            {hiddenTextCount > 0
+              ? `+${hiddenTextCount} ${t("detail.scroll.topology.hiddenTexts")}`
+              : null}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[11px] text-muted-foreground">
+          {t("detail.scroll.topology.panHint")}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleZoomOut}>
+            {t("detail.scroll.topology.zoomOut")}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleFitView}>
+            {t("detail.scroll.topology.fit")}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleZoomIn}>
+            {t("detail.scroll.topology.zoomIn")}
+          </Button>
+        </div>
+      </div>
+
+      <div
+        ref={viewportRef}
+        className="mt-3 overflow-auto rounded-[16px] border border-border/40 bg-background/20 cursor-grab active:cursor-grabbing"
+        style={{ height: viewportHeight }}
+        onPointerDown={handleViewportPointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={handleViewportPointerEnd}
+        onPointerCancel={handleViewportPointerEnd}
+      >
+        <div className="relative" style={{ width: stageWidth, height: stageHeight }}>
+          <div
+            className="absolute top-0"
+            style={{
+              left: stageOffsetX,
+              width: scaledWidth,
+              height: scaledHeight,
+            }}
+          >
+            <div
+              className="absolute left-0 top-0"
+              style={{
+                width: canvasWidth,
+                height: canvasHeight,
+                transform: `scale(${zoom})`,
+                transformOrigin: "top left",
+              }}
+            >
+              <svg
+                className="absolute inset-0 h-full w-full"
+                viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+                aria-hidden="true"
+              >
+                <defs>
+                  <linearGradient id="narrative-topology-flow" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="rgba(148,163,184,0.55)" />
+                    <stop offset="100%" stopColor="rgba(245,158,11,0.35)" />
+                  </linearGradient>
+                </defs>
+                {rootToEvidencePaths.map((edge) => (
+                  <path
+                    key={edge.id}
+                    d={edge.path}
+                    fill="none"
+                    stroke="url(#narrative-topology-flow)"
+                    strokeWidth="1.2"
+                    strokeDasharray="5 6"
+                  />
+                ))}
+                {evidenceToTextPaths.map((edge) => (
+                  <path
+                    key={edge.id}
+                    d={edge.path}
+                    fill="none"
+                    stroke="rgba(148,163,184,0.42)"
+                    strokeWidth="1.1"
+                  />
+                ))}
+              </svg>
+
+              <div
+                className="absolute rounded-[18px] border border-border/45 bg-card/95 px-3 py-2"
+                style={{
+                  left: rootPosition.x,
+                  top: rootPosition.y,
+                  width: rootWidth,
+                  minHeight: rootHeight,
+                }}
+              >
+                <ReportMetaLabel>{t("detail.scroll.topology.activeSection")}</ReportMetaLabel>
+                <div className="mt-1.5 line-clamp-2 text-sm font-semibold leading-5 text-foreground">
+                  {sectionTitle}
+                </div>
+              </div>
+
+              {evidencePositions.map(({ item, x, y }) => (
+                <button
+                  key={item.evidence_id}
+                  type="button"
+                  onClick={() => {
+                    if (shouldSuppressClick()) return;
+                    onOpenEvidence(item);
+                  }}
+                  className={cn(
+                    "absolute rounded-[18px] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                    "border-amber-300/20 bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
+                    isEvidenceFocused(item) ? "opacity-100" : "opacity-55",
+                  )}
+                  style={{ left: x, top: y, width: evidenceWidth, minHeight: evidenceHeight }}
+                >
+                  <ReportMetaLabel>{item.evidence_id}</ReportMetaLabel>
+                  <div className="mt-1 text-sm font-semibold leading-5 text-foreground">
+                    {item.label}
+                  </div>
+                  <div className="mt-1 truncate text-[11px] leading-4 text-muted-foreground">
+                    {t("detail.scroll.topology.linkedTexts", { count: item.source_text_ids.length })}
+                  </div>
+                </button>
+              ))}
+
+              {textPositions.map(({ textId, x, y }) => {
+                const meta = textMetaMap.get(textId);
+                const cluster = clusterByTextId.get(textId);
+                return (
+                  <button
+                    key={textId}
+                    type="button"
+                    onClick={() => {
+                      if (shouldSuppressClick()) return;
+                      onOpenText(textId);
+                    }}
+                    className={cn(
+                      "absolute rounded-[16px] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                      "border-border/45 bg-card/92 hover:bg-card",
+                      isTextFocused(textId) ? "opacity-100" : "opacity-55",
+                    )}
+                    style={{ left: x, top: y, width: textWidth, minHeight: textHeight }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="truncate text-sm font-semibold leading-5 text-foreground">
+                        {meta?.alias ?? textId}
+                      </div>
+                      {cluster != null && (
+                        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          C{cluster}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 truncate text-[11px] leading-4 text-muted-foreground">
+                      {meta?.group ?? textId}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function curvedPath(startX: number, startY: number, endX: number, endY: number) {
+  const controlOffset = Math.max(48, (endX - startX) * 0.35);
+  return `M ${startX} ${startY} C ${startX + controlOffset} ${startY}, ${endX - controlOffset} ${endY}, ${endX} ${endY}`;
+}
+
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
-      <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-foreground">{value}</div>
+    <div className="rounded-xl bg-background/55 px-4 py-3.5">
+      <ReportMetaLabel>{label}</ReportMetaLabel>
+      <div className="mt-1.5 text-xl font-semibold tracking-tight text-foreground">{value}</div>
     </div>
   );
 }
@@ -1673,8 +2460,8 @@ function MetricList({ items }: { items: string[][] }) {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
       {items.map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-border/60 bg-background/60 p-3">
-          <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+        <div key={label} className="rounded-xl bg-muted/20 p-3">
+          <ReportMetaLabel>{label}</ReportMetaLabel>
           <div className="mt-1 text-sm font-medium text-foreground">{value}</div>
         </div>
       ))}
@@ -1690,8 +2477,8 @@ function DrawerBlock({
   children: ReactNode;
 }) {
   return (
-    <section className="space-y-3 rounded-xl border border-border/60 bg-background/70 p-4">
-      <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">{title}</div>
+    <section className="space-y-3 rounded-xl bg-muted/15 p-4">
+      <ReportMetaLabel>{title}</ReportMetaLabel>
       {children}
     </section>
   );
@@ -1699,7 +2486,7 @@ function DrawerBlock({
 
 function EmptyBlock({ label }: { label: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-background/70 p-5 text-sm text-muted-foreground">
+    <div className="rounded-xl border border-dashed border-border/70 bg-background/30 p-5 text-sm text-muted-foreground">
       {label}
     </div>
   );

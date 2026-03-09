@@ -676,6 +676,133 @@ const messages: Record<Locale, Record<string, string>> = {
     "progress.agent.writingProcess": "Psycholinguistics",
     "progress.agent.computational": "Computational",
     "progress.agent.sociolinguistics": "Sociolinguistics",
+
+    // forensic-scroll: feature signature
+    "detail.scroll.feature.vocabDiversity": "Vocabulary diversity",
+    "detail.scroll.feature.vocabDiversityHint": "Vocabulary richness: higher = more diverse word use",
+    "detail.scroll.feature.sentenceLength": "Sentence length",
+    "detail.scroll.feature.sentenceLengthHint": "Average sentence length: longer = more complex sentences",
+    "detail.scroll.feature.formality": "Formality",
+    "detail.scroll.feature.formalityHint": "Formality: higher = more formal/academic register",
+    "detail.scroll.feature.emotionalTone": "Emotional tone",
+    "detail.scroll.feature.emotionalToneHint": "Emotional tone: higher = more positive emotional language",
+
+    // forensic-scroll: focus entity labels
+    "detail.scroll.focusEntity.conclusion": "Conclusion",
+    "detail.scroll.focusEntity.evidence": "Evidence",
+    "detail.scroll.focusEntity.text": "Text",
+    "detail.scroll.focusEntity.cluster": "Cluster",
+    "detail.scroll.focusEntity.profile": "Profile",
+
+    // forensic-scroll: subjective portrait
+    "detail.scroll.portrait.noDominantCluster": "No dominant cluster yet",
+    "detail.scroll.portrait.likelyRole": "Likely role",
+    "detail.scroll.portrait.expressionPosture": "Expression posture",
+    "detail.scroll.portrait.workRhythm": "Work rhythm",
+    "detail.scroll.portrait.riskWatch": "Risk watch",
+
+    // forensic-scroll: role inference
+    "detail.scroll.role.documentation": "Documentation-oriented operator",
+    "detail.scroll.role.documentationDetail": "Grounded in the dominant cluster \"{cluster}\" and the profile summary, the corpus reads like sustained explanatory writing.",
+    "detail.scroll.role.technical": "Technical-analysis / postmortem role",
+    "detail.scroll.role.technicalDetail": "The profile and dominant cluster repeatedly surface technical or analytical language, which reads like peer-facing explanation work.",
+    "detail.scroll.role.coordination": "Coordination / operations communicator",
+    "detail.scroll.role.coordinationDetail": "Process-heavy verbs and coordination language suggest work that moves collaboration forward rather than purely expressing opinion.",
+    "detail.scroll.role.professional": "Professional writing / reporting role",
+    "detail.scroll.role.professionalDetail": "High formality and sentence complexity make the corpus read more like reporting or documentation than casual conversation.",
+
+    // forensic-scroll: posture
+    "detail.scroll.posture.structured": "Strongly structured, with context before judgment",
+    "detail.scroll.posture.contextFirst": "Builds context first, then lands the judgment with restraint",
+    "detail.scroll.posture.reactive": "More reactive than layered, closer to live conversation",
+    "detail.scroll.posture.detail": "Grounded in sentence complexity {sentenceScore} and formality {formalityScore}; the current lead reads as {leadType}.",
+    "detail.scroll.posture.evidenceLed": "evidence-led",
+    "detail.scroll.posture.underBuilt": "still under-built",
+
+    // forensic-scroll: rhythm
+    "detail.scroll.rhythm.sustained": "Looks like sustained output rather than one-off remarks",
+    "detail.scroll.rhythm.phaseSpecific": "The corpus is still small enough to read as phase-specific output",
+    "detail.scroll.rhythm.parallel": "Multiple contexts run in parallel, with higher switching frequency",
+    "detail.scroll.rhythm.detail": "Grounded in {textCount} texts, {representativeCount} representative samples, and {clusterCount} clusters across the corpus.",
+
+    // forensic-scroll: risk
+    "detail.scroll.risk.contextDrift": "Context drift is present, so the corpus should not be forced into one stable persona",
+    "detail.scroll.risk.stable": "The core silhouette is fairly stable, but speculation still needs to stay separate from evidence",
+    "detail.scroll.risk.detail": "Grounded in {anomalyCount} anomalous samples and {fragmentedClusterCount} fragmented clusters; this supports a narrative portrait, not real-world identity claims.",
+
+    // forensic-scroll: dimension card
+    "detail.scroll.dimension.observable": "Observable",
+    "detail.scroll.dimension.speculative": "Speculative",
+    "detail.scroll.dimension.confidence": "{confidence}% confidence",
+    "detail.scroll.dimension.evidenceSpans": "Evidence spans",
+    "detail.scroll.dimension.counter": "Counter",
+    "detail.scroll.dimension.type": "Type",
+    "detail.scroll.dimension.obs": "Obs",
+    "detail.scroll.dimension.spec": "Spec",
+
+    // forensic-scroll: inline badges / labels
+    "detail.scroll.isolatedClusters": "{count} isolated clusters",
+    "detail.scroll.observableDimensions": "{count} observable dimensions",
+    "detail.scroll.evidenceSpans": "Evidence spans",
+    "detail.scroll.dimensionLedger": "Dimension ledger",
+    "detail.scroll.dimensionCount2": "{count} dimensions",
+
+    // forensic-scroll: narrative topology graph
+    "detail.scroll.topology.description": "Section -> evidence -> text nodes",
+    "detail.scroll.topology.hiddenEvidence": "evidence",
+    "detail.scroll.topology.hiddenTexts": "texts",
+    "detail.scroll.topology.panHint": "Drag to pan the graph. Fit view resets the zoom.",
+    "detail.scroll.topology.zoomOut": "Zoom out",
+    "detail.scroll.topology.fit": "Fit",
+    "detail.scroll.topology.zoomIn": "Zoom in",
+    "detail.scroll.topology.activeSection": "Active section",
+    "detail.scroll.topology.linkedTexts": "{count} linked texts",
+    "detail.scroll.sectionIndex": "Section {index}",: "Grouping View",
+    "report.cluster.title": "Cluster Landscape",
+    "report.cluster.description": "Start by seeing how samples split into distinct writing styles, then compare what separates each group, and finally flag anomalous texts for individual review.",
+    "report.cluster.heatmapLabel": "Similarity Heatmap",
+    "report.cluster.heatmapTitle": "Sample Similarity Heatmap",
+    "report.cluster.featuresLoading": "Loading features",
+    "report.cluster.noFeatures": "Not enough feature data yet — use the cluster cards on the right to read the grouping structure first.",
+    "report.cluster.anomalyLabel": "Anomaly Strip",
+    "report.cluster.anomalyTitle": "Anomaly Sample Strip",
+
+    "report.qa.suggestion.topClue": "In the simplest terms, what is the most noteworthy clue from this analysis?",
+    "report.qa.suggestion.clueStability": "Do these findings look more like preliminary clues, or have they formed relatively stable conclusions?",
+    "report.qa.suggestion.keyEvidence": "What are the most critical pieces of evidence?",
+    "report.qa.suggestion.caution": "What should I be most careful about in these results?",
+    "report.qa.suggestion.writingHabit": "Based on writing habits, what is this person's most distinctive trait?",
+
+    "report.evidenceGraph.kicker": "Relationship Map",
+    "report.evidenceGraph.title": "Evidence Relationship Graph",
+    "report.evidenceGraph.description": "Conclusions, evidence, profiles, and clusters are placed in one graph so you can see which evidence supports which conclusion.",
+
+    "report.evidenceInspector.label": "Current Explanation",
+    "report.evidenceInspector.empty": "Click any node on the left to see what it explains, why it matters, and what to watch for to avoid misreading.",
+    "report.evidenceInspector.counterReadings": "Counter-readings",
+    "report.evidenceInspector.conclusionMeta": "Grade: {grade}, evidence anchors: {anchors}",
+    "report.evidenceInspector.noAnchors": "none",
+
+    "report.narrativeSpine.kicker": "Reading Axis",
+    "report.narrativeSpine.title": "Conclusion Spine",
+    "report.narrativeSpine.description": "A compressed reading path that threads conclusions, conflicts, and next actions together so you don't have to jump around the report.",
+    "report.narrativeSpine.sectionCount": "{count} sections",
+
+    "report.portraitGallery.kicker": "Writing Profile",
+    "report.portraitGallery.title": "Writing Habit Portraits",
+    "report.portraitGallery.description": "Each subject's most stable writing habits, process clues to interpret with caution, and anomaly points that need separate review.",
+
+    "report.writingPortrait.stableHabits": "Stable Habits",
+    "report.writingPortrait.processClues": "Process Clues",
+    "report.writingPortrait.anomalies": "Anomalies",
+    "report.writingPortrait.featureProfile": "Feature Profile",
+
+    "report.grade.strongSupport": "Strong Support",
+    "report.grade.moderateSupport": "Moderate Support",
+    "report.grade.against": "Leans Against",
+    "report.grade.inconclusive": "Inconclusive",
+
+    "report.sourceGroupPrefix": "Source group: ",
   },
   zh: {
     "app.name": "文本侦探",
@@ -1339,7 +1466,88 @@ const messages: Record<Locale, Record<string, string>> = {
     "progress.agent.writingProcess": "心理语言学",
     "progress.agent.computational": "计算分析",
     "progress.agent.sociolinguistics": "社会语言学",
-  },
+
+    // forensic-scroll: feature signature
+    "detail.scroll.feature.vocabDiversity": "词汇多样性",
+    "detail.scroll.feature.vocabDiversityHint": "词汇丰富度：越高表示用词越丰富多样",
+    "detail.scroll.feature.sentenceLength": "句长",
+    "detail.scroll.feature.sentenceLengthHint": "平均句长：越长表示偏好复杂长句",
+    "detail.scroll.feature.formality": "正式度",
+    "detail.scroll.feature.formalityHint": "正式度：越高越像书面/学术语体",
+    "detail.scroll.feature.emotionalTone": "情感色彩",
+    "detail.scroll.feature.emotionalToneHint": "情感色彩：越高表示正面情感词汇越多",
+
+    // forensic-scroll: focus entity labels
+    "detail.scroll.focusEntity.conclusion": "结论",
+    "detail.scroll.focusEntity.evidence": "证据",
+    "detail.scroll.focusEntity.text": "文本",
+    "detail.scroll.focusEntity.cluster": "聚类",
+    "detail.scroll.focusEntity.profile": "画像",
+
+    // forensic-scroll: subjective portrait
+    "detail.scroll.portrait.noDominantCluster": "主簇尚未成形",
+    "detail.scroll.portrait.likelyRole": "可能角色",
+    "detail.scroll.portrait.expressionPosture": "表达姿态",
+    "detail.scroll.portrait.workRhythm": "工作节奏",
+    "detail.scroll.portrait.riskWatch": "风险提示",
+
+    // forensic-scroll: role inference
+    "detail.scroll.role.documentation": "偏文档整理 / 说明型角色",
+    "detail.scroll.role.documentationDetail": "依据：当前主簇\"{cluster}\"与画像摘要更像持续输出的说明文本。",
+    "detail.scroll.role.technical": "偏技术分析 / 复盘型角色",
+    "detail.scroll.role.technicalDetail": "依据：画像与主簇持续出现技术、分析或复盘语汇，像在为同侪做专业解释。",
+    "detail.scroll.role.coordination": "偏流程协调 / 运营沟通型角色",
+    "detail.scroll.role.coordinationDetail": "依据：语料里更常见流程、通知、跟进一类动作词，像在推进协作而不是单纯抒发观点。",
+    "detail.scroll.role.professional": "偏专业写作 / 汇报型角色",
+    "detail.scroll.role.professionalDetail": "依据：正式度和句式复杂度都偏高，更像汇报、复盘或说明文档，而不是随手聊天。",
+
+    // forensic-scroll: posture
+    "detail.scroll.posture.structured": "结构化输出明显，像先铺背景再落判断",
+    "detail.scroll.posture.contextFirst": "先铺背景，再落判断，措辞克制",
+    "detail.scroll.posture.reactive": "反应快于铺陈，更像即时交流",
+    "detail.scroll.posture.detail": "依据：句式复杂度 {sentenceScore}，正式度 {formalityScore}；当前主判断为 {leadType}。",
+    "detail.scroll.posture.evidenceLed": "证据先行型",
+    "detail.scroll.posture.underBuilt": "待补证型",
+
+    // forensic-scroll: rhythm
+    "detail.scroll.rhythm.sustained": "更像长期连续产出，不像偶发发言",
+    "detail.scroll.rhythm.phaseSpecific": "样本还偏少，更像阶段性任务输出",
+    "detail.scroll.rhythm.parallel": "多语境并行，近期切换频率偏高",
+    "detail.scroll.rhythm.detail": "依据：共 {textCount} 条文本，主画像覆盖 {representativeCount} 条代表文本，聚类分成 {clusterCount} 簇。",
+
+    // forensic-scroll: risk
+    "detail.scroll.risk.contextDrift": "存在语境漂移，不能把全部文本硬并成一个稳定人格",
+    "detail.scroll.risk.stable": "主体轮廓相对稳定，但推测仍需和证据分开阅读",
+    "detail.scroll.risk.detail": "依据：异常样本 {anomalyCount} 条，孤立小簇 {fragmentedClusterCount} 个；这更适合做人物轮廓，不适合做真实身份判断。",
+
+    // forensic-scroll: dimension card
+    "detail.scroll.dimension.observable": "可观察",
+    "detail.scroll.dimension.speculative": "推测层",
+    "detail.scroll.dimension.confidence": "{confidence}% 置信",
+    "detail.scroll.dimension.evidenceSpans": "证据跨度",
+    "detail.scroll.dimension.counter": "反向线索",
+    "detail.scroll.dimension.type": "类型",
+    "detail.scroll.dimension.obs": "可观察",
+    "detail.scroll.dimension.spec": "推测",
+
+    // forensic-scroll: inline badges / labels
+    "detail.scroll.isolatedClusters": "{count} 个孤立小簇",
+    "detail.scroll.observableDimensions": "{count} 可观察维度",
+    "detail.scroll.evidenceSpans": "证据跨度",
+    "detail.scroll.dimensionLedger": "维度账本",
+    "detail.scroll.dimensionCount2": "{count} 个维度",
+
+    // forensic-scroll: narrative topology graph
+    "detail.scroll.topology.description": "段落 -> 证据锚点 -> 文本节点",
+    "detail.scroll.topology.hiddenEvidence": "条证据",
+    "detail.scroll.topology.hiddenTexts": "条文本",
+    "detail.scroll.topology.panHint": "拖动画布可查看完整拓扑，适应视图可重置缩放。",
+    "detail.scroll.topology.zoomOut": "缩小",
+    "detail.scroll.topology.fit": "适应",
+    "detail.scroll.topology.zoomIn": "放大",
+    "detail.scroll.topology.activeSection": "当前线索",
+    "detail.scroll.topology.linkedTexts": "{count} 条关联文本",
+    "detail.scroll.sectionIndex": "第 {index} 段",
 };
 
 const I18nContext = createContext<I18nContextValue | null>(null);
