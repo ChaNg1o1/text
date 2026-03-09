@@ -25,19 +25,19 @@ const AUTHOR_COLORS = [
   "hsl(45, 93%, 47%)",
 ];
 
-const COMPARISON_FEATURES: {
+const COMPARISON_FEATURE_KEYS: {
   key: string;
-  label: string;
+  labelKey: string;
   source: "rust" | "nlp";
 }[] = [
-  { key: "type_token_ratio", label: "TTR", source: "rust" },
-  { key: "avg_word_length", label: "Word Len", source: "rust" },
-  { key: "avg_sentence_length", label: "Sent Len", source: "rust" },
-  { key: "formality_score", label: "Formality", source: "rust" },
-  { key: "sentiment_valence", label: "Sentiment", source: "nlp" },
-  { key: "cognitive_complexity", label: "Cognitive", source: "nlp" },
-  { key: "emotional_tone", label: "Emotional", source: "nlp" },
-  { key: "coleman_liau_index", label: "Readability", source: "rust" },
+  { key: "type_token_ratio", labelKey: "features.comparison.ttr", source: "rust" },
+  { key: "avg_word_length", labelKey: "features.comparison.wordLen", source: "rust" },
+  { key: "avg_sentence_length", labelKey: "features.comparison.sentLen", source: "rust" },
+  { key: "formality_score", labelKey: "features.comparison.formality", source: "rust" },
+  { key: "sentiment_valence", labelKey: "features.comparison.sentiment", source: "nlp" },
+  { key: "cognitive_complexity", labelKey: "features.comparison.cognitive", source: "nlp" },
+  { key: "emotional_tone", labelKey: "features.comparison.emotional", source: "nlp" },
+  { key: "coleman_liau_index", labelKey: "features.comparison.readability", source: "rust" },
 ];
 
 const FEATURE_BOUNDS: Record<string, [number, number]> = {
@@ -98,6 +98,12 @@ export function FeatureComparison({
   selectedAuthors,
 }: FeatureComparisonProps) {
   const { t } = useI18n();
+
+  const COMPARISON_FEATURES = COMPARISON_FEATURE_KEYS.map((f) => ({
+    ...f,
+    label: t(f.labelKey),
+  }));
+
   // Group by author
   const authorGroups: Record<string, FeatureVector[]> = {};
   for (const fv of features) {

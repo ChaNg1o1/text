@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FeatureVector } from "@/lib/types";
+import { useI18n } from "@/components/providers/i18n-provider";
 
 const AUTHOR_COLORS = [
   "hsl(221, 83%, 53%)",
@@ -24,18 +25,17 @@ const AUTHOR_COLORS = [
   "hsl(45, 93%, 47%)",
 ];
 
-// Key scalar features suitable for radar visualization
-const RADAR_FEATURES: { key: string; label: string; source: "rust" | "nlp" }[] = [
-  { key: "type_token_ratio", label: "TTR", source: "rust" },
-  { key: "avg_word_length", label: "Avg Word Len", source: "rust" },
-  { key: "avg_sentence_length", label: "Avg Sent Len", source: "rust" },
-  { key: "formality_score", label: "Formality", source: "rust" },
-  { key: "hapax_legomena_ratio", label: "Hapax Ratio", source: "rust" },
-  { key: "sentiment_valence", label: "Sentiment", source: "nlp" },
-  { key: "cognitive_complexity", label: "Cognitive", source: "nlp" },
-  { key: "emotional_tone", label: "Emotional", source: "nlp" },
-  { key: "clause_depth_avg", label: "Clause Depth", source: "nlp" },
-  { key: "coleman_liau_index", label: "Readability", source: "rust" },
+const RADAR_FEATURE_KEYS: { key: string; labelKey: string; source: "rust" | "nlp" }[] = [
+  { key: "type_token_ratio", labelKey: "features.radar.ttr", source: "rust" },
+  { key: "avg_word_length", labelKey: "features.radar.avgWordLen", source: "rust" },
+  { key: "avg_sentence_length", labelKey: "features.radar.avgSentLen", source: "rust" },
+  { key: "formality_score", labelKey: "features.radar.formality", source: "rust" },
+  { key: "hapax_legomena_ratio", labelKey: "features.radar.hapaxRatio", source: "rust" },
+  { key: "sentiment_valence", labelKey: "features.radar.sentiment", source: "nlp" },
+  { key: "cognitive_complexity", labelKey: "features.radar.cognitive", source: "nlp" },
+  { key: "emotional_tone", labelKey: "features.radar.emotional", source: "nlp" },
+  { key: "clause_depth_avg", labelKey: "features.radar.clauseDepth", source: "nlp" },
+  { key: "coleman_liau_index", labelKey: "features.radar.readability", source: "rust" },
 ];
 
 const FEATURE_BOUNDS: Record<string, [number, number]> = {
@@ -81,6 +81,13 @@ interface RadarChartProps {
 }
 
 export function FeatureRadarChart({ features, authorMap, selectedAuthors }: RadarChartProps) {
+  const { t } = useI18n();
+
+  const RADAR_FEATURES = RADAR_FEATURE_KEYS.map((f) => ({
+    ...f,
+    label: t(f.labelKey),
+  }));
+
   // Group by author -> compute means
   const authorGroups: Record<string, FeatureVector[]> = {};
   for (const fv of features) {
@@ -116,7 +123,7 @@ export function FeatureRadarChart({ features, authorMap, selectedAuthors }: Rada
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Feature Profile Radar</CardTitle>
+        <CardTitle className="text-lg">{t("features.radar.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={400}>
