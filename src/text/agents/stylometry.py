@@ -7,10 +7,9 @@ import hashlib
 import logging
 import time
 
-import litellm
-
 from text.app_settings import apply_prompt_override
 from text.ingest.schema import AgentFinding, AgentReport, FeatureVector, FindingLayer, LLMCallRecord
+from text.llm._lazy import litellm
 
 
 from .json_utils import parse_json_array_loose

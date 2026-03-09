@@ -1,11 +1,9 @@
 """Multi-agent forensic text analysis team."""
 
-from .computational import ComputationalAgent
-from .orchestrator import OrchestratorAgent
-from .psycholinguistics import PsycholinguisticsAgent, WritingProcessAgent
-from .sociolinguistics import SociolinguisticsAgent
-from .stylometry import StylometryAgent
-from .synthesis import SynthesisAgent
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "ComputationalAgent",
@@ -16,3 +14,23 @@ __all__ = [
     "StylometryAgent",
     "SynthesisAgent",
 ]
+
+_EXPORTS = {
+    "ComputationalAgent": (".computational", "ComputationalAgent"),
+    "OrchestratorAgent": (".orchestrator", "OrchestratorAgent"),
+    "PsycholinguisticsAgent": (".psycholinguistics", "PsycholinguisticsAgent"),
+    "WritingProcessAgent": (".psycholinguistics", "WritingProcessAgent"),
+    "SociolinguisticsAgent": (".sociolinguistics", "SociolinguisticsAgent"),
+    "StylometryAgent": (".stylometry", "StylometryAgent"),
+    "SynthesisAgent": (".synthesis", "SynthesisAgent"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        module_name, attr_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    module = import_module(module_name, __name__)
+    return getattr(module, attr_name)

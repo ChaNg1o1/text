@@ -25,7 +25,7 @@ def _request_payload() -> AnalysisRequest:
     )
 
 
-def test_markdown_renderer_includes_forensic_sections() -> None:
+def test_markdown_renderer_includes_investigation_sections() -> None:
     report = ForensicReport(
         request=_request_payload(),
         summary="综合结论：当前证据仅支持有限判断。",
@@ -87,7 +87,8 @@ def test_markdown_renderer_includes_forensic_sections() -> None:
     DecisionEngine().ensure_story_surfaces(report, refresh_hash=True)
 
     rendered = ReportRenderer.to_markdown(report)
-    assert "## 报告摘要与结论分级" in rendered
+    assert "# 文本调查报告" in rendered
+    assert "## 调查摘要与结论分级" in rendered
     assert "## 叙事章节" in rendered
     assert "## 别名图例" in rendered
     assert "## 材料清单" in rendered

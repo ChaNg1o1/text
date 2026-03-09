@@ -1,3 +1,3 @@
-"""Text Forensics Platform - Digital forensics text analysis with multi-agent team."""
+"""Text Detective Platform - clue-first text investigation with multi-agent team."""
 
 __version__ = "0.1.0"

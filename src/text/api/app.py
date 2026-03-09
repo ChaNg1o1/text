@@ -75,8 +75,8 @@ def create_app(config: Settings | None = None) -> FastAPI:
         config = deps.get_settings()
 
     app = FastAPI(
-        title="Text Forensics Platform",
-        description="Digital forensics text analysis with multi-agent collaboration",
+        title="Text Detective Platform",
+        description="Clue-first text investigation with multi-agent collaboration",
         version="0.1.0",
         lifespan=lifespan,
     )

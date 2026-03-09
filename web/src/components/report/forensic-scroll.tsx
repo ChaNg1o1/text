@@ -252,51 +252,51 @@ function buildSubjectivePortrait({
     leadCluster?.label,
   ]
     .filter(Boolean)
-    .join(“ “)
+    .join(" ")
     .toLowerCase();
 
-  const formalityScore = matchDimensionScore(leadProfile, [“正式”, “formal”, “formality”]);
-  const sentenceScore = matchDimensionScore(leadProfile, [“句”, “sentence”, “complex”, “复杂”]);
+  const formalityScore = matchDimensionScore(leadProfile, ["正式", "formal", "formality"]);
+  const sentenceScore = matchDimensionScore(leadProfile, ["句", "sentence", "complex", "复杂"]);
   const anomalyCount = report.anomaly_samples.length;
   const clusterCount = report.cluster_view?.clusters.length ?? 0;
   const representativeCount = leadProfile?.representative_text_ids?.length ?? 0;
   const dominantClusterLabel =
-    leadCluster?.label ?? t(“detail.scroll.portrait.noDominantCluster”);
+    leadCluster?.label ?? t("detail.scroll.portrait.noDominantCluster");
 
-  let roleValue = t(“detail.scroll.role.documentation”);
-  let roleDetail = t(“detail.scroll.role.documentationDetail”, { cluster: dominantClusterLabel });
-  if (includesAnyKeyword(signalPool, [“技术”, “工程”, “分析”, “复盘”, “debug”, “code”, “产品”])) {
-    roleValue = t(“detail.scroll.role.technical”);
-    roleDetail = t(“detail.scroll.role.technicalDetail”);
+  let roleValue = t("detail.scroll.role.documentation");
+  let roleDetail = t("detail.scroll.role.documentationDetail", { cluster: dominantClusterLabel });
+  if (includesAnyKeyword(signalPool, ["技术", "工程", "分析", "复盘", "debug", "code", "产品"])) {
+    roleValue = t("detail.scroll.role.technical");
+    roleDetail = t("detail.scroll.role.technicalDetail");
   } else if (
-    includesAnyKeyword(signalPool, [“运营”, “协调”, “流程”, “通知”, “跟进”, “排期”, “对接”])
+    includesAnyKeyword(signalPool, ["运营", "协调", "流程", "通知", "跟进", "排期", "对接"])
   ) {
-    roleValue = t(“detail.scroll.role.coordination”);
-    roleDetail = t(“detail.scroll.role.coordinationDetail”);
+    roleValue = t("detail.scroll.role.coordination");
+    roleDetail = t("detail.scroll.role.coordinationDetail");
   } else if ((formalityScore ?? 0) >= 70 && (sentenceScore ?? 0) >= 60) {
-    roleValue = t(“detail.scroll.role.professional”);
-    roleDetail = t(“detail.scroll.role.professionalDetail”);
+    roleValue = t("detail.scroll.role.professional");
+    roleDetail = t("detail.scroll.role.professionalDetail");
   }
 
-  let postureValue = t(“detail.scroll.posture.structured”);
+  let postureValue = t("detail.scroll.posture.structured");
   if ((sentenceScore ?? 0) >= 68 && (formalityScore ?? 0) >= 65) {
-    postureValue = t(“detail.scroll.posture.contextFirst”);
+    postureValue = t("detail.scroll.posture.contextFirst");
   } else if ((sentenceScore ?? 0) < 40 && (formalityScore ?? 0) < 45) {
-    postureValue = t(“detail.scroll.posture.reactive”);
+    postureValue = t("detail.scroll.posture.reactive");
   }
-  const postureDetail = t(“detail.scroll.posture.detail”, {
+  const postureDetail = t("detail.scroll.posture.detail", {
     sentenceScore: Math.round(sentenceScore ?? 50),
     formalityScore: Math.round(formalityScore ?? 50),
-    leadType: leadConclusion ? t(“detail.scroll.posture.evidenceLed”) : t(“detail.scroll.posture.underBuilt”),
+    leadType: leadConclusion ? t("detail.scroll.posture.evidenceLed") : t("detail.scroll.posture.underBuilt"),
   });
 
-  let rhythmValue = t(“detail.scroll.rhythm.sustained”);
+  let rhythmValue = t("detail.scroll.rhythm.sustained");
   if (analysis.text_count < 20) {
-    rhythmValue = t(“detail.scroll.rhythm.phaseSpecific”);
+    rhythmValue = t("detail.scroll.rhythm.phaseSpecific");
   } else if (clusterCount >= 5 || fragmentedClusterCount >= 2) {
-    rhythmValue = t(“detail.scroll.rhythm.parallel”);
+    rhythmValue = t("detail.scroll.rhythm.parallel");
   }
-  const rhythmDetail = t(“detail.scroll.rhythm.detail”, {
+  const rhythmDetail = t("detail.scroll.rhythm.detail", {
     textCount: analysis.text_count,
     representativeCount,
     clusterCount,
@@ -304,37 +304,37 @@ function buildSubjectivePortrait({
 
   const riskValue =
     anomalyCount > 0 || fragmentedClusterCount > 0
-      ? t(“detail.scroll.risk.contextDrift”)
-      : t(“detail.scroll.risk.stable”);
-  const riskDetail = t(“detail.scroll.risk.detail”, {
+      ? t("detail.scroll.risk.contextDrift")
+      : t("detail.scroll.risk.stable");
+  const riskDetail = t("detail.scroll.risk.detail", {
     anomalyCount,
     fragmentedClusterCount,
   });
 
   return [
     {
-      title: t(“detail.scroll.portrait.likelyRole”),
+      title: t("detail.scroll.portrait.likelyRole"),
       value: roleValue,
       detail: roleDetail,
-      tone: “accent”,
+      tone: "accent",
     },
     {
-      title: t(“detail.scroll.portrait.expressionPosture”),
+      title: t("detail.scroll.portrait.expressionPosture"),
       value: postureValue,
       detail: postureDetail,
-      tone: “neutral”,
+      tone: "neutral",
     },
     {
-      title: t(“detail.scroll.portrait.workRhythm”),
+      title: t("detail.scroll.portrait.workRhythm"),
       value: rhythmValue,
       detail: rhythmDetail,
-      tone: “neutral”,
+      tone: "neutral",
     },
     {
-      title: t(“detail.scroll.portrait.riskWatch”),
+      title: t("detail.scroll.portrait.riskWatch"),
       value: riskValue,
       detail: riskDetail,
-      tone: anomalyCount > 0 || fragmentedClusterCount > 0 ? “warning” : “neutral”,
+      tone: anomalyCount > 0 || fragmentedClusterCount > 0 ? "warning" : "neutral",
     },
   ];
 }

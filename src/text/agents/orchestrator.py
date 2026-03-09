@@ -159,6 +159,9 @@ class OrchestratorAgent:
                 "Goal: Extract investigative clues from the text — "
                 "trackable linguistic markers, author background signals, "
                 "behavioral anomalies, and any patterns useful for open-source intelligence analysis. "
+                "Prioritize OSINT-style leads first: traceable handles, source patterns, timeline signals, "
+                "cross-text linkage pivots, community markers, and metadata that suggests where to look next. "
+                "Treat deeper forensic interpretation as supporting detail that comes after actionable leads. "
                 "Output all findings with clue, portrait, and evidence layers."
             )
         elif request.task == TaskType.SOCKPUPPET:
@@ -175,4 +178,78 @@ class OrchestratorAgent:
             lines.append(f"Candidate author ids: {', '.join(params.candidate_author_ids)}")
         if params.account_ids:
             lines.append(f"Account ids: {', '.join(params.account_ids)}")
+        if request.task == TaskType.CLUE_EXTRACTION:
+            lines.extend(
+                [
+                    "OSINT posture:",
+                    "- Put actionable leads before evidentiary certainty.",
+                    "- Prefer pivots an investigator can follow next: source, timestamp, topic, alias, community markers, linked texts/accounts.",
+                    "- Use forensic language only after surfacing the best leads and caveats.",
+                ]
+            )
+            scope_lines = OrchestratorAgent._build_text_scope_lines(request)
+            if scope_lines:
+                lines.append("Text source brief:")
+                lines.extend(scope_lines)
+            context_lines = OrchestratorAgent._build_request_signal_lines(request)
+            if context_lines:
+                lines.append("Supplementary request signals:")
+                lines.extend(context_lines)
         return "\n".join(lines)
+
+    @staticmethod
+    def _build_text_scope_lines(request: AnalysisRequest) -> list[str]:
+        lines: list[str] = []
+        for text in request.texts[:12]:
+            source = (text.source or str(text.metadata.get("source") or "")).strip() or "unknown_source"
+            timestamp = text.timestamp.isoformat() if text.timestamp else "unknown_time"
+            metadata_bits: list[str] = []
+            for key in ("platform", "url", "channel", "topic", "thread_id", "language"):
+                value = text.metadata.get(key)
+                if value is None:
+                    continue
+                normalized = str(value).strip()
+                if normalized:
+                    metadata_bits.append(f"{key}={normalized}")
+            metadata_part = f" | metadata: {', '.join(metadata_bits[:4])}" if metadata_bits else ""
+            lines.append(
+                f"- {text.id}: author/account={text.author}, source={source}, timestamp={timestamp}{metadata_part}"
+            )
+        if len(request.texts) > 12:
+            lines.append(f"- ... {len(request.texts) - 12} more texts omitted from the brief")
+        return lines
+
+    @staticmethod
+    def _build_request_signal_lines(request: AnalysisRequest) -> list[str]:
+        lines: list[str] = []
+        if request.artifacts:
+            artifact_preview = ", ".join(
+                f"{artifact.kind.value}:{artifact.source_name}" for artifact in request.artifacts[:5]
+            )
+            lines.append(
+                f"- Artifacts available: {len(request.artifacts)} total"
+                + (f" ({artifact_preview})" if artifact_preview else "")
+            )
+        if request.activity_events:
+            event_types = sorted({event.event_type for event in request.activity_events if event.event_type})
+            topic_preview = sorted(
+                {
+                    str(event.topic).strip()
+                    for event in request.activity_events
+                    if event.topic and str(event.topic).strip()
+                }
+            )
+            lines.append(
+                f"- Activity events: {len(request.activity_events)} total; "
+                f"types={', '.join(event_types[:6]) or 'unknown'}; "
+                f"topics={', '.join(topic_preview[:6]) or 'none'}"
+            )
+        if request.interaction_edges:
+            relation_types = sorted(
+                {edge.relation_type for edge in request.interaction_edges if edge.relation_type}
+            )
+            lines.append(
+                f"- Interaction edges: {len(request.interaction_edges)} total; "
+                f"relations={', '.join(relation_types[:6]) or 'unknown'}"
+            )
+        return lines

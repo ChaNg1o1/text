@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -5,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 struct BackendRuntime {
     api_origin: String,
@@ -13,20 +14,58 @@ struct BackendRuntime {
 }
 
 impl BackendRuntime {
-    fn new(api_origin: String, child: Child) -> Self {
+    fn new(api_origin: String) -> Self {
         Self {
             api_origin,
-            child: Mutex::new(Some(child)),
+            child: Mutex::new(None),
         }
     }
 
     fn shutdown(&self) {
         if let Ok(mut lock) = self.child.lock() {
             if let Some(mut child) = lock.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+                graceful_kill(&mut child);
             }
         }
+    }
+}
+
+impl Drop for BackendRuntime {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn graceful_kill(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as i32;
+        // SAFETY: killpg sends a signal to a process group we created
+        // via process_group(0) at spawn time. The pid equals the pgid.
+        unsafe {
+            libc::killpg(pid, libc::SIGTERM);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if Instant::now() >= deadline => break,
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(_) => break,
+            }
+        }
+
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+        let _ = child.wait();
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
@@ -37,18 +76,25 @@ fn get_api_origin(state: State<'_, BackendRuntime>) -> String {
 
 #[tauri::command]
 fn save_file(app: tauri::AppHandle, content: String, filename: String) -> Result<String, String> {
+    let safe_name = Path::new(&filename)
+        .file_name()
+        .ok_or("Invalid filename")?;
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&filename);
+    let path = dir.join(safe_name);
     std::fs::write(&path, &content).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
 }
 
 fn find_free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    drop(listener);
-    Ok(port)
+    for _ in 0..3 {
+        if let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) {
+            if let Ok(addr) = listener.local_addr() {
+                return Ok(addr.port());
+            }
+        }
+    }
+    Err("Failed to find a free port after 3 attempts".into())
 }
 
 fn backend_binary_filename() -> &'static str {
@@ -67,11 +113,9 @@ fn resolve_backend_binary<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Resul
     let filename = backend_binary_filename();
     let dev_candidate = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("bin")
+        .join("text-api")
         .join(filename);
 
-    // In `tauri dev`, prefer the workspace copy over any `target/debug/bin` copy.
-    // This avoids stale/corrupted debug artifacts and keeps sidecar behavior
-    // aligned with the latest rebuilt binary.
     if cfg!(debug_assertions) && dev_candidate.exists() {
         return Ok(dev_candidate);
     }
@@ -81,6 +125,7 @@ fn resolve_backend_binary<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Resul
         .resource_dir()
         .map_err(|e| e.to_string())?
         .join("bin")
+        .join("text-api")
         .join(filename);
     if resource_candidate.exists() {
         return Ok(resource_candidate);
@@ -99,13 +144,13 @@ fn resolve_backend_binary<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Resul
 
 fn health_check(port: u16) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(120)) {
         Ok(stream) => stream,
         Err(_) => return false,
     };
 
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(160)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(160)));
 
     let request = b"GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     if stream.write_all(request).is_err() {
@@ -126,6 +171,7 @@ fn health_check(port: u16) -> bool {
 
 fn wait_until_ready(child: &mut Child, port: u16) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(60);
+    let mut sleep_ms = 20_u64;
 
     loop {
         if let Ok(Some(status)) = child.try_wait() {
@@ -152,7 +198,8 @@ fn wait_until_ready(child: &mut Child, port: u16) -> Result<(), String> {
             return Err("Embedded backend did not become ready in time.".to_string());
         }
 
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(sleep_ms));
+        sleep_ms = (sleep_ms + 15).min(120);
     }
 }
 
@@ -176,7 +223,12 @@ fn repo_root_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
-fn apply_backend_process_env(command: &mut Command, port: u16, debug_sidecar: bool) {
+fn apply_backend_process_env(
+    command: &mut Command,
+    port: u16,
+    debug_sidecar: bool,
+    log_dir: Option<&Path>,
+) {
     let log_level = if debug_sidecar { "debug" } else { "warning" };
     let access_log = if debug_sidecar { "1" } else { "0" };
     command
@@ -188,8 +240,25 @@ fn apply_backend_process_env(command: &mut Command, port: u16, debug_sidecar: bo
 
     if debug_sidecar {
         command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else if let Some(dir) = log_dir {
+        let _ = std::fs::create_dir_all(dir);
+        let log_path = dir.join("text-api-stderr.log");
+        match File::create(&log_path) {
+            Ok(log_file) => {
+                command.stdout(Stdio::null()).stderr(Stdio::from(log_file));
+            }
+            Err(_) => {
+                command.stdout(Stdio::null()).stderr(Stdio::null());
+            }
+        }
     } else {
         command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
 }
 
@@ -206,7 +275,8 @@ fn dev_venv_python(repo_root: &Path) -> PathBuf {
 fn try_spawn_dev_source_backend(
     port: u16,
     debug_sidecar: bool,
-) -> Result<Option<BackendRuntime>, String> {
+    log_dir: Option<&Path>,
+) -> Result<Option<Child>, String> {
     if !cfg!(debug_assertions) {
         return Ok(None);
     }
@@ -244,15 +314,14 @@ fn try_spawn_dev_source_backend(
     let mut last_error: Option<String> = None;
     for mut command in launchers {
         command.current_dir(&repo_root);
-        apply_backend_process_env(&mut command, port, debug_sidecar);
+        apply_backend_process_env(&mut command, port, debug_sidecar, log_dir);
         match command.spawn() {
             Ok(mut child) => match wait_until_ready(&mut child, port) {
                 Ok(()) => {
-                    let api_origin = format!("http://127.0.0.1:{port}");
                     if debug_sidecar {
-                        eprintln!("Started dev source backend at {api_origin}");
+                        eprintln!("Started dev source backend at http://127.0.0.1:{port}");
                     }
-                    return Ok(Some(BackendRuntime::new(api_origin, child)));
+                    return Ok(Some(child));
                 }
                 Err(err) => {
                     last_error = Some(err);
@@ -338,20 +407,22 @@ fn ensure_macos_codesign(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn spawn_backend<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<BackendRuntime, String> {
-    let port = find_free_port()?;
+fn spawn_backend_child<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    port: u16,
+) -> Result<Child, String> {
     let debug_sidecar = sidecar_debug_enabled();
+    let log_dir = app.path().app_log_dir().ok();
 
-    if let Some(runtime) = try_spawn_dev_source_backend(port, debug_sidecar)? {
-        return Ok(runtime);
+    if let Some(child) = try_spawn_dev_source_backend(port, debug_sidecar, log_dir.as_deref())? {
+        return Ok(child);
     }
 
     let backend_binary = resolve_backend_binary(app)?;
     ensure_macos_codesign(&backend_binary)?;
-    let api_origin = format!("http://127.0.0.1:{port}");
 
     let mut command = Command::new(&backend_binary);
-    apply_backend_process_env(&mut command, port, debug_sidecar);
+    apply_backend_process_env(&mut command, port, debug_sidecar, log_dir.as_deref());
 
     let mut child = command.spawn().map_err(|e| {
         format!(
@@ -361,16 +432,81 @@ fn spawn_backend<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Backend
     })?;
 
     wait_until_ready(&mut child, port)?;
-    Ok(BackendRuntime::new(api_origin, child))
+    Ok(child)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let backend = spawn_backend(app.handle())
+            // Create the main window programmatically so we can configure WKWebView
+            // to allow media autoplay without user gesture.
+            #[cfg(target_os = "macos")]
+            let main_window = {
+                use objc2::MainThreadMarker;
+                use objc2_web_kit::{WKAudiovisualMediaTypes, WKWebViewConfiguration};
+
+                // SAFETY: setup() runs on the main thread in a Tauri app.
+                let mtm = unsafe { MainThreadMarker::new_unchecked() };
+                let config = unsafe { WKWebViewConfiguration::new(mtm) };
+                unsafe {
+                    config.setMediaTypesRequiringUserActionForPlayback(
+                        WKAudiovisualMediaTypes::None,
+                    );
+                }
+
+                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                    .title("text")
+                    .inner_size(1320.0, 860.0)
+                    .min_inner_size(960.0, 640.0)
+                    .resizable(true)
+                    .background_color(tauri::webview::Color(2, 4, 7, 255))
+                    .with_webview_configuration(config)
+                    .build()
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    })?
+            };
+
+            #[cfg(not(target_os = "macos"))]
+            let main_window = {
+                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                    .title("text")
+                    .inner_size(1320.0, 860.0)
+                    .min_inner_size(960.0, 640.0)
+                    .resizable(true)
+                    .background_color(tauri::webview::Color(2, 4, 7, 255))
+                    .build()
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    })?
+            };
+            let _ = main_window;
+
+            let port = find_free_port()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-            app.manage(backend);
+            let api_origin = format!("http://127.0.0.1:{port}");
+            app.manage(BackendRuntime::new(api_origin));
+
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                match spawn_backend_child(&handle, port) {
+                    Ok(child) => {
+                        if let Some(state) = handle.try_state::<BackendRuntime>() {
+                            if let Ok(mut lock) = state.child.lock() {
+                                *lock = Some(child);
+                            }
+                        }
+                        let _ = handle.emit("backend-ready", ());
+                    }
+                    Err(err) => {
+                        eprintln!("Backend startup failed: {err}");
+                        let _ = handle.emit("backend-error", &err);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_api_origin, save_file])

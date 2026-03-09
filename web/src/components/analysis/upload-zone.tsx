@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Upload, FileText, X, Loader2, FolderOpen } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { UploadResponse } from "@/lib/types";
+import { FADE_VARIANTS, TRANSITION_ENTER } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -149,7 +151,7 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
   };
 
   return (
-    <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.6)]">
+    <Card className="border-border/70 bg-card/95 shadow-sm">
       <CardContent className="pt-6">
         {!selectionLabel ? (
           <div
@@ -159,16 +161,16 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
             }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
+            role="region"
             aria-label={t("upload.dropHint")}
             className={`group relative overflow-hidden rounded-[24px] border-2 border-dashed p-8 text-center transition-all duration-200 ${
               isDragging
-                ? "border-primary bg-primary/10 shadow-sm"
-                : "border-muted-foreground/25 bg-[linear-gradient(140deg,rgba(250,248,244,0.82),rgba(242,239,232,0.62))] hover:border-primary/45 hover:bg-primary/5 dark:bg-[linear-gradient(140deg,rgba(15,23,42,0.62),rgba(15,23,42,0.38))]"
+                ? "scale-[1.005] border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20 ring-offset-2"
+                : "border-muted-foreground/25 bg-background/40 hover:border-primary/45 hover:bg-primary/5"
             }`}
           >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.14),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.1),transparent_36%)]" />
             <div className="relative flex flex-col items-center">
-              <div className="mb-4 rounded-[22px] border border-border/60 bg-background/78 p-3 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.45)]">
+              <div className="mb-4 rounded-[22px] bg-background/78 p-3">
                 <Upload className="h-8 w-8 text-muted-foreground transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:scale-105" />
               </div>
               <p className="mb-1 text-base font-semibold">{t("upload.dropHint")}</p>
@@ -197,6 +199,7 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
               multiple
               accept=".csv,.json,.jsonl,.txt"
               onChange={handleInputChange}
+              aria-label={t("upload.chooseFileAria")}
               className="sr-only"
             />
             <input
@@ -206,15 +209,16 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
               multiple
               accept=".csv,.json,.jsonl,.txt"
               onChange={handleInputChange}
+              aria-label={t("upload.chooseFolderAria")}
               className="sr-only"
             />
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-[24px] border border-border/60 bg-[linear-gradient(140deg,rgba(250,248,244,0.78),rgba(242,239,232,0.58))] p-4 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.45)] dark:bg-[linear-gradient(140deg,rgba(15,23,42,0.62),rgba(15,23,42,0.42))]">
+            <div className="rounded-[24px] bg-background/60 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className="rounded-2xl border border-border/60 bg-background/80 p-2.5">
+                  <div className="rounded-2xl bg-background/80 p-2.5">
                     <FileText className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div className="min-w-0">
@@ -232,47 +236,67 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
                 </div>
               </div>
             </div>
-            {preview && (
-              <div className="grid gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]">
-                <div className="rounded-2xl border border-border/60 bg-background/45 p-4">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                    {t("upload.filesCount", { count: preview.fileCount })}
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold">{preview.fileCount}</div>
-                </div>
-                <div className="rounded-2xl border border-border/60 bg-background/45 p-4">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                    {t("upload.textsCount", { count: preview.textCount })}
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold">{preview.textCount}</div>
-                </div>
-                <div className="rounded-2xl border border-border/60 bg-background/45 p-4">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                    {t("upload.authorsCount", { count: preview.authorCount })}
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold">{preview.authorCount}</div>
-                </div>
-              </div>
-            )}
-            {preview && preview.authors.length > 0 && (
-              <div className="rounded-2xl border border-border/60 bg-background/35 p-4">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                  {t("upload.authorRoster")}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {preview.authors.slice(0, 8).map((author) => (
-                    <Badge key={author} variant="secondary" className="rounded-full text-xs">
-                      {author}
-                    </Badge>
+            <AnimatePresence>
+              {preview && (
+                <motion.div
+                  key="stat-cards"
+                  variants={FADE_VARIANTS}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={TRANSITION_ENTER}
+                  className="grid gap-3 md:grid-cols-[repeat(3,minmax(0,1fr))]"
+                >
+                  {[
+                    { label: t("upload.filesCount", { count: preview.fileCount }), value: preview.fileCount },
+                    { label: t("upload.textsCount", { count: preview.textCount }), value: preview.textCount },
+                    { label: t("upload.authorsCount", { count: preview.authorCount }), value: preview.authorCount },
+                  ].map((card, index) => (
+                    <motion.div
+                      key={card.label}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ ...TRANSITION_ENTER, delay: index * 0.04 }}
+                      className="rounded-2xl bg-background/45 p-4"
+                    >
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                        {card.label}
+                      </div>
+                      <div className="mt-2 text-2xl font-semibold">{card.value}</div>
+                    </motion.div>
                   ))}
-                  {preview.authors.length > 8 && (
-                    <Badge variant="secondary" className="rounded-full text-xs">
-                      +{preview.authors.length - 8}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {preview && preview.authors.length > 0 && (
+                <motion.div
+                  key="author-roster"
+                  variants={FADE_VARIANTS}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={TRANSITION_ENTER}
+                  className="rounded-2xl bg-background/35 p-4"
+                >
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                    {t("upload.authorRoster")}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {preview.authors.slice(0, 8).map((author) => (
+                      <Badge key={author} variant="secondary" className="rounded-full text-xs">
+                        {author}
+                      </Badge>
+                    ))}
+                    {preview.authors.length > 8 && (
+                      <Badge variant="secondary" className="rounded-full text-xs">
+                        +{preview.authors.length - 8}
+                      </Badge>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}

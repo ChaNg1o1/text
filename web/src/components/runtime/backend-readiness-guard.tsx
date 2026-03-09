@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
-import { DURATION } from "@/lib/motion";
+import { useEffect, type ReactNode } from "react";
+
+type RuntimeWindow = Window & {
+  __TEXT_BACKEND_READY__?: boolean;
+};
 
 function isTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
@@ -16,120 +19,66 @@ function isTauriRuntime(): boolean {
   );
 }
 
-type BackendStatus = "loading" | "ready" | "error";
+function markBackendReady(): void {
+  const runtimeWindow = window as RuntimeWindow;
+  if (runtimeWindow.__TEXT_BACKEND_READY__) return;
+  runtimeWindow.__TEXT_BACKEND_READY__ = true;
+  window.dispatchEvent(new Event("text:backend-ready"));
+}
 
 export function BackendReadinessGuard({ children }: { children: ReactNode }) {
-  // Always initialize as "ready" so SSR and client first-render match.
-  // Tauri detection happens in useEffect (client-only) to avoid hydration mismatch.
-  const [status, setStatus] = useState<BackendStatus>("ready");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [dismissing, setDismissing] = useState(false);
-  const [showOverlay, setShowOverlay] = useState(false);
-
   useEffect(() => {
     if (!isTauriRuntime()) return;
 
-    setStatus("loading");
-    setShowOverlay(true);
-
     let cancelled = false;
+    let teardown: (() => void) | undefined;
 
     async function setup() {
       const { listen } = await import("@tauri-apps/api/event");
       const { invoke } = await import("@tauri-apps/api/core");
 
       const unlistenReady = await listen("backend-ready", () => {
-        if (!cancelled) setStatus("ready");
+        if (cancelled) return;
+        markBackendReady();
       });
 
       const unlistenError = await listen<string>("backend-error", (e) => {
-        if (!cancelled) {
-          setErrorMessage(e.payload);
-          setStatus("error");
-        }
+        if (cancelled) return;
+        console.error("[text/backend] startup error", e.payload);
       });
 
-      // Race condition guard: backend may have started before listener was set up
       try {
         const origin = await invoke<string>("get_api_origin");
-        const res = await fetch(`${origin}/api/v1/health`);
-        if (res.ok && !cancelled) {
-          setStatus("ready");
+        fetch(`${origin}/api/v1/health`, { cache: "no-store" })
+          .then((response) => {
+            if (cancelled || !response.ok) return;
+            markBackendReady();
+          })
+          .catch(() => {});
+      } catch (error) {
+        if (!cancelled) {
+          console.error("[text/backend] failed to resolve api origin", error);
         }
-      } catch {
-        // Not ready yet -- wait for events
       }
 
-      return () => {
+      teardown = () => {
         cancelled = true;
         unlistenReady();
         unlistenError();
       };
     }
 
-    const cleanup = setup();
+    setup().catch((error) => {
+      if (!cancelled) {
+        console.error("[text/backend] background bootstrap failed", error);
+      }
+    });
+
     return () => {
       cancelled = true;
-      cleanup.then((fn) => fn?.());
+      teardown?.();
     };
   }, []);
 
-  // Fade-out overlay when status transitions to "ready"
-  useEffect(() => {
-    if (status !== "ready" || !showOverlay) return;
-
-    setDismissing(true);
-    const timer = setTimeout(() => {
-      setShowOverlay(false);
-      setDismissing(false);
-    }, DURATION.normal * 1000); // 250ms fade-out
-
-    return () => clearTimeout(timer);
-  }, [status, showOverlay]);
-
-  if (!showOverlay) {
-    return <>{children}</>;
-  }
-
-  return (
-    <>
-      {children}
-      <div
-        className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm"
-        style={{
-          opacity: dismissing ? 0 : 1,
-          transition: `opacity ${DURATION.normal}s ease-out`,
-        }}
-      >
-        <div className="flex flex-col items-center gap-4 text-center">
-          {status === "loading" && (
-            <>
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted-foreground/30 border-t-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Starting analysis engine...
-              </p>
-            </>
-          )}
-          {status === "error" && (
-            <div className="flex flex-col items-center gap-3 rounded-lg border bg-card p-6 shadow-lg">
-              <p className="text-sm font-medium text-destructive">
-                Failed to start backend
-              </p>
-              {errorMessage && (
-                <p className="max-w-md text-xs text-muted-foreground">
-                  {errorMessage}
-                </p>
-              )}
-              <button
-                className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
-                onClick={() => window.location.reload()}
-              >
-                Retry
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  );
+  return <>{children}</>;
 }

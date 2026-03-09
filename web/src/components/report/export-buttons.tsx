@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Download, FileText, Braces, Check } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { ForensicReport } from "@/lib/types";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
 
 interface ExportButtonsProps {
   report: ForensicReport;
@@ -209,6 +211,7 @@ function reportToMarkdown(report: ForensicReport): string {
 export function ExportButtons({ report, analysisId }: ExportButtonsProps) {
   const { t } = useI18n();
   const [saved, setSaved] = useState<"md" | "json" | null>(null);
+  const reducedMotion = useReducedMotionPreference();
 
   const doExport = async (format: "md" | "json") => {
     const content =
@@ -239,26 +242,48 @@ export function ExportButtons({ report, analysisId }: ExportButtonsProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="h-8 w-8">
-          <Download className="h-4 w-4" />
+        <Button variant="outline" size="icon-lg" className="h-10 w-10 rounded-xl">
+          <Download className="h-4.5 w-4.5" />
           <span className="sr-only">{t("export.title")}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-36">
         <DropdownMenuItem onClick={() => void doExport("md")}>
-          {saved === "md" ? (
-            <Check className="mr-2 h-4 w-4 text-emerald-500" />
-          ) : (
-            <FileText className="mr-2 h-4 w-4" />
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={saved === "md" ? "check-md" : "icon-md"}
+              initial={reducedMotion ? false : { opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={reducedMotion ? undefined : { opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.15 }}
+              className="mr-2 inline-flex"
+            >
+              {saved === "md" ? (
+                <Check className="h-4 w-4 text-emerald-500" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
+            </motion.span>
+          </AnimatePresence>
           {t("export.markdown")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => void doExport("json")}>
-          {saved === "json" ? (
-            <Check className="mr-2 h-4 w-4 text-emerald-500" />
-          ) : (
-            <Braces className="mr-2 h-4 w-4" />
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={saved === "json" ? "check-json" : "icon-json"}
+              initial={reducedMotion ? false : { opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={reducedMotion ? undefined : { opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.15 }}
+              className="mr-2 inline-flex"
+            >
+              {saved === "json" ? (
+                <Check className="h-4 w-4 text-emerald-500" />
+              ) : (
+                <Braces className="h-4 w-4" />
+              )}
+            </motion.span>
+          </AnimatePresence>
           {t("export.json")}
         </DropdownMenuItem>
       </DropdownMenuContent>

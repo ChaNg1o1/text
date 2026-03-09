@@ -34,7 +34,7 @@ def main() -> None:
             "PyInstaller",
             "--noconfirm",
             "--clean",
-            "--onefile",
+            "--onedir",
             "--name",
             "text-api",
             "--collect-data",
@@ -49,6 +49,18 @@ def main() -> None:
             "uvicorn.protocols.http.auto",
             "--hidden-import",
             "uvicorn.lifespan.on",
+            "--exclude-module",
+            "tkinter",
+            "--exclude-module",
+            "test",
+            "--exclude-module",
+            "unittest",
+            "--exclude-module",
+            "setuptools",
+            "--exclude-module",
+            "pip",
+            "--exclude-module",
+            "wheel",
             "--paths",
             str(ROOT_DIR / "src"),
             "--distpath",
@@ -63,7 +75,7 @@ def main() -> None:
     )
 
     binary_name = "text-api.exe" if platform.system() == "Windows" else "text-api"
-    binary_path = DIST_DIR / binary_name
+    binary_path = DIST_DIR / "text-api" / binary_name
 
     if platform.system() != "Windows":
         os.chmod(binary_path, 0o755)

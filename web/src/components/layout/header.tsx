@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/components/providers/i18n-provider";
 import { LanguageToggle } from "@/components/layout/language-toggle";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
-import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
 
 const NAV_HOVER_MS = 180;
 const NAV_HOVER_STYLE = { "--nav-hover-ms": `${NAV_HOVER_MS}ms` } as CSSProperties;
@@ -18,7 +17,6 @@ const NAV_HOVER_STYLE = { "--nav-hover-ms": `${NAV_HOVER_MS}ms` } as CSSProperti
 export function Header() {
   const pathname = usePathname();
   const { t } = useI18n();
-  const reducedMotion = useReducedMotionPreference();
   const navItems = [
     {
       href: "/analyses",
@@ -41,7 +39,7 @@ export function Header() {
   ];
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b border-border/55 bg-background/82 backdrop-blur-md supports-[backdrop-filter]:bg-background/36 dark:border-white/8">
       <div className="container flex h-14 items-center px-6">
         <Link href="/" className="mr-8 flex h-9 items-center">
           <Image
@@ -55,7 +53,7 @@ export function Header() {
           />
           <span className="sr-only">{t("app.name")}</span>
         </Link>
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1" aria-label={t("nav.mainAria")}>
           {navItems.map((item) => {
             const active = item.match(pathname);
             return (
@@ -66,9 +64,9 @@ export function Header() {
                 size="sm"
                 style={NAV_HOVER_STYLE}
                 className={cn(
-                  "group/nav header-nav-link relative overflow-hidden gap-1.5",
-                  "hover:text-foreground",
-                  active ? "text-foreground ring-1 ring-border/60" : "text-muted-foreground",
+                  "group/nav header-nav-link relative gap-1.5 bg-transparent shadow-none",
+                  "hover:bg-transparent focus-visible:bg-transparent hover:text-foreground",
+                  active ? "text-foreground" : "text-muted-foreground",
                 )}
               >
                 <Link
@@ -76,16 +74,10 @@ export function Header() {
                   aria-current={active ? "page" : undefined}
                   data-active={active ? "true" : undefined}
                 >
-                  {active && (
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-0 rounded-md bg-secondary/95 ring-1 ring-border/60"
-                    />
-                  )}
-
                   <span className="relative z-10 inline-flex items-center gap-1.5">
                     <item.icon
-                      className={cn("header-nav-icon h-4 w-4", reducedMotion && "transform-none")}
+                      className="header-nav-icon h-4 w-4"
+                      aria-hidden="true"
                     />
                     <span
                       className={cn(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -30,7 +31,9 @@ def _request_payload() -> AnalysisRequest:
     )
 
 
-def _create_analysis(store, status: AnalysisStatus, with_report: bool = False) -> tuple[str, AnalysisRequest]:
+def _create_analysis(
+    store, status: AnalysisStatus, with_report: bool = False
+) -> tuple[str, AnalysisRequest]:
     request = _request_payload()
     analysis_id = asyncio.run(
         store.create(
@@ -112,7 +115,24 @@ def _parse_events(raw: str) -> list[tuple[str, dict[str, object]]]:
     return events
 
 
-def test_given_unknown_analysis_when_requesting_qa_stream_then_returns_404(monkeypatch, tmp_path) -> None:
+def _parse_ui_message_chunks(raw: str) -> tuple[list[dict[str, object]], bool]:
+    blocks = [block.strip() for block in raw.split("\n\n") if block.strip()]
+    chunks: list[dict[str, object]] = []
+    saw_done = False
+    for block in blocks:
+        if not block.startswith("data: "):
+            continue
+        payload = block.removeprefix("data: ").strip()
+        if payload == "[DONE]":
+            saw_done = True
+            continue
+        chunks.append(json.loads(payload))
+    return chunks, saw_done
+
+
+def test_given_unknown_analysis_when_requesting_qa_stream_then_returns_404(
+    monkeypatch, tmp_path
+) -> None:
     deps.get_settings.cache_clear()
     monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
 
@@ -123,7 +143,9 @@ def test_given_unknown_analysis_when_requesting_qa_stream_then_returns_404(monke
         assert response.json()["detail"] == "Analysis not found"
 
 
-def test_given_non_completed_analysis_when_requesting_qa_stream_then_returns_409(monkeypatch, tmp_path) -> None:
+def test_given_non_completed_analysis_when_requesting_qa_stream_then_returns_409(
+    monkeypatch, tmp_path
+) -> None:
     deps.get_settings.cache_clear()
     monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
 
@@ -151,7 +173,9 @@ def test_given_completed_analysis_when_requesting_qa_stream_then_returns_stream_
             self.backend = backend
             self.config_path = config_path
 
-        async def complete(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+        async def complete(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
             assert "Question:" in user_prompt
             return "这是流式回答示例。"
 
@@ -182,6 +206,174 @@ def test_given_completed_analysis_when_requesting_qa_stream_then_returns_stream_
         assert completed_payload["answer"] == "这是流式回答示例。"
 
 
+def test_given_completed_analysis_when_requesting_ai_sdk_chat_then_returns_ui_message_stream(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+
+    class _FakeLLMBackend:
+        def __init__(self, backend: str, config_path=None) -> None:
+            self.backend = backend
+            self.config_path = config_path
+
+        async def complete(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            assert "Question:" in user_prompt
+            return "这是 AI SDK chat 回答。"
+
+    import text.api.routers.qa as qa_router
+
+    monkeypatch.setattr(qa_router, "LLMBackend", _FakeLLMBackend)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id, _ = _create_analysis(deps._store, AnalysisStatus.COMPLETED, with_report=True)
+
+        response = client.post(
+            f"/api/v1/analyses/{analysis_id}/qa/chat",
+            json={
+                "id": "chat-1",
+                "messages": [
+                    {
+                        "id": "user-1",
+                        "role": "user",
+                        "parts": [{"type": "text", "text": "这份报告最关键的证据是什么？"}],
+                    }
+                ],
+                "trigger": "submit-message",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert response.headers["x-vercel-ai-ui-message-stream"] == "v1"
+
+        chunks, saw_done = _parse_ui_message_chunks(response.text)
+        assert saw_done is True
+        assert chunks[0]["type"] == "start"
+        assert any(chunk["type"] == "data-reportSnapshot" for chunk in chunks)
+        assert any(chunk["type"] == "data-reportFocus" for chunk in chunks)
+        assert any(chunk["type"] == "text-start" for chunk in chunks)
+        assert any(
+            chunk["type"] == "text-delta" and chunk["delta"] == "这是 AI SDK chat 回答。"
+            for chunk in chunks
+        )
+        assert chunks[-1] == {"type": "finish", "finishReason": "stop"}
+
+
+def test_given_completed_analysis_when_requesting_ai_sdk_chat_with_tool_then_returns_tool_chunks(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+
+    class _FakeLLMBackend:
+        def __init__(self, backend: str, config_path=None) -> None:
+            self.backend = backend
+            self.config_path = config_path
+
+        async def complete_with_tools(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            tools: list[dict[str, object]],
+            temperature: float,
+            max_tokens: int,
+        ) -> SimpleNamespace:
+            assert "Question:" in user_prompt
+            assert any(tool["function"]["name"] == "displayRadar" for tool in tools)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="用雷达图展示写作画像维度。",
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="functions.displayRadar:0",
+                                    function=SimpleNamespace(
+                                        name="displayRadar",
+                                        arguments=json.dumps(
+                                            {
+                                                "title": "Unknown写作画像",
+                                                "dimensions": ["词汇丰富度", "句式多样性"],
+                                                "series": [
+                                                    {
+                                                        "name": "Unknown写作画像",
+                                                        "values": [0.72, 0.75],
+                                                    }
+                                                ],
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    ),
+                                )
+                            ],
+                        )
+                    )
+                ]
+            )
+
+        async def complete(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            raise AssertionError("JSON fallback should not be used when tool calls succeed")
+
+    import text.api.routers.qa as qa_router
+
+    monkeypatch.setattr(qa_router, "LLMBackend", _FakeLLMBackend)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id, _ = _create_analysis(deps._store, AnalysisStatus.COMPLETED, with_report=True)
+
+        response = client.post(
+            f"/api/v1/analyses/{analysis_id}/qa/chat",
+            json={
+                "id": "chat-1",
+                "messages": [
+                    {
+                        "id": "user-1",
+                        "role": "user",
+                        "parts": [{"type": "text", "text": "用雷达图展示写作画像维度"}],
+                    }
+                ],
+                "trigger": "submit-message",
+            },
+        )
+        assert response.status_code == 200
+
+        chunks, saw_done = _parse_ui_message_chunks(response.text)
+        assert saw_done is True
+        assert any(
+            chunk
+            == {
+                "type": "tool-input-start",
+                "toolCallId": "functions.displayRadar:0",
+                "toolName": "displayRadar",
+            }
+            for chunk in chunks
+        )
+        assert any(
+            chunk["type"] == "tool-input-available"
+            and chunk["toolName"] == "displayRadar"
+            and chunk["input"]["title"] == "Unknown写作画像"
+            for chunk in chunks
+        )
+        assert any(
+            chunk["type"] == "tool-output-available"
+            and chunk["output"]["dimensions"] == ["词汇丰富度", "句式多样性"]
+            for chunk in chunks
+        )
+        assert any(
+            chunk["type"] == "text-delta" and chunk["delta"] == "用雷达图展示写作画像维度。"
+            for chunk in chunks
+        )
+        assert chunks[-1] == {"type": "finish", "finishReason": "stop"}
+
+
 def test_given_completed_analysis_when_requesting_qa_suggestions_then_returns_llm_generated_items(
     monkeypatch, tmp_path
 ) -> None:
@@ -193,7 +385,9 @@ def test_given_completed_analysis_when_requesting_qa_suggestions_then_returns_ll
             self.backend = backend
             self.config_path = config_path
 
-        async def complete(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+        async def complete(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
             assert "suggestions" in system_prompt
             assert "Need exactly 3 short questions." in user_prompt
             return json.dumps(

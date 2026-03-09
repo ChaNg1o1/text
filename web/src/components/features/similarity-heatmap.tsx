@@ -49,7 +49,6 @@ function cosineSimilarityNormalized(a: NormalizedEmbedding, b: NormalizedEmbeddi
   }
   return dot;
 }
-
 function heatColor(value: number): string {
   if (value >= 0.9) return "rgb(15, 118, 110)";
   if (value >= 0.82) return "rgb(16, 185, 129)";

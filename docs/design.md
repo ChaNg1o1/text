@@ -27,6 +27,7 @@
 ### 动效原则
 - 仅保留页面进入、区块渐入、hover 强化和打开抽屉这类解释状态的动效。
 - 不使用持续性装饰动效、浮动背景颗粒或大面积动画层。
+- **例外：surface-flow 背景层**。全视口多层渐变动画作为环境纹理保留，提供品牌辨识度和空间感。该系统遵循单独的约束：仅使用 `transform` + `opacity` 保持 GPU 合成；`prefers-reduced-motion` 下完全禁用；移动端大幅降低漂移幅度和不透明度。详见 `globals.css` 中 `.app-surface-flow` 相关实现。
 
 ## 信息架构
 ### `/analyses`

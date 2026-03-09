@@ -137,6 +137,7 @@ export interface AgentFinding {
   metadata?: Record<string, unknown>;
   opinion_kind?: "deterministic_evidence" | "interpretive_opinion";
   interpretation?: string;
+  layer?: "clue" | "portrait" | "evidence";
 }
 
 export interface LLMCallRecord {
@@ -412,6 +413,7 @@ export interface AnalysisPerf {
 }
 
 export interface AnalysisDetail extends AnalysisSummary {
+  request?: AnalysisRequest;
   report?: ForensicReport;
   perf?: AnalysisPerf;
 }

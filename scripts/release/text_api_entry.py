@@ -26,6 +26,7 @@ def main() -> None:
         port=port,
         log_level=log_level,
         access_log=access_log,
+        timeout_graceful_shutdown=10,
     )
 
 

@@ -2,14 +2,14 @@
 
 <img src="src/text/icon/text.png" alt="Text Forensics" width="250" />
 
-**多Agent协作的数字取证文本分析工具**
+**多Agent协作的文本侦探与线索分析工具**
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Rust](https://img.shields.io/badge/Rust-Edition%202021-CE412B?logo=rust&logoColor=white)](https://rust-lang.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org)
 [![License](https://img.shields.io/badge/License-MIT-22c55e)](LICENSE)
 
-结合 Rust 高性能特征提取与 LLM 多智能体推理，为作者身份鉴定、傀儡账号检测等数字取证场景提供高置信度分析报告
+结合 Rust 高性能特征提取与 LLM 多智能体推理，为 OSINT 线索提取、作者画像、关联分析与身份研判提供可操作的调查报告
 
 </div>
 

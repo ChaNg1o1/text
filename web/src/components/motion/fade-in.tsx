@@ -1,6 +1,15 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { motion } from "framer-motion";
+import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
+import {
+  ENTER_FROM,
+  ENTER_TO,
+  EXIT_TO,
+  TRANSITION_ENTER,
+  TRANSITION_EXIT,
+} from "@/lib/motion";
 
 interface FadeInProps {
   children: ReactNode;
@@ -9,16 +18,21 @@ interface FadeInProps {
   y?: number;
 }
 
-export function FadeIn({ children, delay = 0, className }: FadeInProps) {
+export function FadeIn({ children, delay = 0, className, y }: FadeInProps) {
+  const reducedMotion = useReducedMotionPreference();
+
+  if (reducedMotion) {
+    return <div className={className}>{children}</div>;
+  }
+
   return (
-    <div
+    <motion.div
       className={className}
-      style={{
-        opacity: 1,
-        transition: `opacity 0.2s ease-out ${delay}s, transform 0.2s ease-out ${delay}s`,
-      }}
+      initial={{ ...ENTER_FROM, y: y ?? ENTER_FROM.y }}
+      animate={{ ...ENTER_TO, transition: { ...TRANSITION_ENTER, delay } }}
+      exit={{ ...EXIT_TO, transition: TRANSITION_EXIT }}
     >
       {children}
-    </div>
+    </motion.div>
   );
 }

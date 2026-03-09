@@ -42,8 +42,8 @@ class ReportRenderer:
         w = lines.append
         authors = sorted({text.author for text in report.request.texts})
 
-        w("# 文本取证报告\n")
-        w("## 报告摘要与结论分级\n")
+        w("# 文本调查报告\n")
+        w("## 调查摘要与结论分级\n")
         w(report.summary or "*暂无摘要。*")
         w("")
         if report.conclusions:
@@ -232,7 +232,7 @@ class ReportRenderer:
         console.print(
             Panel(
                 Markdown(ReportRenderer.to_markdown(report)),
-                title="[bold blue]文本取证报告[/bold blue]",
+                title="[bold blue]文本调查报告[/bold blue]",
                 border_style="blue",
             )
         )

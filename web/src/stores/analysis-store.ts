@@ -50,6 +50,10 @@ interface AnalysisStore {
   reset: (id: string) => void;
 }
 
+type InternalProgressState = ProgressState & {
+  _recentEventKeys?: string[];
+};
+
 const DEFAULT_PROGRESS: ProgressState = {
   phase: "pending",
   featureProgress: { completed: 0, total: 0, currentTextId: "" },
@@ -66,12 +70,18 @@ export const useAnalysisStore = create<AnalysisStore>((set, get) => ({
 
   handleSSEEvent: (id: string, event: SSEEventType, data: SSEEventData) => {
     set((state) => {
-      const prev = state.progress[id] ?? {
+      const prev: InternalProgressState = state.progress[id] ?? {
         ...DEFAULT_PROGRESS,
         agents: { ...INITIAL_AGENTS },
         logs: [],
       };
-      const next = { ...prev };
+      const eventKey = `${event}:${JSON.stringify(data)}`;
+      if (prev._recentEventKeys?.includes(eventKey)) {
+        return state;
+      }
+
+      const next: InternalProgressState = { ...prev };
+      next._recentEventKeys = [...(prev._recentEventKeys ?? []).slice(-511), eventKey];
       const eventTimestamp = typeof data.timestamp === "number" ? data.timestamp : Date.now() / 1000;
       next.lastEventAt = eventTimestamp;
       next.eventCount = (prev.eventCount ?? 0) + 1;

@@ -30,10 +30,13 @@ const UPLOAD_TIMEOUT_MS = 45000;
 const REQUEST_ID_HEADER = "X-Request-ID";
 const DEBUG_API_FLAG = process.env.NEXT_PUBLIC_TEXT_DEBUG_API ?? "";
 const TAURI_ORIGIN_RETRY_DELAYS_MS = [80, 180, 320, 500, 800] as const;
+const TAURI_BACKEND_READY_RETRY_DELAYS_MS = [40, 80, 140, 220, 320, 450, 650, 900] as const;
 let tauriApiOriginPromise: Promise<string> | null = null;
+let tauriBackendReadyPromise: Promise<void> | null = null;
 
 type RuntimeWindow = Window & {
   __TEXT_API_ORIGIN__?: string;
+  __TEXT_BACKEND_READY__?: boolean;
 };
 
 function currentWindow(): RuntimeWindow | null {
@@ -43,6 +46,16 @@ function currentWindow(): RuntimeWindow | null {
 
 function normalizeOrigin(origin: string): string {
   return origin.replace(/\/$/, "");
+}
+
+function isTauriBackendReady(): boolean {
+  return Boolean(currentWindow()?.__TEXT_BACKEND_READY__);
+}
+
+function markTauriBackendReady(): void {
+  const win = currentWindow();
+  if (!win) return;
+  win.__TEXT_BACKEND_READY__ = true;
 }
 
 function isTauriRuntime(): boolean {
@@ -173,8 +186,57 @@ async function resolveApiOrigin(): Promise<string> {
   return tauriApiOriginPromise;
 }
 
+async function probeTauriBackendHealth(origin: string): Promise<boolean> {
+  try {
+    const response = await fetchWithTimeout(
+      `${origin}/api/v1/health`,
+      {
+        cache: "no-store",
+      },
+      700,
+    );
+    if (!response.ok) return false;
+    markTauriBackendReady();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForTauriBackendReady(origin: string): Promise<void> {
+  if (!isTauriRuntime() || isTauriBackendReady()) {
+    return;
+  }
+
+  if (!tauriBackendReadyPromise) {
+    tauriBackendReadyPromise = (async () => {
+      for (const delay of TAURI_BACKEND_READY_RETRY_DELAYS_MS) {
+        if (await probeTauriBackendHealth(origin)) {
+          return;
+        }
+        await wait(delay);
+      }
+
+      if (await probeTauriBackendHealth(origin)) {
+        return;
+      }
+
+      tauriBackendReadyPromise = null;
+      throw new Error("Local desktop API service is still starting.");
+    })().catch((error) => {
+      tauriBackendReadyPromise = null;
+      throw error;
+    });
+  }
+
+  return tauriBackendReadyPromise;
+}
+
 async function resolveApiBase(): Promise<string> {
   const origin = await resolveApiOrigin();
+  if (isTauriRuntime() && !isTauriBackendReady()) {
+    await waitForTauriBackendReady(origin);
+  }
   return `${origin}/api/v1`;
 }
 
@@ -504,6 +566,10 @@ export const api = {
     const apiBase = await resolveApiBase();
     const params = new URLSearchParams({ question });
     return `${apiBase}/analyses/${encodeURIComponent(id)}/qa/stream?${params.toString()}`;
+  },
+  qaChatUrl: async (id: string) => {
+    const apiBase = await resolveApiBase();
+    return `${apiBase}/analyses/${encodeURIComponent(id)}/qa/chat`;
   },
   getQaSuggestions: (id: string, payload?: QaSuggestionsRequest) =>
     requestWithOptions<QaSuggestionsResponse>(

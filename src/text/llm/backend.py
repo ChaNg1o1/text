@@ -13,12 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import litellm
+from text.llm._lazy import litellm
 
 logger = logging.getLogger(__name__)
-
-# Suppress litellm's noisy default logging
-litellm.suppress_debug_info = True
 
 # Default search paths for the backends config file (first match wins).
 _DEFAULT_CONFIG_PATHS: list[Path] = [
@@ -316,11 +313,36 @@ class LLMBackend:
             )
         return key
 
+    async def complete_with_tools(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, object]],
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> litellm.ModelResponse:
+        """Send a completion request with tool definitions.
+
+        Returns the raw ``ModelResponse`` so callers can inspect both
+        ``message.content`` (text) and ``message.tool_calls``.
+        """
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return await self._call_with_retry(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+        )
+
     async def _call_with_retry(
         self,
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int,
+        tools: list[dict[str, object]] | None = None,
     ) -> litellm.ModelResponse:
         """Execute litellm.acompletion with exponential-backoff retry."""
         api_key = self._resolve_api_key()
@@ -331,6 +353,8 @@ class LLMBackend:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if tools:
+            kwargs["tools"] = tools
         if api_key:
             kwargs["api_key"] = api_key
         if self._api_base:

@@ -37,7 +37,7 @@ from text.report.renderer import ReportRenderer
 
 app = typer.Typer(
     name="text",
-    help="Digital forensics text analysis platform",
+    help="Clue-first text investigation platform",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
@@ -100,7 +100,7 @@ def main(
         typer.Option("--verbose", "-v", help="Enable verbose logging"),
     ] = False,
 ) -> None:
-    """Digital forensics text analysis platform."""
+    """Clue-first text investigation platform."""
     _configure_logging(verbose)
 
 
@@ -648,7 +648,7 @@ def config_info() -> None:
 
     console.print(
         Panel(
-            f"[bold]text[/bold] v{__version__}\nDigital forensics text analysis platform",
+            f"[bold]text[/bold] v{__version__}\nClue-first text investigation platform",
             border_style="blue",
             padding=(0, 2),
         )

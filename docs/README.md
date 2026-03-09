@@ -23,6 +23,7 @@
 - `docs/technical/architecture.md`: 系统分层、核心模块、目录映射
 - `docs/technical/backend.md`: Python/Rust/API/Agent 后端实现说明
 - `docs/technical/frontend.md`: Next.js Web 与 Tauri 桌面端说明
+- `docs/technical/frontend-quality-audit.md`: 前端质量审计、重复设计与视觉系统风险记录
 - `docs/technical/data-flow.md`: 从输入到报告的处理链路
 
 ### 开发与交付
@@ -34,6 +35,7 @@
 
 - `docs/plans/2026-03-06-docs-design.md`: 本次文档体系设计说明
 - `docs/plans/2026-03-06-docs-implementation.md`: 本次文档落地计划
+- `docs/plans/2026-03-08-frontend-visual-regression-plan.md`: 前端视觉回归启动方案
 
 ## 维护原则
 

@@ -10,25 +10,23 @@
     "frontendDist": "../out"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "text",
-        "width": 1320,
-        "height": 860,
-        "resizable": true
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:",
       "capabilities": ["default"]
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": ""
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "resources": [
-      "bin/*"
+      "bin/text-api/*"
     ],
     "icon": [
       "icons/32x32.png",
@@ -36,6 +34,13 @@
       "icons/128x128@2x.png",
       "icons/icon.ico",
       "icons/icon.icns"
-    ]
+    ],
+    "category": "DeveloperTool",
+    "copyright": "Copyright 2024-2026 text contributors",
+    "shortDescription": "Multi-agent forensic text analysis platform",
+    "longDescription": "Text forensics desktop client with multi-agent collaboration for authorship attribution, profiling, and sockpuppet detection.",
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
   }
 }

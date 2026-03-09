@@ -18,7 +18,6 @@ from text.api.models import (
 )
 from text.api.services.analysis_store import AnalysisStore
 from text.api.services.progress_manager import progress_manager
-from text.decision import default_threshold_profile
 from text.ingest.schema import AnalysisRequest, request_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -26,8 +25,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["analyses"])
 
 
+def _threshold_profile_version() -> str:
+    from text.decision import default_threshold_profile
+
+    return default_threshold_profile().version
+
+
 def _to_summary(detail: AnalysisDetail) -> AnalysisSummary:
-    return AnalysisSummary(**detail.model_dump(exclude={"report", "perf"}))
+    return AnalysisSummary(**detail.model_dump(exclude={"request", "report", "perf"}))
 
 
 async def _enqueue_analysis_request(
@@ -48,7 +53,7 @@ async def _enqueue_analysis_request(
     dedupe_key = hashlib.sha256(
         (
             f"{request_fingerprint(request)}|"
-            f"{default_threshold_profile().version}|"
+            f"{_threshold_profile_version()}|"
             f"{request.llm_backend}"
         ).encode("utf-8")
     ).hexdigest()

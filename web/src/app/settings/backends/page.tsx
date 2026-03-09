@@ -5,13 +5,10 @@ import Link from "next/link";
 import {
   ArrowLeft,
   FlaskConical,
-  Layers3,
   Loader2,
   PlusCircle,
   RefreshCcw,
   Search,
-  Server,
-  ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,7 +36,10 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { AnimatePresence } from "framer-motion";
+import { FadeIn } from "@/components/motion/fade-in";
 import { cn } from "@/lib/utils";
+import { PageIntro, PageIntroHeader, PageIntroStat, PageIntroStatGrid } from "@/components/shell/page-intro";
 
 type ProviderKind = "openai_compatible" | "anthropic_compatible";
 
@@ -536,24 +536,11 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
   return (
     <div className={cn("space-y-6", embedded && "space-y-4")}>
       {!embedded && (
-        <div className="relative overflow-hidden rounded-[28px] border border-border/60 bg-[linear-gradient(140deg,rgba(250,248,244,0.98),rgba(242,239,232,0.88))] shadow-[0_24px_80px_-40px_rgba(36,32,24,0.32)] dark:bg-[linear-gradient(140deg,rgba(17,24,39,0.92),rgba(8,47,73,0.24),rgba(15,23,42,0.9))]">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.16),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.12),transparent_36%)]" />
-          <div className="relative space-y-5 p-6">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-3">
-                <Button asChild variant="ghost" size="sm" className="w-fit rounded-full">
-                  <Link href="/settings">
-                    <ArrowLeft className="h-4 w-4" />
-                    {t("common.back")}
-                  </Link>
-                </Button>
-                <div>
-                  <h1 className="text-3xl font-semibold tracking-tight">{t("settings.backends.title")}</h1>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                    {t("settings.backends.subtitle")}
-                  </p>
-                </div>
-              </div>
+        <PageIntro>
+          <PageIntroHeader
+            title={t("settings.backends.title")}
+            description={t("settings.backends.subtitle")}
+            actions={(
               <Button
                 type="button"
                 variant="outline"
@@ -568,42 +555,46 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
                 )}
                 {t("settings.backends.refresh")}
               </Button>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-[22px] border border-border/60 bg-background/80 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.55)]">
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                  <Server className="h-3.5 w-3.5" />
-                  {t("settings.backends.summary.custom")}
-                </div>
-                <div className="mt-3 text-2xl font-semibold tabular-nums">{customBackends.length}</div>
-              </div>
-              <div className="rounded-[22px] border border-border/60 bg-background/80 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.55)]">
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  {t("settings.backends.summary.ready")}
-                </div>
-                <div className="mt-3 text-2xl font-semibold tabular-nums">{readyCustomCount}</div>
-              </div>
-              <div className="rounded-[22px] border border-border/60 bg-background/80 p-4 shadow-[0_20px_60px_-44px_rgba(15,23,42,0.55)]">
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-                  <Layers3 className="h-3.5 w-3.5" />
-                  {t("settings.backends.summary.providers")}
-                </div>
-                <div className="mt-3 text-2xl font-semibold tabular-nums">{providerKindCount}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+            )}
+            bodyClassName="max-w-2xl"
+          />
+          <Button asChild variant="ghost" size="sm" className="-mt-2 w-fit rounded-full">
+            <Link href="/settings">
+              <ArrowLeft className="h-4 w-4" />
+              {t("common.back")}
+            </Link>
+          </Button>
+          <PageIntroStatGrid>
+            <PageIntroStat
+              label={t("settings.backends.summary.custom")}
+              value={<span className="tabular-nums">{customBackends.length}</span>}
+              accentClassName="border-sky-500/30"
+            />
+            <PageIntroStat
+              label={t("settings.backends.summary.ready")}
+              value={<span className="tabular-nums">{readyCustomCount}</span>}
+              accentClassName="border-emerald-500/30"
+            />
+            <PageIntroStat
+              label={t("settings.backends.summary.providers")}
+              value={<span className="tabular-nums">{providerKindCount}</span>}
+              accentClassName="border-amber-500/30"
+            />
+          </PageIntroStatGrid>
+        </PageIntro>
       )}
 
       <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.65)] xl:sticky xl:top-20 xl:self-start">
+        <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm xl:sticky xl:top-20 xl:self-start">
           <CardHeader className="space-y-3 pb-3">
             <CardTitle className="text-base">{t("settings.backends.customTitle")}</CardTitle>
+            <AnimatePresence>
             {!customApiReady && (
+              <FadeIn key="api-warning">
               <p className="text-sm text-destructive">{t("settings.backends.customApiUnavailable")}</p>
+              </FadeIn>
             )}
+            </AnimatePresence>
             {embedded && (
               <Button
                 type="button"
@@ -621,8 +612,9 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
               </Button>
             )}
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <Input
+                aria-label={t("settings.backends.searchPlaceholder")}
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder={t("settings.backends.searchPlaceholder")}
@@ -657,7 +649,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
                     className={cn(
                       "w-full rounded-2xl border px-3 py-3 text-left transition-colors",
                       isActive
-                        ? "border-sky-500/35 bg-sky-500/8 shadow-[0_16px_38px_-28px_rgba(14,165,233,0.55)]"
+                        ? "border-sky-500/35 bg-sky-500/8"
                         : "border-border/70 bg-card/50 hover:border-border hover:bg-background/60",
                     )}
                   >
@@ -681,7 +673,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
           </CardContent>
         </Card>
 
-        <Card className="border-border/70 bg-card/90 shadow-[0_18px_60px_-42px_rgba(15,23,42,0.65)]">
+        <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm">
           <CardHeader className="border-b border-border/60">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -730,8 +722,9 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
             <form onSubmit={handleSave} className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>{t("settings.backends.form.name")}</Label>
+                  <Label htmlFor="backend-name">{t("settings.backends.form.name")}</Label>
                   <Input
+                    id="backend-name"
                     value={form.name}
                     disabled={!customApiReady || isEditing}
                     onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
@@ -742,7 +735,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>{t("settings.backends.form.provider")}</Label>
+                  <Label htmlFor="backend-provider">{t("settings.backends.form.provider")}</Label>
                   <Select
                     value={form.provider}
                     disabled={!customApiReady}
@@ -750,7 +743,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
                       setForm((prev) => ({ ...prev, provider: value as ProviderKind }))
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="backend-provider">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -762,8 +755,9 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
               </div>
 
               <div className="space-y-2">
-                <Label>{t("settings.backends.form.models")}</Label>
+                <Label htmlFor="backend-models">{t("settings.backends.form.models")}</Label>
                 <Textarea
+                  id="backend-models"
                   value={form.modelsText}
                   rows={6}
                   placeholder={t("settings.backends.form.modelsPlaceholder")}
@@ -774,8 +768,9 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
               </div>
 
               <div className="space-y-2">
-                <Label>{t("settings.backends.form.apiBase")}</Label>
+                <Label htmlFor="backend-api-base">{t("settings.backends.form.apiBase")}</Label>
                 <Input
+                  id="backend-api-base"
                   value={form.apiBase}
                   disabled={!customApiReady}
                   onChange={(event) => setForm((prev) => ({ ...prev, apiBase: event.target.value }))}
@@ -784,8 +779,9 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>{t("settings.backends.form.apiKey")}</Label>
+                  <Label htmlFor="backend-api-key">{t("settings.backends.form.apiKey")}</Label>
                   <Input
+                    id="backend-api-key"
                     type="password"
                     autoComplete="new-password"
                     value={form.apiKey}
@@ -796,8 +792,9 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>{t("settings.backends.form.apiKeyEnv")}</Label>
+                  <Label htmlFor="backend-api-key-env">{t("settings.backends.form.apiKeyEnv")}</Label>
                   <Input
+                    id="backend-api-key-env"
                     value={form.apiKeyEnv}
                     disabled={!customApiReady}
                     onChange={(event) => setForm((prev) => ({ ...prev, apiKeyEnv: event.target.value }))}

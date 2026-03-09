@@ -4,18 +4,18 @@ import { useEffect, useMemo, useState } from "react";
 import type { ProgressState } from "@/stores/analysis-store";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { FadeIn } from "@/components/motion/fade-in";
 import { NumberTween } from "@/components/motion/number-tween";
+import { AnimatePresence } from "framer-motion";
 import { AgentStatusGrid } from "./agent-status";
 import { LogStream } from "./log-stream";
+import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Loader2, AlertCircle, Clock } from "lucide-react";
 import { useI18n } from "@/components/providers/i18n-provider";
 
 interface ProgressPanelProps {
   progress: ProgressState;
   isLiveConnected?: boolean;
-  historyHydrated?: boolean;
 }
 
 const PHASE_ORDER = ["feature_extraction", "agent_analysis", "synthesis"];
@@ -33,31 +33,56 @@ function phasePercent(phase: string): number {
   }
 }
 
+function ElapsedTimer({
+  durationSeconds,
+  startedAt,
+  isTerminal,
+}: {
+  durationSeconds?: number;
+  startedAt?: number;
+  isTerminal: boolean;
+}) {
+  const { t } = useI18n();
+  const [now, setNow] = useState(() => Date.now() / 1000);
+
+  const elapsed = useMemo(() => {
+    if (typeof durationSeconds === "number") return durationSeconds;
+    if (typeof startedAt === "number") return Math.max(0, now - startedAt);
+    return undefined;
+  }, [now, durationSeconds, startedAt]);
+
+  useEffect(() => {
+    if (isTerminal || startedAt == null) return;
+    const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => window.clearInterval(timer);
+  }, [isTerminal, startedAt]);
+
+  if (elapsed == null) return null;
+
+  return (
+    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+      <Clock className="h-4 w-4" />
+      <span>{t("progress.elapsed")}:</span>
+      <NumberTween value={elapsed} decimals={1} suffix="s" />
+    </div>
+  );
+}
+
 export function ProgressPanel({
   progress,
   isLiveConnected = false,
-  historyHydrated = false,
 }: ProgressPanelProps) {
   const { t } = useI18n();
-  const [now, setNow] = useState(() => Date.now() / 1000);
   const phaseLabel = (phase: string) => t(`progress.${phase}`);
   const percent = progress.phase === "feature_extraction" && progress.featureProgress.total > 0
     ? 10 + (progress.featureProgress.completed / progress.featureProgress.total) * 10
     : phasePercent(progress.phase);
   const isTerminal = progress.phase === "completed" || progress.phase === "failed" || progress.phase === "canceled";
-  const elapsedSeconds = useMemo(() => {
-    if (typeof progress.durationSeconds === "number") return progress.durationSeconds;
-    if (typeof progress.startedAt === "number") return Math.max(0, now - progress.startedAt);
-    return undefined;
-  }, [now, progress.durationSeconds, progress.startedAt]);
   const lastUpdateTime = useMemo(() => {
     if (typeof progress.lastEventAt !== "number") return "";
     return new Date(progress.lastEventAt * 1000).toLocaleTimeString();
   }, [progress.lastEventAt]);
   const latestLog = progress.logs[progress.logs.length - 1];
-  const statusTone = isLiveConnected
-    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
-    : "border-amber-500/30 bg-amber-500/10 text-amber-700";
   const agentSummary = useMemo(() => {
     const stats = { completed: 0, running: 0, pending: 0, failed: 0 };
     const runningAgents: string[] = [];
@@ -80,18 +105,12 @@ export function ProgressPanel({
     return { stats, runningAgents };
   }, [progress.agents]);
 
-  useEffect(() => {
-    if (isTerminal || progress.startedAt == null) return;
-    const timer = window.setInterval(() => setNow(Date.now() / 1000), 1000);
-    return () => window.clearInterval(timer);
-  }, [isTerminal, progress.startedAt]);
-
   const phaseIcon = () => {
     switch (progress.phase) {
-      case "completed": return <CheckCircle2 className="h-5 w-5 text-green-500" />;
-      case "canceled": return <AlertCircle className="h-5 w-5 text-amber-600" />;
-      case "failed": return <AlertCircle className="h-5 w-5 text-red-500" />;
-      default: return <Loader2 className="h-5 w-5 animate-spin text-blue-500" />;
+      case "completed": return <CheckCircle2 className="h-5 w-5 text-green-500" aria-hidden="true" />;
+      case "canceled": return <AlertCircle className="h-5 w-5 text-amber-600" aria-hidden="true" />;
+      case "failed": return <AlertCircle className="h-5 w-5 text-red-500" aria-hidden="true" />;
+      default: return <Loader2 className="h-5 w-5 animate-spin text-blue-500" aria-hidden="true" />;
     }
   };
 
@@ -107,22 +126,15 @@ export function ProgressPanel({
                   {phaseLabel(progress.phase)}
                 </CardTitle>
               </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className={statusTone}>
-                  {isLiveConnected ? t("progress.liveConnected") : t("progress.liveDisconnected")}
-                </Badge>
-                {elapsedSeconds != null && (
-                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span>{t("progress.elapsed")}:</span>
-                    <NumberTween value={elapsedSeconds} decimals={1} suffix="s" />
-                  </div>
-                )}
-              </div>
+              <ElapsedTimer
+                durationSeconds={progress.durationSeconds}
+                startedAt={progress.startedAt}
+                isTerminal={isTerminal}
+              />
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Progress value={percent} className="h-2" />
+            <Progress value={percent} className="h-2" aria-label={t("progress.overallProgress")} />
 
             {/* Phase steps */}
             <div className="flex gap-2 flex-wrap">
@@ -133,7 +145,7 @@ export function ProgressPanel({
                 if (p === progress.phase) variant = "default";
                 else if (pIdx < idx || progress.phase === "completed") variant = "secondary";
                 return (
-                  <Badge key={p} variant={variant} className="text-xs transition-colors duration-200">
+                  <Badge key={p} variant={variant} className="text-xs transition-colors duration-200" aria-current={p === progress.phase ? "step" : undefined}>
                     {phaseLabel(p)}
                   </Badge>
                 );
@@ -163,21 +175,28 @@ export function ProgressPanel({
               <p>
                 {t("progress.eventCount", { count: progress.eventCount })}
                 {lastUpdateTime ? ` · ${t("progress.lastUpdate", { time: lastUpdateTime })}` : ""}
+                {!isLiveConnected && !isTerminal ? ` · ${t("progress.liveDisconnected")}` : ""}
               </p>
             </div>
 
+            <AnimatePresence>
             {agentSummary.runningAgents.length > 0 && (
+              <FadeIn key="active-agents">
               <p className="text-xs text-muted-foreground">
                 {t("progress.activeAgents", { agents: agentSummary.runningAgents.join(", ") })}
               </p>
+              </FadeIn>
             )}
 
             {progress.phase === "pending" && (
+              <FadeIn key="pending-hint">
               <p className="text-xs text-muted-foreground">{t("progress.pendingHint")}</p>
+              </FadeIn>
             )}
 
             {/* Feature extraction detail */}
             {progress.phase === "feature_extraction" && progress.featureProgress.total > 0 && (
+              <FadeIn key="feature-detail">
               <p className="text-sm text-muted-foreground">
                 {t("progress.featureExtraction", {
                   current: progress.featureProgress.completed,
@@ -189,24 +208,30 @@ export function ProgressPanel({
                   </span>
                 )}
               </p>
+              </FadeIn>
             )}
+            </AnimatePresence>
 
+            <AnimatePresence>
             {latestLog && (
+              <FadeIn key="latest-log">
               <p className="rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
                 {t("progress.latestLog", { message: latestLog.message })}
               </p>
+              </FadeIn>
             )}
-            {!latestLog && historyHydrated && (
-              <p className="rounded-md border border-dashed border-border/60 bg-muted/20 px-2.5 py-2 text-xs text-muted-foreground">
-                {isLiveConnected ? t("progress.logsEmpty") : t("progress.logsWaiting")}
-              </p>
-            )}
+            </AnimatePresence>
+
+            <AnimatePresence>
             {/* Error */}
             {progress.error && (
+              <FadeIn key="error">
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
                 {progress.error}
               </div>
+              </FadeIn>
             )}
+            </AnimatePresence>
           </CardContent>
         </Card>
       </FadeIn>
@@ -223,9 +248,9 @@ export function ProgressPanel({
       )}
 
       {/* Log stream */}
-      {(progress.logs.length > 0 || historyHydrated) && (
+      {progress.logs.length > 0 && (
         <FadeIn delay={0.06}>
-          <LogStream logs={progress.logs} isLiveConnected={isLiveConnected} />
+          <LogStream logs={progress.logs} />
         </FadeIn>
       )}
     </div>

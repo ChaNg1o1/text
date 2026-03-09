@@ -27,6 +27,19 @@ logger = logging.getLogger(__name__)
 _analysis_semaphore: asyncio.Semaphore | None = None
 
 
+def _format_duration(seconds: float) -> str:
+    """Render short durations without rounding everything down to 0.0s."""
+    if seconds < 0.001:
+        return f"{seconds * 1000.0:.2f}ms"
+    if seconds < 0.1:
+        return f"{seconds * 1000.0:.1f}ms"
+    if seconds < 1.0:
+        return f"{seconds * 1000.0:.0f}ms"
+    if seconds < 10.0:
+        return f"{seconds:.2f}s"
+    return f"{seconds:.1f}s"
+
+
 def _get_analysis_semaphore() -> asyncio.Semaphore:
     """Global analysis concurrency limiter (process-local)."""
     global _analysis_semaphore
@@ -301,12 +314,13 @@ class AnalysisRunner:
             ) -> AgentReport:
                 pm.emit(analysis_id, "agent_started", {"agent": name})
                 _emit_log(analysis_id, f"Agent {name} started.", source="agents")
-                t_start = time.time()
+                t_start = time.perf_counter()
                 try:
                     report = await OrchestratorAgent._run_agent(
                         name, coro_fn, features, task_context, **kwargs
                     )
-                    duration = round(time.time() - t_start, 2)
+                    duration_seconds = time.perf_counter() - t_start
+                    duration_ms = duration_seconds * 1000.0
                     status = "completed" if report.findings else "empty"
                     pm.emit(
                         analysis_id,
@@ -314,34 +328,37 @@ class AnalysisRunner:
                         {
                             "agent": name,
                             "findings_count": len(report.findings),
-                            "duration_seconds": duration,
+                            "duration_seconds": duration_seconds,
+                            "duration_ms": duration_ms,
                             "status": status,
                         },
                     )
                     _emit_log(
                         analysis_id,
                         (
-                            f"Agent {name} {status} in {duration:.2f}s "
+                            f"Agent {name} {status} in {_format_duration(duration_seconds)} "
                             f"with {len(report.findings)} findings."
                         ),
                         source="agents",
                     )
                     return report
                 except Exception:
-                    duration = round(time.time() - t_start, 2)
+                    duration_seconds = time.perf_counter() - t_start
+                    duration_ms = duration_seconds * 1000.0
                     pm.emit(
                         analysis_id,
                         "agent_completed",
                         {
                             "agent": name,
                             "findings_count": 0,
-                            "duration_seconds": duration,
+                            "duration_seconds": duration_seconds,
+                            "duration_ms": duration_ms,
                             "status": "failed",
                         },
                     )
                     _emit_log(
                         analysis_id,
-                        f"Agent {name} failed after {duration:.2f}s.",
+                        f"Agent {name} failed after {_format_duration(duration_seconds)}.",
                         level="error",
                         source="agents",
                     )
@@ -372,11 +389,18 @@ class AnalysisRunner:
             t_start = time.perf_counter()
             report = await original_synthesize(base_report, agent_reports, req)
             synthesis_ms = (time.perf_counter() - t_start) * 1000.0
-            duration = round(synthesis_ms / 1000.0, 2)
-            pm.emit(analysis_id, "synthesis_completed", {"duration_seconds": duration})
+            duration_seconds = synthesis_ms / 1000.0
+            pm.emit(
+                analysis_id,
+                "synthesis_completed",
+                {
+                    "duration_seconds": duration_seconds,
+                    "duration_ms": synthesis_ms,
+                },
+            )
             _emit_log(
                 analysis_id,
-                f"Synthesis completed in {duration:.2f}s.",
+                f"Synthesis completed in {_format_duration(duration_seconds)}.",
                 source="synthesis",
             )
             return report

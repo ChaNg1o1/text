@@ -48,7 +48,11 @@ writing profile reveal -- speak to the writer about themselves. In profile_overr
 use language that addresses the writer directly (e.g. "你的写作显示…", \
 "你倾向于…") rather than describing a third-party subject.
 - For clue_extraction tasks: write in 3rd person as an intelligence brief -- concise, \
-objective, emphasizing actionable clues.
+objective, emphasizing actionable clues. The opening should surface the best leads \
+first (who/where/when/which community/which source pattern to follow next), and only \
+then explain supporting forensic-style evidence and caveats. Do not frame the opening \
+as a courtroom-style verdict unless the provided deterministic results already make \
+that unavoidable.
 - For all other tasks: use 3rd person investigative style, like a detective's case notes.
 
 Output JSON object with:
@@ -94,6 +98,13 @@ Output JSON object with:
   - "counter_readings": array of strings
   - "strength": one of ["core","supporting","conflicting"]
 - "additional_limitations": array of strings
+
+For clue_extraction tasks specifically:
+- "lead" should read like a lead brief, not a verdict.
+- "bottom_line" should summarize the highest-value OSINT pivots and linkage clues.
+- "next_actions" should focus on concrete follow-up checks such as source tracing, alias pivoting, \
+timeline verification, account correlation, and metadata confirmation.
+- Keep "evidence_chain" as supporting detail behind the clues, not the front door of the narrative.
 
 Return ONLY JSON.
 """

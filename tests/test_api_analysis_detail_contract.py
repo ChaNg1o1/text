@@ -63,6 +63,8 @@ def test_analysis_detail_excludes_features_and_includes_perf(monkeypatch, tmp_pa
         assert response.status_code == 200
         body = response.json()
         assert "features" not in body
+        assert body["request"]["llm_backend"] == "demo-backend"
+        assert body["request"]["texts"][0]["id"] == "t1"
         assert body["perf"]["total_ms"] == 123.4
 
 
@@ -139,6 +141,7 @@ def test_analysis_detail_returns_forensic_report_sections(monkeypatch, tmp_path)
         body = response.json()
         report = body["report"]
         assert report is not None
+        assert body["request"]["texts"][0]["id"] == "t1"
         assert report["summary"] == "综合结论：当前证据仅支持在候选集中作有限判断。"
         assert report["conclusions"][0]["task"] == "closed_set_id"
         assert report["results"][0]["title"] == "候选集排名"

@@ -515,7 +515,14 @@ class AnalysisStore:
         from datetime import datetime, timezone
 
         from text.decision.engine import DecisionEngine
-        from text.ingest.schema import ForensicReport
+        from text.ingest.schema import AnalysisRequest, ForensicReport
+
+        request = None
+        if row["request_json"]:
+            try:
+                request = AnalysisRequest.model_validate_json(row["request_json"])
+            except Exception:
+                logger.warning("Failed to deserialize request for analysis %s", row["id"])
 
         report = None
         backfilled_report = False
@@ -551,6 +558,7 @@ class AnalysisStore:
                     else None
                 ),
                 error_message=row["error_message"],
+                request=request,
                 report=report,
                 perf=perf,
             ),

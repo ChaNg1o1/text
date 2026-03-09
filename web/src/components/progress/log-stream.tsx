@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
+import { FADE_FAST_VARIANTS } from "@/lib/motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Terminal } from "lucide-react";
@@ -15,7 +18,6 @@ interface LogEntry {
 
 interface LogStreamProps {
   logs: LogEntry[];
-  isLiveConnected?: boolean;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -25,9 +27,10 @@ const LEVEL_COLORS: Record<string, string> = {
   debug: "text-gray-400",
 };
 
-export function LogStream({ logs, isLiveConnected = false }: LogStreamProps) {
+export const LogStream = memo(function LogStream({ logs }: LogStreamProps) {
   const { t } = useI18n();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotionPreference();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -48,27 +51,43 @@ export function LogStream({ logs, isLiveConnected = false }: LogStreamProps) {
         >
           {logs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-center text-xs text-gray-400">
-              {isLiveConnected ? t("progress.logsEmpty") : t("progress.logsWaiting")}
+              {t("progress.logsEmpty")}
             </div>
           ) : (
-            logs.map((log, i) => (
-              <div key={i} className="flex gap-2 leading-relaxed">
-                <span className="text-gray-500 shrink-0">
-                  {new Date(log.timestamp * 1000).toLocaleTimeString()}
-                </span>
-                <span className={`shrink-0 uppercase w-12 ${LEVEL_COLORS[log.level] ?? "text-gray-400"}`}>
-                  {log.level}
-                </span>
-                {log.source && (
-                  <span className="text-cyan-400 shrink-0">[{log.source}]</span>
-                )}
-                <span className="text-gray-200">{log.message}</span>
-              </div>
-            ))
+            <AnimatePresence initial={false}>
+              {logs.map((log, i) => {
+                const LogTag = reducedMotion ? "div" : motion.div;
+                return (
+                  <LogTag
+                    key={`${log.timestamp}-${i}`}
+                    {...(reducedMotion
+                      ? {}
+                      : {
+                          variants: FADE_FAST_VARIANTS,
+                          initial: "initial",
+                          animate: "animate",
+                          exit: "exit",
+                        })}
+                    className="flex gap-2 leading-relaxed"
+                  >
+                    <span className="text-gray-500 shrink-0">
+                      {new Date(log.timestamp * 1000).toLocaleTimeString()}
+                    </span>
+                    <span className={`shrink-0 uppercase w-12 ${LEVEL_COLORS[log.level] ?? "text-gray-400"}`}>
+                      {log.level}
+                    </span>
+                    {log.source && (
+                      <span className="text-cyan-400 shrink-0">[{log.source}]</span>
+                    )}
+                    <span className="text-gray-200">{log.message}</span>
+                  </LogTag>
+                );
+              })}
+            </AnimatePresence>
           )}
           <div ref={bottomRef} />
         </ScrollArea>
       </CardContent>
     </Card>
   );
-}
+});

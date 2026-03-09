@@ -106,6 +106,7 @@ class AnalysisPerf(BaseModel):
 class AnalysisDetail(AnalysisSummary):
     """Full representation including report and performance breakdown."""
 
+    request: AnalysisRequest | None = None
     report: ForensicReport | None = None
     perf: AnalysisPerf | None = None
 

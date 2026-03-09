@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useAnalysis } from "@/hooks/use-analysis";
 import type { FeaturesResponse } from "@/lib/types";
+import { cosineSimilarity } from "@/lib/forensic-math";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,8 +23,13 @@ import { NumberTween } from "@/components/motion/number-tween";
 import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
 import { DistributionChart } from "@/components/features/distribution-chart";
 import { FeatureComparison } from "@/components/features/feature-comparison";
-import { SimilarityHeatmap } from "@/components/features/similarity-heatmap";
+import dynamic from "next/dynamic";
 import { FeatureDataViewer } from "@/components/features/feature-data-viewer";
+
+const SimilarityHeatmap = dynamic(
+  () => import("@/components/features/similarity-heatmap").then(m => ({ default: m.SimilarityHeatmap })),
+  { ssr: false },
+);
 import { useI18n } from "@/components/providers/i18n-provider";
 
 const SCALAR_FEATURES: {
@@ -67,20 +73,6 @@ function getValue(
       : (featureVector.nlp_features as unknown as Record<string, unknown>);
   const value = data[key];
   return typeof value === "number" ? value : 0;
-}
-
-function cosineSimilarity(a: number[], b: number[]) {
-  if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    dot += a[index] * b[index];
-    magA += a[index] * a[index];
-    magB += b[index] * b[index];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
 }
 
 function FeaturesPageContent() {
@@ -366,7 +358,7 @@ function FeaturesPageContent() {
                 <div className="space-y-2">
                   <span className="text-sm font-medium">{t("features.group")}</span>
                   <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-                    <SelectTrigger>
+                    <SelectTrigger aria-label={t("features.group")}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -382,7 +374,7 @@ function FeaturesPageContent() {
                 <div className="space-y-2">
                   <span className="text-sm font-medium">{t("features.feature")}</span>
                   <Select value={effectiveSelectedFeature} onValueChange={setSelectedFeature}>
-                    <SelectTrigger>
+                    <SelectTrigger aria-label={t("features.feature")}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
