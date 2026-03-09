@@ -11,15 +11,17 @@ interface UseAnalysesParams {
 }
 
 export function useAnalyses(params: UseAnalysesParams = {}) {
-  const key = JSON.stringify(["analyses", params]);
-  return useSWR<AnalysisListResponse>(key, () =>
-    api.listAnalyses({
-      page: params.page,
-      page_size: params.pageSize,
-      status: params.status,
-      task_type: params.taskType,
-      search: params.search,
-    }),
+  const key = ["analyses", params] as const;
+  return useSWR<AnalysisListResponse, ApiError, typeof key>(
+    key,
+    ([, requestParams]) =>
+      api.listAnalyses({
+        page: requestParams.page,
+        page_size: requestParams.pageSize,
+        status: requestParams.status,
+        task_type: requestParams.taskType,
+        search: requestParams.search,
+      }),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
@@ -33,14 +35,14 @@ export function useAnalyses(params: UseAnalysesParams = {}) {
         return true;
       },
       errorRetryCount: 3,
-      errorRetryInterval: (retryCount, error) => {
+      onErrorRetry: (error, _key, _config, revalidate, options) => {
         if (!(error instanceof ApiError)) {
-          return Math.min(300 * 2 ** retryCount, 1200);
+          window.setTimeout(() => revalidate(options), Math.min(300 * 2 ** options.retryCount, 1200));
+          return;
         }
         if (error.status === 408 || error.status >= 500) {
-          return Math.min(450 * 2 ** retryCount, 1800);
+          window.setTimeout(() => revalidate(options), Math.min(450 * 2 ** options.retryCount, 1800));
         }
-        return 2500;
       },
       keepPreviousData: true,
       dedupingInterval: 4000,

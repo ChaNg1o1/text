@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -48,6 +49,8 @@ import { AnimatePresence } from "framer-motion";
 import { useI18n } from "@/components/providers/i18n-provider";
 import { PageIntro, PageIntroHeader, PageIntroStat, PageIntroStatGrid } from "@/components/shell/page-intro";
 import { AnalysisStatusBadge } from "@/components/analysis/analysis-status-badge";
+import { LiquidGlassRuntime } from "@/components/effects/liquid-glass-runtime";
+import { cn } from "@/lib/utils";
 
 function timeAgo(
   iso: string,
@@ -69,7 +72,7 @@ function duration(created: string, completed?: string): string | null {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function HistorySkeleton() {
+function HistorySkeletonContent() {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-4">
@@ -78,23 +81,40 @@ function HistorySkeleton() {
         <Skeleton className="h-9" />
         <Skeleton className="h-9" />
       </div>
-      <Card>
-        <CardContent className="pt-6">
-          <div className="space-y-3">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="grid grid-cols-8 gap-3">
-                <Skeleton className="h-5 col-span-2" />
-                <Skeleton className="h-5" />
-                <Skeleton className="h-5" />
-                <Skeleton className="h-5" />
-                <Skeleton className="h-5" />
-                <Skeleton className="h-5" />
-                <Skeleton className="h-5" />
-              </div>
-            ))}
+      <div className="space-y-3">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="grid grid-cols-8 gap-3">
+            <Skeleton className="h-5 col-span-2" />
+            <Skeleton className="h-5" />
+            <Skeleton className="h-5" />
+            <Skeleton className="h-5" />
+            <Skeleton className="h-5" />
+            <Skeleton className="h-5" />
+            <Skeleton className="h-5" />
           </div>
-        </CardContent>
-      </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LiquidGlassShell({
+  children,
+  className,
+  paneClassName,
+}: {
+  children: ReactNode;
+  className?: string;
+  paneClassName?: string;
+}) {
+  return (
+    <div className={cn("liquid-glass-frame", className)}>
+      <div
+        aria-hidden="true"
+        data-liquid-glass="analyses"
+        className={cn("liquid-glass-pane", paneClassName)}
+      />
+      {children}
     </div>
   );
 }
@@ -255,263 +275,268 @@ export default function AnalysesPage() {
 
   return (
     <StaggerContainer className="space-y-6" delayChildren={0.03} staggerChildren={0.04}>
-      <StaggerItem>
-        <PageIntro>
-          <PageIntroHeader
-            eyebrow={t("analysis.workbenchEyebrow")}
-            title={t("analysis.historyTitle")}
-            description={t("analysis.historySubtitle")}
-            actions={(
-              <Button asChild className="rounded-full">
-                <Link href="/analyses/new">
-                  {t("analysis.createNow")}
-                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
-            )}
-          />
-          <PageIntroStatGrid className="sm:grid-cols-2 xl:grid-cols-4">
-            {overviewCards.map((card) => (
-              <PageIntroStat
-                key={card.key}
-                label={card.label}
-                value={<NumberTween value={card.value} />}
-                accentClassName={card.accent}
-              />
-            ))}
-          </PageIntroStatGrid>
-          <p className="text-xs text-muted-foreground">{t("analysis.historyHint")}</p>
-        </PageIntro>
-      </StaggerItem>
+      <LiquidGlassRuntime targetSelector='[data-liquid-glass="analyses"]' />
 
       <StaggerItem>
-        <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm">
-          <CardContent className="space-y-4 pt-6">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                <Input
-                  aria-label={t("analysis.searchById")}
-                  placeholder={t("analysis.searchById")}
-                  value={draftSearch}
-                  onChange={(e) => setDraftSearch(e.target.value)}
-                  className="w-56 pl-8"
-                />
-              </div>
-              <Select
-                value={statusFilter || "all"}
-                onValueChange={(v) => {
-                  setStatusFilter(v === "all" ? "" : v);
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger className="w-36" aria-label={t("analysis.status")}>
-                  <SelectValue placeholder={t("analysis.status")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("analysis.allStatus")}</SelectItem>
-                  <SelectItem value="pending">{t("status.pending")}</SelectItem>
-                  <SelectItem value="running">{t("status.running")}</SelectItem>
-                  <SelectItem value="completed">{t("status.completed")}</SelectItem>
-                  <SelectItem value="canceled">{t("status.canceled")}</SelectItem>
-                  <SelectItem value="failed">{t("status.failed")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={taskFilter || "all"}
-                onValueChange={(v) => {
-                  setTaskFilter(v === "all" ? "" : v);
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger className="w-40" aria-label={t("analysis.taskType")}>
-                  <SelectValue placeholder={t("analysis.taskType")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("analysis.allTypes")}</SelectItem>
-                  <SelectItem value="full">{t("task.full")}</SelectItem>
-                  <SelectItem value="verification">{t("task.verification")}</SelectItem>
-                  <SelectItem value="closed_set_id">{t("task.closed_set_id")}</SelectItem>
-                  <SelectItem value="open_set_id">{t("task.open_set_id")}</SelectItem>
-                  <SelectItem value="clustering">{t("task.clustering")}</SelectItem>
-                  <SelectItem value="profiling">{t("task.profiling")}</SelectItem>
-                  <SelectItem value="sockpuppet">{t("task.sockpuppet")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="outline" size="sm" disabled={!hasActiveFilters} onClick={clearFilters}>
-                <FilterX className="h-3.5 w-3.5" aria-hidden="true" />
-                {t("common.clearFilters")}
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-              <p>
-                <NumberTween value={data?.total ?? overviewCounts.total} /> {t("analysis.totalSuffix")}
-              </p>
-              <p>{t("analysis.tableHint")}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </StaggerItem>
-
-      <StaggerItem>
-        {isLoading ? (
-          <HistorySkeleton />
-        ) : error && !data ? (
-          <Card>
-            <CardContent className="pt-10 pb-10 text-center">
-              <p className="text-sm text-muted-foreground">
-                {t("analysis.loadFailed")}
-              </p>
-              {error instanceof Error && (
-                <p className="mt-1 text-xs text-muted-foreground/80">{error.message}</p>
+        <LiquidGlassShell className="rounded-[24px]">
+          <PageIntro className="border-transparent bg-transparent shadow-none">
+            <PageIntroHeader
+              eyebrow={t("analysis.workbenchEyebrow")}
+              title={t("analysis.historyTitle")}
+              description={t("analysis.historySubtitle")}
+              actions={(
+                <Button asChild className="rounded-full">
+                  <Link href="/analyses/new">
+                    {t("analysis.createNow")}
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </Link>
+                </Button>
               )}
-              <Button className="mt-4" variant="outline" size="sm" onClick={() => void mutate()}>
-                {t("detail.retryRefresh")}
-              </Button>
+            />
+            <PageIntroStatGrid className="sm:grid-cols-2 xl:grid-cols-4">
+              {overviewCards.map((card) => (
+                <LiquidGlassShell key={card.key} className="rounded-2xl" paneClassName={card.accent}>
+                  <PageIntroStat
+                    label={card.label}
+                    value={<NumberTween value={card.value} />}
+                    className="border-transparent bg-transparent"
+                  />
+                </LiquidGlassShell>
+              ))}
+            </PageIntroStatGrid>
+            <p className="text-xs text-muted-foreground">{t("analysis.historyHint")}</p>
+          </PageIntro>
+        </LiquidGlassShell>
+      </StaggerItem>
+
+      <StaggerItem>
+        <LiquidGlassShell className="rounded-xl">
+          <Card className="border-transparent bg-transparent shadow-none">
+            <CardContent className="space-y-4 pt-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  <Input
+                    aria-label={t("analysis.searchById")}
+                    placeholder={t("analysis.searchById")}
+                    value={draftSearch}
+                    onChange={(e) => setDraftSearch(e.target.value)}
+                    className="w-56 pl-8"
+                  />
+                </div>
+                <Select
+                  value={statusFilter || "all"}
+                  onValueChange={(v) => {
+                    setStatusFilter(v === "all" ? "" : v);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-36" aria-label={t("analysis.status")}>
+                    <SelectValue placeholder={t("analysis.status")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t("analysis.allStatus")}</SelectItem>
+                    <SelectItem value="pending">{t("status.pending")}</SelectItem>
+                    <SelectItem value="running">{t("status.running")}</SelectItem>
+                    <SelectItem value="completed">{t("status.completed")}</SelectItem>
+                    <SelectItem value="canceled">{t("status.canceled")}</SelectItem>
+                    <SelectItem value="failed">{t("status.failed")}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={taskFilter || "all"}
+                  onValueChange={(v) => {
+                    setTaskFilter(v === "all" ? "" : v);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="w-40" aria-label={t("analysis.taskType")}>
+                    <SelectValue placeholder={t("analysis.taskType")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t("analysis.allTypes")}</SelectItem>
+                    <SelectItem value="full">{t("task.full")}</SelectItem>
+                    <SelectItem value="verification">{t("task.verification")}</SelectItem>
+                    <SelectItem value="closed_set_id">{t("task.closed_set_id")}</SelectItem>
+                    <SelectItem value="open_set_id">{t("task.open_set_id")}</SelectItem>
+                    <SelectItem value="clustering">{t("task.clustering")}</SelectItem>
+                    <SelectItem value="profiling">{t("task.profiling")}</SelectItem>
+                    <SelectItem value="sockpuppet">{t("task.sockpuppet")}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" disabled={!hasActiveFilters} onClick={clearFilters}>
+                  <FilterX className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t("common.clearFilters")}
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+                <p>
+                  <NumberTween value={data?.total ?? overviewCounts.total} /> {t("analysis.totalSuffix")}
+                </p>
+                <p>{t("analysis.tableHint")}</p>
+              </div>
             </CardContent>
           </Card>
-        ) : data?.items.length === 0 ? (
-          <FadeIn>
-            <Card>
-              <CardContent className="pt-10 pb-10 text-center">
-                <p className="text-sm text-muted-foreground">{t("analysis.none")}</p>
-                <Button asChild className="mt-4" size="sm">
-                  <Link href="/analyses/new">{t("analysis.createNow")}</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </FadeIn>
-        ) : (
-          <>
-            <AnimatePresence>
+        </LiquidGlassShell>
+      </StaggerItem>
+
+      <StaggerItem>
+        <>
+          <AnimatePresence>
             {hasStaleData && (
               <FadeIn key="stale-warning">
-              <Card className="border-amber-400/40">
-                <CardContent className="pt-4 pb-4">
+                <Card className="border-amber-400/40">
+                  <CardContent className="pt-4 pb-4">
+                    <p className="text-sm text-muted-foreground">
+                      {t("analysis.loadFailed")}
+                    </p>
+                    {error instanceof Error && (
+                      <p className="mt-1 text-xs text-muted-foreground/80">{error.message}</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </FadeIn>
+            )}
+          </AnimatePresence>
+          <LiquidGlassShell className="rounded-xl">
+            <Card className="border-transparent bg-transparent shadow-none">
+              {isLoading ? (
+                <CardContent className="pt-6">
+                  <HistorySkeletonContent />
+                </CardContent>
+              ) : error && !data ? (
+                <CardContent className="pt-10 pb-10 text-center">
                   <p className="text-sm text-muted-foreground">
                     {t("analysis.loadFailed")}
                   </p>
                   {error instanceof Error && (
                     <p className="mt-1 text-xs text-muted-foreground/80">{error.message}</p>
                   )}
+                  <Button className="mt-4" variant="outline" size="sm" onClick={() => void mutate()}>
+                    {t("detail.retryRefresh")}
+                  </Button>
                 </CardContent>
-              </Card>
-              </FadeIn>
-            )}
-            </AnimatePresence>
-            <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm">
-              <CardContent className="pt-6">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>{t("analysis.table.task")}</TableHead>
-                      <TableHead>{t("analysis.table.status")}</TableHead>
-                      <TableHead>{t("analysis.table.texts")}</TableHead>
-                      <TableHead>{t("analysis.table.backend")}</TableHead>
-                      <TableHead>{t("analysis.table.created")}</TableHead>
-                      <TableHead>{t("analysis.table.duration")}</TableHead>
-                      <TableHead className="w-28">{t("analysis.table.actions")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data?.items.map((item) => (
-                      <TableRow key={item.id} className="analysis-table-row cursor-pointer">
-                        <TableCell>
-                          <Link
-                            href={`/analyses/detail?id=${encodeURIComponent(item.id)}`}
-                            className="font-mono text-sm hover:underline"
+              ) : data?.items.length === 0 ? (
+                <CardContent className="pt-10 pb-10 text-center">
+                  <p className="text-sm text-muted-foreground">{t("analysis.none")}</p>
+                  <Button asChild className="mt-4" size="sm">
+                    <Link href="/analyses/new">{t("analysis.createNow")}</Link>
+                  </Button>
+                </CardContent>
+              ) : (
+                <CardContent className="pt-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>ID</TableHead>
+                        <TableHead>{t("analysis.table.task")}</TableHead>
+                        <TableHead>{t("analysis.table.status")}</TableHead>
+                        <TableHead>{t("analysis.table.texts")}</TableHead>
+                        <TableHead>{t("analysis.table.backend")}</TableHead>
+                        <TableHead>{t("analysis.table.created")}</TableHead>
+                        <TableHead>{t("analysis.table.duration")}</TableHead>
+                        <TableHead className="w-28">{t("analysis.table.actions")}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data?.items.map((item) => (
+                        <TableRow key={item.id} className="analysis-table-row cursor-pointer">
+                          <TableCell>
+                            <Link
+                              href={`/analyses/detail?id=${encodeURIComponent(item.id)}`}
+                              className="font-mono text-sm hover:underline"
+                            >
+                              {item.id}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="capitalize">{t(`task.${item.task_type}`)}</TableCell>
+                          <TableCell>
+                            <AnalysisStatusBadge status={item.status}>
+                              {t(`status.${item.status}`)}
+                            </AnalysisStatusBadge>
+                          </TableCell>
+                          <TableCell className="text-sm">{item.text_count} / {item.author_count}</TableCell>
+                          <TableCell className="font-mono text-xs">{item.llm_backend}</TableCell>
+                          <TableCell
+                            className="text-muted-foreground text-sm"
+                            title={new Date(item.created_at).toLocaleString()}
                           >
-                            {item.id}
-                          </Link>
-                        </TableCell>
-                        <TableCell className="capitalize">{t(`task.${item.task_type}`)}</TableCell>
-                        <TableCell>
-                          <AnalysisStatusBadge status={item.status}>
-                            {t(`status.${item.status}`)}
-                          </AnalysisStatusBadge>
-                        </TableCell>
-                        <TableCell className="text-sm">{item.text_count} / {item.author_count}</TableCell>
-                        <TableCell className="font-mono text-xs">{item.llm_backend}</TableCell>
-                        <TableCell
-                          className="text-muted-foreground text-sm"
-                          title={new Date(item.created_at).toLocaleString()}
-                        >
-                          {timeAgo(item.created_at, t)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {duration(item.created_at, item.completed_at) ??
-                            (item.status === "running" ? (
-                              <>
-                                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                                <span className="sr-only">{t("status.running")}</span>
-                              </>
-                            ) : (
-                              "—"
-                            ))}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-                              <Link
-                                href={`/analyses/detail?id=${encodeURIComponent(item.id)}`}
-                                aria-label={t("analysis.open") + item.id}
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                              </Link>
-                            </Button>
-                            {(item.status === "pending" || item.status === "running") && (
+                            {timeAgo(item.created_at, t)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm">
+                            {duration(item.created_at, item.completed_at) ??
+                              (item.status === "running" ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                                  <span className="sr-only">{t("status.running")}</span>
+                                </>
+                              ) : (
+                                "—"
+                              ))}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+                                <Link
+                                  href={`/analyses/detail?id=${encodeURIComponent(item.id)}`}
+                                  aria-label={t("analysis.open") + item.id}
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                                </Link>
+                              </Button>
+                              {(item.status === "pending" || item.status === "running") && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-amber-600"
+                                  onClick={() => setCancelTarget(item.id)}
+                                  aria-label={t("analysis.cancelTitle") + item.id}
+                                >
+                                  <Square className="h-3.5 w-3.5" aria-hidden="true" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-amber-600"
-                                onClick={() => setCancelTarget(item.id)}
-                                aria-label={t("analysis.cancelTitle") + item.id}
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeleteTarget(item.id)}
+                                aria-label={t("analysis.delete") + item.id}
                               >
-                                <Square className="h-3.5 w-3.5" aria-hidden="true" />
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                               </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeleteTarget(item.id)}
-                              aria-label={t("analysis.delete") + item.id}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              )}
             </Card>
+          </LiquidGlassShell>
 
-            {data && data.total > data.page_size && (
-              <div className="flex justify-center gap-2">
-                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-                  {t("analysis.previous")}
-                </Button>
-                <span className="flex items-center text-sm text-muted-foreground">
-                  {t("analysis.pageOf", {
-                    page: data.page,
-                    total: Math.ceil(data.total / data.page_size),
-                  })}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= Math.ceil(data.total / data.page_size)}
-                  onClick={() => setPage(page + 1)}
-                >
-                  {t("analysis.next")}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
+          {data && data.total > data.page_size && (
+            <div className="flex justify-center gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                {t("analysis.previous")}
+              </Button>
+              <span className="flex items-center text-sm text-muted-foreground">
+                {t("analysis.pageOf", {
+                  page: data.page,
+                  total: Math.ceil(data.total / data.page_size),
+                })}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page >= Math.ceil(data.total / data.page_size)}
+                onClick={() => setPage(page + 1)}
+              >
+                {t("analysis.next")}
+              </Button>
+            </div>
+          )}
+        </>
       </StaggerItem>
 
       <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
