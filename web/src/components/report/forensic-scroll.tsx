@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { FADE_VARIANTS, TRANSITION_ENTER } from "@/lib/motion";
 import { RevealOnScroll } from "@/components/motion/reveal-on-scroll";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { AutoCollapse } from "@/components/report/auto-collapse";
 import { EvidenceAppendix } from "@/components/report/evidence-appendix";
 import {
   type FocusContext,
@@ -108,6 +109,12 @@ const HEAT_COLORS = [
   "var(--heat-0)", "var(--heat-1)", "var(--heat-2)",
   "var(--heat-3)", "var(--heat-4)",
 ];
+const DEFAULT_VISIBLE_PROFILES = 8;
+const DEFAULT_VISIBLE_PROFILE_DIMENSIONS = 12;
+const DEFAULT_VISIBLE_REPRESENTATIVE_TEXTS = 16;
+const DEFAULT_VISIBLE_CLUSTERS = 10;
+const DEFAULT_VISIBLE_APPENDIX_ROWS = 8;
+const DEFAULT_BULLET_LIMIT = 6;
 
 const FEATURE_SIGNATURE = [
   {
@@ -192,7 +199,36 @@ function escapeRegExp(value: string) {
 
 function stripPreview(content?: string) {
   if (!content) return "";
-  return content.replace(/\s+/g, " ").trim();
+  let preview = "";
+  let pendingSpace = false;
+  for (let index = 0; index < content.length && preview.length < 160; index += 1) {
+    const char = content[index];
+    if (/\s/u.test(char)) {
+      pendingSpace = preview.length > 0;
+      continue;
+    }
+    if (pendingSpace && preview.length > 0) {
+      preview += " ";
+      pendingSpace = false;
+      if (preview.length >= 160) {
+        break;
+      }
+    }
+    preview += char;
+  }
+  return preview.trim();
+}
+
+function compactText(value?: string, limit = 140) {
+  if (!value) return "";
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (!normalized) return "";
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit).trimEnd()}…`;
+}
+
+function firstMeaningful(...values: Array<string | null | undefined>) {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim();
 }
 
 const FOCUS_ENTITY_LABEL_KEYS: Record<FocusContext["entityType"], string> = {
@@ -210,6 +246,33 @@ interface SubjectiveCue {
   value: string;
   detail: string;
   tone: SubjectiveCueTone;
+}
+
+interface CaseHeaderFact {
+  label: string;
+  value: string;
+  monospace?: boolean;
+}
+
+interface CaseHeaderBeat {
+  label: string;
+  detail: string;
+  tone: SubjectiveCueTone;
+}
+
+interface CaseHeaderDigest {
+  headline: string;
+  narrativeBlocks: string[];
+  factPills: CaseHeaderFact[];
+  statGrid: CaseHeaderFact[];
+  beats: CaseHeaderBeat[];
+  dossierHeadline: string;
+  dossierSummary: string;
+  excerpt: string;
+  excerptLabel?: string;
+  tags: string[];
+  memo?: string;
+  nextStep: string;
 }
 
 function matchDimensionScore(profile: WritingProfile | undefined, patterns: string[]) {
@@ -339,6 +402,286 @@ function buildSubjectivePortrait({
   ];
 }
 
+function buildCaseHeaderDigest({
+  t,
+  analysis,
+  report,
+  leadConclusion,
+  leadProfile,
+  leadCluster,
+  subjectivePortrait,
+  fragmentedClusterCount,
+  textMetaMap,
+}: {
+  t: (key: string, params?: Record<string, string | number>) => string;
+  analysis: AnalysisDetail;
+  report: ForensicReport;
+  leadConclusion?: ReportConclusion;
+  leadProfile?: WritingProfile;
+  leadCluster?: ClusterViewCluster;
+  subjectivePortrait: SubjectiveCue[];
+  fragmentedClusterCount: number;
+  textMetaMap: Map<
+    string,
+    {
+      textId: string;
+      alias: string;
+      preview: string;
+      group: string;
+    }
+  >;
+}): CaseHeaderDigest {
+  const caseMeta = report.request.case_metadata;
+  const taskLabel = t(`task.${report.request.task}`);
+  const gradeLabel = leadConclusion
+    ? t(`detail.scroll.grade.${leadConclusion.grade}`)
+    : t("detail.scroll.grade.inconclusive");
+  const caseId = firstMeaningful(caseMeta?.case_id, analysis.id) ?? analysis.id;
+  const client = firstMeaningful(caseMeta?.client);
+  const analyst = firstMeaningful(caseMeta?.analyst);
+  const subject =
+    firstMeaningful(leadConclusion?.subject, leadProfile?.subject, leadCluster?.label) ??
+    t("detail.scroll.caseFile.unknownSubject");
+
+  const primaryEvidence =
+    report.evidence_items.find((item) => item.strength === "core") ?? report.evidence_items[0];
+  const primaryTrace =
+    compactText(firstMeaningful(primaryEvidence?.finding, primaryEvidence?.summary), 126) ||
+    t("detail.scroll.caseFile.noTrace");
+
+  const dossierHeadline =
+    firstMeaningful(
+      leadProfile?.headline,
+      subjectivePortrait[0]?.value,
+      leadProfile?.subject,
+      subject,
+    ) ?? subject;
+  const dossierSummary =
+    compactText(
+      firstMeaningful(
+        leadProfile?.observable_summary,
+        leadProfile?.summary,
+        subjectivePortrait[1]?.detail,
+        subjectivePortrait[0]?.detail,
+      ),
+      170,
+    ) || compactText(report.summary, 170);
+
+  const representativeTextId =
+    leadProfile?.representative_text_ids?.[0] ??
+    leadCluster?.representative_text_id ??
+    leadCluster?.member_text_ids[0];
+  const representativeText = representativeTextId ? textMetaMap.get(representativeTextId) : undefined;
+  const excerpt =
+    compactText(
+      firstMeaningful(representativeText?.preview, leadCluster?.representative_excerpt),
+      156,
+    ) || t("detail.scroll.caseFile.noExcerpt");
+
+  const anomalySample = report.anomaly_samples[0];
+  const anomalyRisk = anomalySample
+    ? t("detail.scroll.caseFile.anomalyRisk", {
+        text: textMetaMap.get(anomalySample.text_id)?.alias ?? anomalySample.text_id,
+        dimensions:
+          Object.keys(anomalySample.outlier_dimensions).slice(0, 3).join(" / ") ||
+          t("detail.scroll.anomalyWatch"),
+      })
+    : "";
+  const openQuestion =
+    compactText(
+      firstMeaningful(
+        report.limitations[0],
+        leadConclusion?.counter_evidence[0],
+        report.narrative?.contradictions[0],
+        anomalyRisk,
+      ),
+      130,
+    ) || t("detail.scroll.caseFile.noQuestion");
+
+  const premise =
+    compactText(
+      firstMeaningful(leadConclusion?.statement, report.narrative?.lead, report.summary),
+      130,
+    ) || t("detail.scroll.empty");
+  const nextStep =
+    compactText(
+      firstMeaningful(
+        report.narrative?.action_items[0],
+        report.narrative?.sections.find((section) => section.key === "next_actions")?.summary,
+        report.narrative?.sections.find((section) => section.key === "next_actions")?.detail,
+      ),
+      150,
+    ) || t("detail.scroll.readingHint");
+
+  const memo = compactText(caseMeta?.notes, 220);
+  const portraitSentence = dossierSummary
+    ? t("detail.scroll.caseFile.storyPortrait", {
+        portrait: dossierHeadline,
+        detail: dossierSummary,
+      })
+    : t("detail.scroll.caseFile.storyPortraitFallback", {
+        portrait: dossierHeadline,
+      });
+
+  const topMarkers = (leadCluster?.top_markers ?? [])
+    .map((marker) => compactText(marker, 30))
+    .filter(Boolean);
+  const tags = Array.from(
+    new Set(
+      [
+        compactText(leadCluster?.label, 26),
+        compactText(leadProfile?.headline, 30),
+        ...topMarkers,
+        fragmentedClusterCount > 0
+          ? t("detail.scroll.isolatedClusters", { count: fragmentedClusterCount })
+          : null,
+      ].filter(Boolean),
+    ),
+  ).slice(0, 6) as string[];
+
+  const coreEvidenceCount = report.evidence_items.filter((item) => item.strength === "core").length;
+
+  return {
+    headline: leadConclusion
+      ? t("detail.scroll.caseFile.headline", {
+          subject,
+          task: taskLabel,
+          grade: gradeLabel,
+        })
+      : t("detail.scroll.caseFile.headlineFallback", {
+          task: taskLabel,
+          subject,
+        }),
+    narrativeBlocks: [
+      leadConclusion
+        ? t("detail.scroll.caseFile.storyOpening", {
+            task: taskLabel,
+            grade: gradeLabel,
+            texts: analysis.text_count,
+            groups: analysis.author_count,
+            subject,
+          })
+        : t("detail.scroll.caseFile.storyOpeningFallback", {
+            task: taskLabel,
+            texts: analysis.text_count,
+            groups: analysis.author_count,
+          }),
+      primaryEvidence
+        ? `${t("detail.scroll.caseFile.storyEvidence", {
+            evidence: primaryEvidence.evidence_id,
+            detail: primaryTrace,
+          })} ${t("detail.scroll.caseFile.storyRisk", { risk: openQuestion })}`
+        : `${t("detail.scroll.caseFile.storyEvidenceFallback")} ${t("detail.scroll.caseFile.storyRisk", {
+            risk: openQuestion,
+          })}`,
+      portraitSentence,
+    ],
+    factPills: [
+      {
+        label: t("detail.scroll.caseFile.caseId"),
+        value: caseId,
+        monospace: true,
+      },
+      {
+        label: t("detail.scroll.caseFile.task"),
+        value: taskLabel,
+      },
+      ...(client
+        ? [
+            {
+              label: t("detail.scroll.caseFile.client"),
+              value: client,
+            },
+          ]
+        : []),
+      ...(analyst
+        ? [
+            {
+              label: t("detail.scroll.caseFile.analyst"),
+              value: analyst,
+            },
+          ]
+        : []),
+      {
+        label: t("detail.scroll.caseFile.activity"),
+        value: String(report.request.activity_events.length),
+      },
+      {
+        label: t("detail.scroll.caseFile.network"),
+        value: String(report.request.interaction_edges.length),
+      },
+    ],
+    statGrid: [
+      {
+        label: t("detail.scroll.caseFile.texts"),
+        value: String(analysis.text_count),
+      },
+      {
+        label: t("detail.scroll.sourceGroups"),
+        value: String(analysis.author_count),
+      },
+      {
+        label: t("detail.scroll.evidenceCount"),
+        value: String(report.evidence_items.length),
+      },
+      {
+        label: t("detail.scroll.caseFile.coreEvidence"),
+        value: String(coreEvidenceCount),
+      },
+      {
+        label: t("detail.scroll.clusterCount"),
+        value: String(report.cluster_view?.clusters.length ?? 0),
+      },
+      {
+        label: t("detail.scroll.profileCount"),
+        value: String(report.writing_profiles.length),
+      },
+      {
+        label: t("detail.scroll.anomalyWatch"),
+        value: String(report.anomaly_samples.length),
+      },
+      {
+        label: t("detail.scroll.caseFile.materials"),
+        value: String(report.materials.length),
+      },
+    ],
+    beats: [
+      {
+        label: t("detail.scroll.caseFile.premise"),
+        detail: premise,
+        tone: leadConclusion ? "accent" : "neutral",
+      },
+      {
+        label: t("detail.scroll.caseFile.keyTrace"),
+        detail: primaryEvidence
+          ? `${primaryEvidence.evidence_id} · ${primaryTrace}`
+          : t("detail.scroll.caseFile.noTrace"),
+        tone: "neutral",
+      },
+      {
+        label: t("detail.scroll.caseFile.personaHook"),
+        detail: dossierSummary
+          ? `${dossierHeadline} · ${dossierSummary}`
+          : dossierHeadline,
+        tone: "neutral",
+      },
+      {
+        label: t("detail.scroll.caseFile.openQuestion"),
+        detail: openQuestion,
+        tone:
+          report.limitations.length > 0 || report.anomaly_samples.length > 0 ? "warning" : "neutral",
+      },
+    ],
+    dossierHeadline,
+    dossierSummary,
+    excerpt,
+    excerptLabel: representativeText?.alias ?? representativeTextId,
+    tags,
+    memo,
+    nextStep,
+  };
+}
+
 interface ForensicScrollProps {
   analysis: AnalysisDetail;
   features: FeatureVector[];
@@ -361,6 +704,7 @@ export function ForensicScroll({
       report.narrative?.sections[0]?.key ??
       null,
   );
+  const [expandedBlocks, setExpandedBlocks] = useState<Record<string, boolean>>({});
 
   const sectionRefs = useRef<Record<SectionKey, HTMLElement | null>>({
     "case-header": null,
@@ -407,7 +751,7 @@ export function ForensicScroll({
       return {
         textId: text.id,
         alias: alias?.alias ?? text.id.slice(0, 8),
-        preview: stripPreview(alias?.preview || text.content).slice(0, 160),
+        preview: stripPreview(alias?.preview || text.content),
         group: text.author?.trim() || alias?.author || text.id,
       };
     });
@@ -535,6 +879,38 @@ export function ForensicScroll({
       leadConclusion,
     ],
   );
+  const caseHeaderDigest = useMemo(
+    () =>
+      buildCaseHeaderDigest({
+        t,
+        analysis,
+        report,
+        leadConclusion,
+        leadProfile,
+        leadCluster,
+        subjectivePortrait,
+        fragmentedClusterCount,
+        textMetaMap,
+      }),
+    [
+      t,
+      analysis,
+      report,
+      leadConclusion,
+      leadProfile,
+      leadCluster,
+      subjectivePortrait,
+      fragmentedClusterCount,
+      textMetaMap,
+    ],
+  );
+
+  const toggleExpandedBlock = useCallback((key: string) => {
+    setExpandedBlocks((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }, []);
 
   const scrollToSection = (section: SectionKey) => {
     sectionRefs.current[section]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -769,6 +1145,11 @@ export function ForensicScroll({
     if (drawerEntity.kind === "evidence") {
       const item = drawerEntity.evidence;
       const relatedTextIds = Array.from(new Set(item.source_text_ids));
+      const relatedTextsExpanded = expandedBlocks[`drawer:evidence:${item.evidence_id}:texts`] ?? false;
+      const visibleRelatedTextIds = relatedTextsExpanded
+        ? relatedTextIds
+        : relatedTextIds.slice(0, DEFAULT_VISIBLE_REPRESENTATIVE_TEXTS);
+      const hiddenRelatedTextCount = Math.max(0, relatedTextIds.length - visibleRelatedTextIds.length);
       const compareIds = relatedTextIds.slice(0, 2);
       return (
         <>
@@ -792,7 +1173,7 @@ export function ForensicScroll({
               )}
               <DrawerBlock title={t("detail.scroll.drawer.relatedTexts")}>
                 <div className="flex flex-wrap gap-2">
-                  {relatedTextIds.map((textId) => (
+                  {visibleRelatedTextIds.map((textId) => (
                     <Button
                       key={textId}
                       variant="outline"
@@ -809,6 +1190,18 @@ export function ForensicScroll({
                     </Button>
                   ))}
                 </div>
+                {(hiddenRelatedTextCount > 0 || relatedTextsExpanded) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2 h-8 px-2 text-xs"
+                    onClick={() => toggleExpandedBlock(`drawer:evidence:${item.evidence_id}:texts`)}
+                  >
+                    {t(relatedTextsExpanded ? "common.showLess" : "common.showMore")}
+                    {!relatedTextsExpanded && hiddenRelatedTextCount > 0 ? ` (${hiddenRelatedTextCount})` : ""}
+                  </Button>
+                )}
               </DrawerBlock>
               {compareIds.length >= 1 && (
                 <DrawerBlock title={t("detail.scroll.drawer.featureSignature")}>
@@ -845,9 +1238,11 @@ export function ForensicScroll({
           <ScrollArea className="h-[calc(100vh-5rem)]">
             <div className="space-y-6 p-5">
               <DrawerBlock title={t("detail.scroll.drawer.preview")}>
-                <p className="text-sm leading-7 text-foreground/88">
-                  {meta?.preview || t("detail.scroll.empty")}
-                </p>
+                <AutoCollapse collapsedHeight={220} contentKey={drawerEntity.textId}>
+                  <p className="text-sm leading-7 text-foreground/88">
+                    {meta?.preview || t("detail.scroll.empty")}
+                  </p>
+                </AutoCollapse>
               </DrawerBlock>
               <MetricList
                 items={[
@@ -916,6 +1311,11 @@ export function ForensicScroll({
     }
 
     const cluster = drawerEntity.cluster;
+    const membersExpanded = expandedBlocks[`drawer:cluster:${cluster.cluster_id}:members`] ?? false;
+    const visibleMemberTextIds = membersExpanded
+      ? cluster.member_text_ids
+      : cluster.member_text_ids.slice(0, DEFAULT_VISIBLE_REPRESENTATIVE_TEXTS);
+    const hiddenMemberCount = Math.max(0, cluster.member_text_ids.length - visibleMemberTextIds.length);
     return (
       <>
         <SheetHeader className="border-b border-border/60 pb-5">
@@ -933,7 +1333,9 @@ export function ForensicScroll({
             />
             {cluster.separation_summary && (
               <DrawerBlock title={t("detail.scroll.drawer.separationSummary")}>
-                <p className="text-sm leading-7 text-foreground/88">{cluster.separation_summary}</p>
+                <AutoCollapse collapsedHeight={180} contentKey={`cluster-${cluster.cluster_id}-summary`}>
+                  <p className="text-sm leading-7 text-foreground/88">{cluster.separation_summary}</p>
+                </AutoCollapse>
               </DrawerBlock>
             )}
             {cluster.confidence_note && (
@@ -943,7 +1345,7 @@ export function ForensicScroll({
             )}
             <DrawerBlock title={t("detail.scroll.drawer.members")}>
               <div className="flex flex-wrap gap-2">
-                {cluster.member_text_ids.map((textId) => (
+                {visibleMemberTextIds.map((textId) => (
                   <Button
                     key={textId}
                     variant="outline"
@@ -960,6 +1362,18 @@ export function ForensicScroll({
                   </Button>
                 ))}
               </div>
+              {(hiddenMemberCount > 0 || membersExpanded) && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2 h-8 px-2 text-xs"
+                  onClick={() => toggleExpandedBlock(`drawer:cluster:${cluster.cluster_id}:members`)}
+                >
+                  {t(membersExpanded ? "common.showLess" : "common.showMore")}
+                  {!membersExpanded && hiddenMemberCount > 0 ? ` (${hiddenMemberCount})` : ""}
+                </Button>
+              )}
             </DrawerBlock>
           </div>
         </ScrollArea>
@@ -974,145 +1388,21 @@ export function ForensicScroll({
             if (section.key === "case-header") {
               return (
                 <RevealOnScroll key={section.key}>
-                <section
-                  ref={(node) => {
-                    sectionRefs.current[section.key] = node;
-                  }}
-                  data-section-key={section.key}
-                  className="rounded-[30px] border border-border/50 bg-card/96 p-5 lg:p-6"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <ReportMetaLabel className="tracking-[0.2em] uppercase">
-                      {t(section.labelKey)}
-                    </ReportMetaLabel>
-                    {focus && (
-                      <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/45 px-3 py-1.5 text-xs text-muted-foreground">
-                        <span>
-                          {t("detail.scroll.focused")} · {t(FOCUS_ENTITY_LABEL_KEYS[focus.entityType])} ·{" "}
-                          {focus.entityId}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => clearFocus()}
-                          className="text-foreground transition-colors hover:text-muted-foreground"
-                        >
-                          {t("detail.scroll.clearFocus")}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.22fr)_400px]">
-                    <div className="space-y-3 rounded-[24px] border border-white/5 bg-background/35 p-4 lg:p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <ReportMetaLabel>{t("detail.scroll.verdictBar")}</ReportMetaLabel>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                            {t("detail.scroll.readingHint")}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {leadConclusion && (
-                            <>
-                              <Badge variant="outline" className={conclusionTone(leadConclusion.grade).badgeClass}>
-                                {t(`detail.scroll.grade.${leadConclusion.grade}`)}
-                              </Badge>
-                              <Badge variant="outline">
-                                {leadPercent}% {t("detail.scroll.signalStrength")}
-                              </Badge>
-                            </>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="text-[clamp(1.35rem,2.25vw,2rem)] font-semibold leading-[1.42] tracking-tight text-foreground">
-                        {report.narrative?.lead || report.summary || t("detail.scroll.empty")}
-                      </div>
-
-                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                        {[
-                          [t("detail.scroll.evidenceCount"), String(report.evidence_items.length)],
-                          [t("detail.scroll.clusterCount"), String(report.cluster_view?.clusters.length ?? 0)],
-                          [t("report.textCountSuffix"), String(analysis.text_count)],
-                          [t("detail.scroll.sourceGroups"), String(analysis.author_count)],
-                          [t("detail.scroll.anomalyWatch"), String(report.anomaly_samples.length)],
-                          [
-                            t("detail.scroll.drawer.representativeTexts"),
-                            String(leadProfile?.representative_text_ids?.length ?? 0),
-                          ],
-                          [
-                            t("detail.scroll.drawer.memberCount"),
-                            String(leadCluster?.member_text_ids.length ?? 0),
-                          ],
-                          [t("detail.scroll.drawer.cluster"), leadCluster?.label ?? t("detail.scroll.notSpecified")],
-                        ].map(([label, value]) => (
-                          <div
-                            key={`${label}-${value}`}
-                            className="rounded-[16px] border border-border/35 bg-background/30 px-3 py-2.5"
-                          >
-                            <ReportMetaLabel className="truncate">{label}</ReportMetaLabel>
-                            <div className="mt-1 text-sm font-semibold leading-5 text-foreground">
-                              {value}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="xs" variant="outline" onClick={() => scrollToSection("narrative-spine")}>
-                          {t("detail.scroll.section.narrativeSpine")} &rarr;
-                        </Button>
-                        <Button size="xs" variant="outline" onClick={() => scrollToSection("writing-profiles")}>
-                          {t("detail.scroll.section.writingProfiles")} &rarr;
-                        </Button>
-                        <Button size="xs" variant="outline" onClick={() => scrollToSection("conclusion-rail")}>
-                          {t("detail.scroll.section.conclusionRail")} &rarr;
-                        </Button>
-                        <Button size="xs" variant="outline" onClick={() => scrollToSection("evidence-chain")}>
-                          {t("detail.scroll.section.evidenceChain")} &rarr;
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="rounded-[24px] border border-border/45 bg-muted/10 p-3.5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <ReportMetaLabel>{t("detail.scroll.subjectivePortrait")}</ReportMetaLabel>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                            {t("detail.scroll.subjectivePortraitHint")}
-                          </p>
-                        </div>
-                        <Badge variant="outline">{t("detail.scroll.subjectivePortraitBadge")}</Badge>
-                      </div>
-
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {subjectivePortrait.map((cue) => (
-                          <PortraitCueCard
-                            key={cue.title}
-                            title={cue.title}
-                            value={cue.value}
-                            detail={cue.detail}
-                            tone={cue.tone}
-                          />
-                        ))}
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {leadProfile?.headline && <Badge variant="outline">{leadProfile.headline}</Badge>}
-                        {leadCluster?.label && <Badge variant="outline">{leadCluster.label}</Badge>}
-                        {fragmentedClusterCount > 0 && (
-                          <Badge variant="outline">
-                            {t("detail.scroll.isolatedClusters", { count: fragmentedClusterCount })}
-                          </Badge>
-                        )}
-                      </div>
-
-                      <p className="mt-3 text-[11px] leading-5 text-muted-foreground/85">
-                        {t("detail.scroll.subjectivePortraitCaveat")}
-                      </p>
-                    </div>
-                  </div>
-                </section>
+                  <CaseHeaderPanel
+                    sectionRef={(node) => {
+                      sectionRefs.current[section.key] = node;
+                    }}
+                    sectionKey={section.key}
+                    sectionLabel={t(section.labelKey)}
+                    focus={focus}
+                    clearFocus={clearFocus}
+                    leadConclusion={leadConclusion}
+                    leadPercent={leadPercent}
+                    subjectivePortrait={subjectivePortrait}
+                    digest={caseHeaderDigest}
+                    onScrollToSection={scrollToSection}
+                    t={t}
+                  />
                 </RevealOnScroll>
               );
             }
@@ -1268,6 +1558,24 @@ export function ForensicScroll({
                 0,
               );
               const multiProfileMode = report.writing_profiles.length > 1;
+              const profilesExpanded = expandedBlocks["writing-profiles:index"] ?? false;
+              const visibleProfiles = profilesExpanded
+                ? report.writing_profiles
+                : report.writing_profiles.slice(0, DEFAULT_VISIBLE_PROFILES);
+              const hiddenProfileCount = Math.max(0, report.writing_profiles.length - visibleProfiles.length);
+              const dimensionsExpanded = expandedBlocks["writing-profiles:dimensions"] ?? false;
+              const visibleDimensionRows = dimensionsExpanded
+                ? activeDimensionRows
+                : activeDimensionRows.slice(0, DEFAULT_VISIBLE_PROFILE_DIMENSIONS);
+              const hiddenDimensionCount = Math.max(0, activeDimensionRows.length - visibleDimensionRows.length);
+              const relatedTextsExpanded = expandedBlocks["writing-profiles:texts"] ?? false;
+              const visibleRepresentativeTextIds = relatedTextsExpanded
+                ? (activeProfile?.representative_text_ids ?? [])
+                : (activeProfile?.representative_text_ids ?? []).slice(0, DEFAULT_VISIBLE_REPRESENTATIVE_TEXTS);
+              const hiddenRepresentativeTextCount = Math.max(
+                0,
+                (activeProfile?.representative_text_ids?.length ?? 0) - visibleRepresentativeTextIds.length,
+              );
               return (
                 <RevealOnScroll key={section.key}>
                 <section
@@ -1302,7 +1610,10 @@ export function ForensicScroll({
                           <div className="rounded-[20px] bg-muted/15 p-3">
                             <ReportMetaLabel>{t("detail.scroll.profileIndex")}</ReportMetaLabel>
                             <div className="mt-2 space-y-2">
-                              {report.writing_profiles.map((profile, index) => {
+                              {visibleProfiles.map((profile, index) => {
+                                const paletteIndex = report.writing_profiles.findIndex(
+                                  (candidate) => candidate.subject === profile.subject,
+                                );
                                 const profileCluster = profileClusterMap.get(profile.subject);
                                 const anomalyCount = profile.anomalies?.length ?? 0;
                                 const selected = profile.subject === activeProfile?.subject;
@@ -1325,7 +1636,7 @@ export function ForensicScroll({
                                             className="h-2.5 w-2.5 shrink-0 rounded-full"
                                             style={{
                                               backgroundColor:
-                                                PROFILE_COLORS[index % PROFILE_COLORS.length],
+                                                PROFILE_COLORS[(paletteIndex === -1 ? index : paletteIndex) % PROFILE_COLORS.length],
                                             }}
                                           />
                                           <div className="truncate text-sm font-semibold text-foreground">
@@ -1349,6 +1660,18 @@ export function ForensicScroll({
                                 );
                               })}
                             </div>
+                            {(hiddenProfileCount > 0 || profilesExpanded) && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="mt-2 h-8 px-2 text-xs"
+                                onClick={() => toggleExpandedBlock("writing-profiles:index")}
+                              >
+                                {t(profilesExpanded ? "common.showLess" : "common.showMore")}
+                                {!profilesExpanded && hiddenProfileCount > 0 ? ` (${hiddenProfileCount})` : ""}
+                              </Button>
+                            )}
                           </div>
                         </aside>
                       )}
@@ -1392,9 +1715,15 @@ export function ForensicScroll({
                               style={{ backgroundColor: activeColor }}
                             />
                           </div>
-                          <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                            {activeProfile?.observable_summary || activeProfile?.summary}
-                          </p>
+                          <AutoCollapse
+                            className="mt-3"
+                            collapsedHeight={160}
+                            contentKey={activeProfile?.subject ?? "profile-summary"}
+                          >
+                            <p className="text-sm leading-6 text-muted-foreground">
+                              {activeProfile?.observable_summary || activeProfile?.summary}
+                            </p>
+                          </AutoCollapse>
                           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                             {[
                               [t("detail.scroll.drawer.dimensionCount"), String(activeDimensionRows.length)],
@@ -1426,7 +1755,7 @@ export function ForensicScroll({
                             </div>
                           </div>
                           <div className="mt-3 grid gap-2 xl:grid-cols-2">
-                            {activeDimensionRows.map((dimension) => (
+                            {visibleDimensionRows.map((dimension) => (
                               <ProfileDimensionLedgerCard
                                 key={`${activeProfile?.subject}-${dimension.key}`}
                                 dimension={dimension}
@@ -1434,6 +1763,18 @@ export function ForensicScroll({
                               />
                             ))}
                           </div>
+                          {(hiddenDimensionCount > 0 || dimensionsExpanded) && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="mt-3 h-8 px-2 text-xs"
+                              onClick={() => toggleExpandedBlock("writing-profiles:dimensions")}
+                            >
+                              {t(dimensionsExpanded ? "common.showLess" : "common.showMore")}
+                              {!dimensionsExpanded && hiddenDimensionCount > 0 ? ` (${hiddenDimensionCount})` : ""}
+                            </Button>
+                          )}
                         </div>
 
                         <div className="grid gap-2 xl:grid-cols-3">
@@ -1461,7 +1802,7 @@ export function ForensicScroll({
                               </div>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-2">
-                              {(activeProfile?.representative_text_ids ?? []).map((textId) => (
+                              {visibleRepresentativeTextIds.map((textId) => (
                                 <Button
                                   key={`${activeProfile?.subject}-${textId}`}
                                   variant="outline"
@@ -1482,6 +1823,18 @@ export function ForensicScroll({
                                 </Button>
                               ))}
                             </div>
+                            {(hiddenRepresentativeTextCount > 0 || relatedTextsExpanded) && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="mt-2 h-8 px-2 text-xs"
+                                onClick={() => toggleExpandedBlock("writing-profiles:texts")}
+                              >
+                                {t(relatedTextsExpanded ? "common.showLess" : "common.showMore")}
+                                {!relatedTextsExpanded && hiddenRepresentativeTextCount > 0 ? ` (${hiddenRepresentativeTextCount})` : ""}
+                              </Button>
+                            )}
                           </section>
                         )}
                       </div>
@@ -1496,6 +1849,9 @@ export function ForensicScroll({
 
             if (section.key === "cluster-view") {
               const clusters = report.cluster_view?.clusters ?? [];
+              const clustersExpanded = expandedBlocks["cluster-view:list"] ?? false;
+              const visibleClusters = clustersExpanded ? clusters : clusters.slice(0, DEFAULT_VISIBLE_CLUSTERS);
+              const hiddenClusterCount = Math.max(0, clusters.length - visibleClusters.length);
               const maxClusterMembers = Math.max(
                 1,
                 ...clusters.map((cluster) => cluster.member_text_ids.length),
@@ -1617,7 +1973,7 @@ export function ForensicScroll({
 
                           <div className="rounded-[22px] bg-muted/15 p-4">
                             <div className="space-y-3">
-                              {clusters.map((cluster) => {
+                              {visibleClusters.map((cluster) => {
                                 const anomalyCount = cluster.member_text_ids.filter((textId) => anomaliesByTextId.has(textId)).length;
                                 const share = `${(cluster.member_text_ids.length / maxClusterMembers) * 100}%`;
                                 return (
@@ -1671,7 +2027,7 @@ export function ForensicScroll({
                       </div>
 
                       <div className="space-y-3">
-                        {clusters.map((cluster) => {
+                        {visibleClusters.map((cluster) => {
                           const anomalyCount = cluster.member_text_ids.filter((textId) => anomaliesByTextId.has(textId)).length;
                           return (
                             <button
@@ -1682,12 +2038,13 @@ export function ForensicScroll({
                                 "w-full rounded-[22px] bg-muted/15 p-4 text-left transition-colors hover:bg-muted/28 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                                 isClusterFocused(cluster) ? "opacity-100" : "opacity-50",
                               )}
+                              style={{ contentVisibility: "auto", containIntrinsicSize: "180px" }}
                             >
                               <div className="flex items-center justify-between gap-3">
                                 <div className="text-base font-semibold text-foreground">{cluster.label}</div>
                                 <Badge variant="outline">{cluster.member_text_ids.length}</Badge>
                               </div>
-                              <p className="mt-2 text-sm leading-7 text-muted-foreground">
+                              <p className="mt-2 line-clamp-4 text-sm leading-7 text-muted-foreground">
                                 {cluster.theme_summary || cluster.separation_summary || t("detail.scroll.empty")}
                               </p>
                               <div className="mt-3 flex flex-wrap gap-2">
@@ -1705,6 +2062,18 @@ export function ForensicScroll({
                             </button>
                           );
                         })}
+                        {(hiddenClusterCount > 0 || clustersExpanded) && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            onClick={() => toggleExpandedBlock("cluster-view:list")}
+                          >
+                            {t(clustersExpanded ? "common.showLess" : "common.showMore")}
+                            {!clustersExpanded && hiddenClusterCount > 0 ? ` (${hiddenClusterCount})` : ""}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -1781,9 +2150,15 @@ export function ForensicScroll({
                             className="rounded-2xl bg-muted/15 p-5"
                           >
                             <ReportMetaLabel>{activeSection.title}</ReportMetaLabel>
-                            <div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-foreground/88">
-                              {humanizeNarrative(activeSection.detail || activeSection.summary)}
-                            </div>
+                            <AutoCollapse
+                              className="mt-3"
+                              collapsedHeight={240}
+                              contentKey={activeSection.key}
+                            >
+                              <div className="whitespace-pre-wrap text-sm leading-7 text-foreground/88">
+                                {humanizeNarrative(activeSection.detail || activeSection.summary)}
+                              </div>
+                            </AutoCollapse>
                             {relatedTextIds.length > 0 && (
                               <div className="mt-5">
                                 <ReportMetaLabel>{t("detail.scroll.relatedTexts")}</ReportMetaLabel>
@@ -1847,14 +2222,30 @@ export function ForensicScroll({
                     <AccordionTrigger>{t("detail.scroll.methods")}</AccordionTrigger>
                     <AccordionContent className="space-y-4 pt-2">
                       {report.methods.length > 0 ? (
-                        report.methods.map((method) => (
+                        (expandedBlocks["appendix:methods"] ? report.methods : report.methods.slice(0, DEFAULT_VISIBLE_APPENDIX_ROWS)).map((method) => (
                           <div key={method.key} className="rounded-xl bg-muted/20 p-4">
                             <div className="text-sm font-semibold">{method.title}</div>
-                            <div className="mt-1 text-sm leading-7 text-muted-foreground">{method.description}</div>
+                            <AutoCollapse collapsedHeight={160} contentKey={method.key}>
+                              <div className="mt-1 text-sm leading-7 text-muted-foreground">{method.description}</div>
+                            </AutoCollapse>
                           </div>
                         ))
                       ) : (
                         <EmptyBlock label={t("detail.scroll.empty")} />
+                      )}
+                      {(report.methods.length > DEFAULT_VISIBLE_APPENDIX_ROWS || expandedBlocks["appendix:methods"]) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => toggleExpandedBlock("appendix:methods")}
+                        >
+                          {t(expandedBlocks["appendix:methods"] ? "common.showLess" : "common.showMore")}
+                          {!expandedBlocks["appendix:methods"]
+                            ? ` (${report.methods.length - Math.min(report.methods.length, DEFAULT_VISIBLE_APPENDIX_ROWS)})`
+                            : ""}
+                        </Button>
                       )}
                     </AccordionContent>
                   </AccordionItem>
@@ -1874,14 +2265,30 @@ export function ForensicScroll({
                     <AccordionTrigger>{t("detail.scroll.rawSignals")}</AccordionTrigger>
                     <AccordionContent className="space-y-3 pt-2">
                       {report.results.length > 0 ? (
-                        report.results.map((result) => (
+                        (expandedBlocks["appendix:results"] ? report.results : report.results.slice(0, DEFAULT_VISIBLE_APPENDIX_ROWS)).map((result) => (
                           <div key={result.key} className="rounded-xl bg-muted/20 p-4">
                             <div className="text-sm font-semibold">{result.title}</div>
-                            <div className="mt-1 text-sm leading-7 text-muted-foreground">{result.body}</div>
+                            <AutoCollapse collapsedHeight={180} contentKey={result.key}>
+                              <div className="mt-1 text-sm leading-7 text-muted-foreground">{result.body}</div>
+                            </AutoCollapse>
                           </div>
                         ))
                       ) : (
                         <EmptyBlock label={t("detail.scroll.empty")} />
+                      )}
+                      {(report.results.length > DEFAULT_VISIBLE_APPENDIX_ROWS || expandedBlocks["appendix:results"]) && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => toggleExpandedBlock("appendix:results")}
+                        >
+                          {t(expandedBlocks["appendix:results"] ? "common.showLess" : "common.showMore")}
+                          {!expandedBlocks["appendix:results"]
+                            ? ` (${report.results.length - Math.min(report.results.length, DEFAULT_VISIBLE_APPENDIX_ROWS)})`
+                            : ""}
+                        </Button>
                       )}
                     </AccordionContent>
                   </AccordionItem>
@@ -1915,12 +2322,211 @@ function SectionHeader({ title, accentColor }: { title: string; accentColor: str
   );
 }
 
-function PortraitCueCard({
-  title,
-  value,
-  detail,
-  tone,
-}: SubjectiveCue) {
+function CaseHeaderPanel({
+  sectionRef,
+  sectionKey,
+  sectionLabel,
+  focus,
+  clearFocus,
+  leadConclusion,
+  leadPercent,
+  subjectivePortrait,
+  digest,
+  onScrollToSection,
+  t,
+}: {
+  sectionRef: (node: HTMLElement | null) => void;
+  sectionKey: SectionKey;
+  sectionLabel: string;
+  focus: FocusContext | null;
+  clearFocus: () => void;
+  leadConclusion?: ReportConclusion;
+  leadPercent: number | null;
+  subjectivePortrait: SubjectiveCue[];
+  digest: CaseHeaderDigest;
+  onScrollToSection: (section: SectionKey) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  return (
+    <section
+      ref={sectionRef}
+      data-section-key={sectionKey}
+      className="rounded-[30px] border border-border/50 bg-card/96 p-5 lg:p-6"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/45 pb-3">
+        <div className="min-w-0 space-y-2">
+          <ReportMetaLabel className="tracking-[0.22em] uppercase">{sectionLabel}</ReportMetaLabel>
+          <div className="flex flex-wrap gap-2">
+            {digest.factPills.map((fact) => (
+              <CaseFactChip key={`${fact.label}-${fact.value}`} {...fact} />
+            ))}
+          </div>
+        </div>
+
+        <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+          {leadConclusion && (
+            <>
+              <Badge variant="outline" className={conclusionTone(leadConclusion.grade).badgeClass}>
+                {t(`detail.scroll.grade.${leadConclusion.grade}`)}
+              </Badge>
+              {leadPercent != null && (
+                <Badge variant="outline">
+                  {leadPercent}% {t("detail.scroll.signalStrength")}
+                </Badge>
+              )}
+            </>
+          )}
+          {focus && (
+            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-background/45 px-3 py-1.5 text-xs text-muted-foreground">
+              <span className="truncate">
+                {t("detail.scroll.focused")} · {t(FOCUS_ENTITY_LABEL_KEYS[focus.entityType])} ·{" "}
+                {focus.entityId}
+              </span>
+              <button
+                type="button"
+                onClick={() => clearFocus()}
+                className="shrink-0 text-foreground transition-colors hover:text-muted-foreground"
+              >
+                {t("detail.scroll.clearFocus")}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.38fr)_360px]">
+        <div className="space-y-4">
+          <div className="space-y-3 rounded-[24px] border border-white/5 bg-background/35 p-4 lg:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <ReportMetaLabel>{t("detail.scroll.verdictBar")}</ReportMetaLabel>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t("detail.scroll.readingHint")}
+                </p>
+              </div>
+            </div>
+
+            <div className="text-[clamp(1.18rem,1.7vw,1.65rem)] font-semibold leading-[1.48] tracking-[-0.02em] text-foreground">
+              {digest.headline}
+            </div>
+
+            <div className="grid gap-2.5 md:grid-cols-[1.05fr_0.95fr]">
+              {digest.narrativeBlocks.map((block, index) => (
+                <div
+                  key={`${sectionKey}-narrative-${index}`}
+                  className="rounded-[18px] border border-border/35 bg-background/30 px-3.5 py-3"
+                >
+                  <p className="text-sm leading-6 text-foreground/88">{block}</p>
+                </div>
+              ))}
+            </div>
+
+            {digest.memo && (
+              <div className="rounded-[18px] border border-border/35 bg-background/26 px-3.5 py-3">
+                <ReportMetaLabel>{t("detail.scroll.caseFile.caseMemo")}</ReportMetaLabel>
+                <p className="mt-1.5 text-sm leading-6 text-foreground/84">{digest.memo}</p>
+              </div>
+            )}
+
+            <div className="grid gap-2 md:grid-cols-2">
+              {digest.beats.map((beat) => (
+                <CaseBeatCard key={`${beat.label}-${beat.detail}`} {...beat} />
+              ))}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {digest.statGrid.map((fact) => (
+                <CaseStatCell key={`${fact.label}-${fact.value}`} {...fact} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <aside className="space-y-3 rounded-[24px] border border-amber-400/15 bg-muted/10 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <ReportMetaLabel>{t("detail.scroll.subjectivePortrait")}</ReportMetaLabel>
+              <div className="mt-1 text-sm font-semibold leading-6 text-foreground">
+                {digest.dossierHeadline}
+              </div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {digest.dossierSummary}
+              </p>
+            </div>
+            <Badge variant="outline">{t("detail.scroll.subjectivePortraitBadge")}</Badge>
+          </div>
+
+          <div className="space-y-2">
+            {subjectivePortrait.map((cue) => (
+              <PortraitCueRow key={cue.title} {...cue} />
+            ))}
+          </div>
+
+          {digest.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {digest.tags.map((tag) => (
+                <Badge key={tag} variant="outline">
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          )}
+
+          <div className="rounded-[18px] border border-border/35 bg-background/42 p-3">
+            <ReportMetaLabel>{t("detail.scroll.caseFile.representativeExcerpt")}</ReportMetaLabel>
+            <p className="mt-2 text-sm leading-6 text-foreground/88">“{digest.excerpt}”</p>
+            {digest.excerptLabel && (
+              <div className="mt-2 text-[11px] text-muted-foreground">{digest.excerptLabel}</div>
+            )}
+          </div>
+
+          <p className="text-[11px] leading-5 text-muted-foreground/85">
+            {t("detail.scroll.subjectivePortraitCaveat")}
+          </p>
+        </aside>
+      </div>
+
+      <div className="mt-4 flex flex-col gap-3 border-t border-border/45 pt-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <ReportMetaLabel>{t("detail.scroll.nextStep")}</ReportMetaLabel>
+          <p className="mt-1 max-w-4xl text-sm leading-6 text-foreground/84">{digest.nextStep}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="xs" variant="outline" onClick={() => onScrollToSection("narrative-spine")}>
+            {t("detail.scroll.section.narrativeSpine")} &rarr;
+          </Button>
+          <Button size="xs" variant="outline" onClick={() => onScrollToSection("writing-profiles")}>
+            {t("detail.scroll.section.writingProfiles")} &rarr;
+          </Button>
+          <Button size="xs" variant="outline" onClick={() => onScrollToSection("conclusion-rail")}>
+            {t("detail.scroll.section.conclusionRail")} &rarr;
+          </Button>
+          <Button size="xs" variant="outline" onClick={() => onScrollToSection("evidence-chain")}>
+            {t("detail.scroll.section.evidenceChain")} &rarr;
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CaseFactChip({ label, value, monospace = false }: CaseHeaderFact) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border border-border/45 bg-background/40 px-3 py-1.5 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "max-w-[16rem] truncate font-medium text-foreground",
+          monospace && "font-mono text-[11px]",
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function CaseBeatCard({ label, detail, tone }: CaseHeaderBeat) {
   const toneClass = {
     neutral: "border-border/40 bg-background/28",
     accent: "border-amber-400/20 bg-amber-500/[0.06]",
@@ -1928,8 +2534,40 @@ function PortraitCueCard({
   }[tone];
 
   return (
-    <div className={cn("rounded-[16px] border px-3 py-2.5", toneClass)}>
-      <ReportMetaLabel>{title}</ReportMetaLabel>
+    <div className={cn("rounded-[18px] border px-3.5 py-3", toneClass)}>
+      <ReportMetaLabel>{label}</ReportMetaLabel>
+      <p className="mt-1.5 text-sm leading-6 text-foreground/88">{detail}</p>
+    </div>
+  );
+}
+
+function CaseStatCell({ label, value }: CaseHeaderFact) {
+  return (
+    <div className="rounded-[16px] border border-border/35 bg-background/30 px-3 py-2.5">
+      <ReportMetaLabel className="truncate">{label}</ReportMetaLabel>
+      <div className="mt-1 text-sm font-semibold leading-5 text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function PortraitCueRow({
+  title,
+  value,
+  detail,
+  tone,
+}: SubjectiveCue) {
+  const dotClass = {
+    neutral: "bg-border",
+    accent: "bg-amber-400",
+    warning: "bg-rose-400",
+  }[tone];
+
+  return (
+    <div className="rounded-[18px] border border-border/35 bg-background/34 px-3 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <ReportMetaLabel>{title}</ReportMetaLabel>
+        <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", dotClass)} aria-hidden="true" />
+      </div>
       <div className="mt-1 text-sm font-semibold leading-5 text-foreground">{value}</div>
       <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{detail}</p>
     </div>
@@ -1948,7 +2586,10 @@ function ProfileDimensionLedgerCard({
   const confidence = Math.max(0, Math.min(100, Math.round(dimension.confidence * 100)));
 
   return (
-    <div className="rounded-[16px] border border-border/40 bg-background/35 px-3 py-3">
+    <div
+      className="rounded-[16px] border border-border/40 bg-background/35 px-3 py-3"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "160px" }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-foreground">{dimension.label}</div>
@@ -2493,18 +3134,38 @@ function EmptyBlock({ label }: { label: string }) {
 }
 
 function BulletedList({ items, emptyLabel }: { items: string[]; emptyLabel: string }) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+
   if (items.length === 0) {
     return <div className="text-sm text-muted-foreground">{emptyLabel}</div>;
   }
 
+  const visibleItems = expanded ? items : items.slice(0, DEFAULT_BULLET_LIMIT);
+  const hiddenCount = Math.max(0, items.length - visibleItems.length);
+
   return (
-    <ul className="space-y-2 text-sm leading-7 text-foreground/88">
-      {items.map((item) => (
-        <li key={item} className="flex gap-2">
-          <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />
-          <span>{item}</span>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <ul className="space-y-2 text-sm leading-7 text-foreground/88">
+        {visibleItems.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/45" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+      {(hiddenCount > 0 || expanded) && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-2 h-8 px-2 text-xs"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {t(expanded ? "common.showLess" : "common.showMore")}
+          {!expanded && hiddenCount > 0 ? ` (${hiddenCount})` : ""}
+        </Button>
+      )}
+    </div>
   );
 }

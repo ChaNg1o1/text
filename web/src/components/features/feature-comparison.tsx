@@ -7,23 +7,16 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { FeatureVector } from "@/lib/types";
 import { useI18n } from "@/components/providers/i18n-provider";
-
-const AUTHOR_COLORS = [
-  "hsl(221, 83%, 53%)",
-  "hsl(142, 71%, 45%)",
-  "hsl(0, 84%, 60%)",
-  "hsl(38, 92%, 50%)",
-  "hsl(280, 67%, 55%)",
-  "hsl(172, 66%, 50%)",
-  "hsl(330, 80%, 60%)",
-  "hsl(45, 93%, 47%)",
-];
+import {
+  buildAuthorSummaries,
+  getAuthorColor,
+  MAX_CHART_GROUPS,
+} from "@/components/features/chart-helpers";
 
 const COMPARISON_FEATURE_KEYS: {
   key: string;
@@ -112,7 +105,24 @@ export function FeatureComparison({
       continue;
     (authorGroups[author] ??= []).push(fv);
   }
-  const authors = Object.keys(authorGroups).sort();
+  const authorSummaries = buildAuthorSummaries(features, authorMap, selectedAuthors);
+  const authors = authorSummaries
+    .map((summary) => summary.author)
+    .slice(0, MAX_CHART_GROUPS);
+  const hiddenGroupCount = Math.max(0, authorSummaries.length - authors.length);
+
+  if (authors.length === 0) {
+    return (
+      <Card className="border-border/70 bg-card/96 shadow-none">
+        <CardHeader className="border-b border-border/50">
+          <CardTitle className="text-lg">{t("comparison.title")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">{t("features.noData")}</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // Build data: one row per feature, columns = author mean values (normalized 0-1)
   const rawData = COMPARISON_FEATURES.map(({ key, label, source }) => {
@@ -152,19 +162,48 @@ export function FeatureComparison({
       <CardHeader className="border-b border-border/50">
         <CardTitle className="text-lg">{t("comparison.title")}</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {hiddenGroupCount > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t("features.chartCapHint", {
+              visible: authors.length,
+              total: authorSummaries.length,
+            })}
+          </p>
+        )}
+
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {authors.map((author, i) => {
+            const summary = authorSummaries.find((item) => item.author === author);
+            return (
+              <div
+                key={author}
+                className="flex min-w-0 items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2"
+              >
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: getAuthorColor(i) }}
+                />
+                <span className="truncate text-sm text-foreground/88">{author}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {summary?.count ?? 0}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
         <ResponsiveContainer width="100%" height={400}>
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="feature" tick={{ fontSize: 11 }} />
             <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
             <Tooltip />
-            <Legend />
             {authors.map((author, i) => (
               <Bar
                 key={author}
                 dataKey={author}
-                fill={AUTHOR_COLORS[i % AUTHOR_COLORS.length]}
+                fill={getAuthorColor(i)}
                 radius={[2, 2, 0, 0]}
               />
             ))}

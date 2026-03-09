@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { FadeIn } from "@/components/motion/fade-in";
 
-interface PageIntroProps extends React.ComponentPropsWithoutRef<"section"> {
+interface PageIntroProps {
   children: ReactNode;
+  className?: string;
   contentClassName?: string;
 }
 
@@ -18,15 +19,16 @@ interface PageIntroHeaderProps {
   bodyClassName?: string;
 }
 
-interface PageIntroStatProps extends React.ComponentPropsWithoutRef<"div"> {
+interface PageIntroStatProps {
   label: ReactNode;
   value: ReactNode;
   description?: ReactNode;
   accentClassName?: string;
+  className?: string;
   valueClassName?: string;
 }
 
-export function PageIntro({ children, className, contentClassName, ...props }: PageIntroProps) {
+export function PageIntro({ children, className, contentClassName }: PageIntroProps) {
   return (
     <FadeIn>
       <section
@@ -34,7 +36,6 @@ export function PageIntro({ children, className, contentClassName, ...props }: P
           "rounded-[24px] border border-border/60 bg-card/82 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.55)] backdrop-blur-sm",
           className,
         )}
-        {...props}
       >
         <div className={cn("flex flex-col gap-5 p-6", contentClassName)}>{children}</div>
       </section>
@@ -83,7 +84,6 @@ export function PageIntroStat({
   accentClassName,
   className,
   valueClassName,
-  ...props
 }: PageIntroStatProps) {
   return (
     <div
@@ -92,7 +92,6 @@ export function PageIntroStat({
         accentClassName,
         className,
       )}
-      {...props}
     >
       <SectionEyebrow className="tracking-[0.22em]">{label}</SectionEyebrow>
       <div className={cn("mt-3 text-2xl font-semibold", valueClassName)}>{value}</div>

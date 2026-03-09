@@ -23,6 +23,10 @@ import { NumberTween } from "@/components/motion/number-tween";
 import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
 import { DistributionChart } from "@/components/features/distribution-chart";
 import { FeatureComparison } from "@/components/features/feature-comparison";
+import {
+  MAX_CHART_GROUPS,
+  MAX_GROUP_FILTER_CHIPS,
+} from "@/components/features/chart-helpers";
 import dynamic from "next/dynamic";
 import { FeatureDataViewer } from "@/components/features/feature-data-viewer";
 
@@ -31,6 +35,7 @@ const SimilarityHeatmap = dynamic(
   { ssr: false },
 );
 import { useI18n } from "@/components/providers/i18n-provider";
+import { cn } from "@/lib/utils";
 
 const SCALAR_FEATURES: {
   key: string;
@@ -95,6 +100,7 @@ function FeaturesPageContent() {
   const [selectedGroup, setSelectedGroup] = useState<string>("Lexical");
   const [selectedFeature, setSelectedFeature] = useState<string>("type_token_ratio");
   const [selectedTextIds, setSelectedTextIds] = useState<string[]>([]);
+  const [showAllAuthors, setShowAllAuthors] = useState(false);
 
   const requestAuthorMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -140,6 +146,10 @@ function FeaturesPageContent() {
   }, [authorMap, features, selectedAuthors]);
 
   const allAuthors = useMemo(() => [...new Set(Object.values(authorMap))].sort(), [authorMap]);
+  const visibleAuthorChips = useMemo(
+    () => (showAllAuthors ? allAuthors : allAuthors.slice(0, MAX_GROUP_FILTER_CHIPS)),
+    [allAuthors, showAllAuthors],
+  );
   const hasNamedGroups = useMemo(
     () => Object.values(authorMap).some((groupName) => !groupName.startsWith("text-")),
     [authorMap],
@@ -252,6 +262,139 @@ function FeaturesPageContent() {
     );
   }
 
+  const controlsPanel = (
+    <Card className="border-border/70 bg-card/96 shadow-none">
+      <CardContent className="space-y-4 pt-5">
+        <div>
+          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            {t("features.controlsTitle")}
+          </div>
+          <p className="mt-2 text-sm leading-7 text-muted-foreground">
+            {t("features.contextHint")}
+          </p>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_220px_220px]">
+          <div className="space-y-2 lg:col-span-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">{t("features.groups")}</span>
+              {allAuthors.length > MAX_GROUP_FILTER_CHIPS && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="shrink-0"
+                  onClick={() => setShowAllAuthors((value) => !value)}
+                >
+                  {showAllAuthors ? t("common.showLess") : t("common.showMore")}
+                </Button>
+              )}
+            </div>
+            <div
+              className={cn(
+                "flex flex-wrap gap-1.5",
+                allAuthors.length > MAX_GROUP_FILTER_CHIPS && "max-h-40 overflow-y-auto pr-1",
+              )}
+            >
+              {visibleAuthorChips.map((author) => {
+                const isSelected =
+                  selectedAuthors.length === 0 || selectedAuthors.includes(author);
+                return (
+                  <Button
+                    key={author}
+                    type="button"
+                    variant={isSelected ? "secondary" : "outline"}
+                    size="xs"
+                    className="max-w-full"
+                    onClick={() => toggleAuthor(author)}
+                  >
+                    <span className="max-w-[10rem] truncate">{author}</span>
+                  </Button>
+                );
+              })}
+              {selectedAuthors.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="text-muted-foreground"
+                  onClick={() => setSelectedAuthors([])}
+                >
+                  {t("common.showAll")}
+                </Button>
+              )}
+            </div>
+            {allAuthors.length > MAX_GROUP_FILTER_CHIPS && (
+              <p className="text-xs text-muted-foreground">
+                {t("features.groupPreview", {
+                  visible: visibleAuthorChips.length,
+                  total: allAuthors.length,
+                })}
+              </p>
+            )}
+            {allAuthors.length > MAX_CHART_GROUPS && (
+              <p className="text-xs text-muted-foreground">
+                {t("features.chartCapHint", {
+                  visible: Math.min(allAuthors.length, MAX_CHART_GROUPS),
+                  total: allAuthors.length,
+                })}
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-sm font-medium">{t("features.group")}</span>
+            <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+              <SelectTrigger aria-label={t("features.group")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FEATURE_GROUPS.map((groupName) => (
+                  <SelectItem key={groupName} value={groupName}>
+                    {groupName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-sm font-medium">{t("features.feature")}</span>
+            <Select value={effectiveSelectedFeature} onValueChange={setSelectedFeature}>
+              <SelectTrigger aria-label={t("features.feature")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {groupFeatures.map((feature) => (
+                  <SelectItem key={feature.key} value={feature.key}>
+                    {feature.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              {selectedTextIds.length > 0 && (
+                <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTextIds([])}>
+                  {t("features.clearLink")}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {!hasNamedGroups && (
+          <p className="text-xs text-muted-foreground">{t("features.missingGroup")}</p>
+        )}
+        {selectedTextIds.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t("features.linkHint", { count: selectedTextIds.length })}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <StaggerContainer className="space-y-6" delayChildren={0.03} staggerChildren={0.04}>
       <StaggerItem>
@@ -302,6 +445,10 @@ function FeaturesPageContent() {
               value={<NumberTween value={featureStats.outliers + lowSimilarityPairs} />}
             />
           </div>
+
+          <div className="mt-5">
+            {controlsPanel}
+          </div>
         </div>
       </StaggerItem>
 
@@ -310,137 +457,41 @@ function FeaturesPageContent() {
           <p className="text-muted-foreground">{t("features.noData")}</p>
         </StaggerItem>
       ) : (
-        <div className="grid items-start gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
-          <div className="space-y-4 xl:sticky xl:top-20">
-            <Card className="border-border/70 bg-card/96 shadow-none">
-              <CardContent className="space-y-4 pt-5">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    {t("features.controlsTitle")}
-                  </div>
-                  <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                    {t("features.contextHint")}
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-sm font-medium">{t("features.groups")}</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {allAuthors.map((author) => {
-                      const isSelected =
-                        selectedAuthors.length === 0 || selectedAuthors.includes(author);
-                      return (
-                        <Button
-                          key={author}
-                          type="button"
-                          variant={isSelected ? "secondary" : "outline"}
-                          size="xs"
-                          onClick={() => toggleAuthor(author)}
-                        >
-                          {author}
-                        </Button>
-                      );
-                    })}
-                    {selectedAuthors.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        className="text-muted-foreground"
-                        onClick={() => setSelectedAuthors([])}
-                      >
-                        {t("common.showAll")}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-sm font-medium">{t("features.group")}</span>
-                  <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-                    <SelectTrigger aria-label={t("features.group")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {FEATURE_GROUPS.map((groupName) => (
-                        <SelectItem key={groupName} value={groupName}>
-                          {groupName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <span className="text-sm font-medium">{t("features.feature")}</span>
-                  <Select value={effectiveSelectedFeature} onValueChange={setSelectedFeature}>
-                    <SelectTrigger aria-label={t("features.feature")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {groupFeatures.map((feature) => (
-                        <SelectItem key={feature.key} value={feature.key}>
-                          {feature.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {selectedTextIds.length > 0 && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTextIds([])}>
-                    {t("features.clearLink")}
-                  </Button>
-                )}
-
-                {!hasNamedGroups && (
-                  <p className="text-xs text-muted-foreground">{t("features.missingGroup")}</p>
-                )}
-                {selectedTextIds.length > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    {t("features.linkHint", { count: selectedTextIds.length })}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="space-y-6">
-            {currentFeatureMeta && (
-              <DistributionChart
-                features={features}
-                authorMap={authorMap}
-                selectedAuthors={selectedAuthors}
-                highlightedAuthors={highlightedAuthors}
-                featureKey={currentFeatureMeta.key}
-                featureLabel={currentFeatureMeta.label}
-                source={currentFeatureMeta.source}
-              />
-            )}
-
-            <FeatureComparison
+        <div className="space-y-6">
+          {currentFeatureMeta && (
+            <DistributionChart
               features={features}
               authorMap={authorMap}
               selectedAuthors={selectedAuthors}
+              highlightedAuthors={highlightedAuthors}
+              featureKey={currentFeatureMeta.key}
+              featureLabel={currentFeatureMeta.label}
+              source={currentFeatureMeta.source}
             />
+          )}
 
-            <SimilarityHeatmap
-              features={features}
-              authorMap={authorMap}
-              selectedAuthors={selectedAuthors}
-              selectedTextIds={selectedTextIds}
-              onSelectPair={(payload) => {
-                setSelectedTextIds([payload.firstTextId, payload.secondTextId]);
-              }}
-            />
+          <FeatureComparison
+            features={features}
+            authorMap={authorMap}
+            selectedAuthors={selectedAuthors}
+          />
 
-            <FeatureDataViewer
-              features={features}
-              authorMap={authorMap}
-              selectedAuthors={selectedAuthors}
-              selectedTextIds={selectedTextIds}
-            />
-          </div>
+          <SimilarityHeatmap
+            features={features}
+            authorMap={authorMap}
+            selectedAuthors={selectedAuthors}
+            selectedTextIds={selectedTextIds}
+            onSelectPair={(payload) => {
+              setSelectedTextIds([payload.firstTextId, payload.secondTextId]);
+            }}
+          />
+
+          <FeatureDataViewer
+            features={features}
+            authorMap={authorMap}
+            selectedAuthors={selectedAuthors}
+            selectedTextIds={selectedTextIds}
+          />
         </div>
       )}
     </StaggerContainer>

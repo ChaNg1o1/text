@@ -1,14 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { AnomalySample, EvidenceItem, ForensicReport, ReportConclusion } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ReportMetaLabel } from "@/components/report/report-primitives";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { AutoCollapse } from "@/components/report/auto-collapse";
 import { cn } from "@/lib/utils";
 
 const STRENGTH_ORDER = ["core", "supporting", "conflicting"] as const;
+const DEFAULT_VISIBLE_EVIDENCE_ITEMS = 8;
+const DEFAULT_VISIBLE_RELATED_TEXTS = 12;
 
 interface EvidenceTextMeta {
   textId: string;
@@ -65,6 +69,8 @@ export function EvidenceAppendix({
   onOpenConclusion,
 }: EvidenceAppendixProps) {
   const { t } = useI18n();
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [expandedRelatedTexts, setExpandedRelatedTexts] = useState<Record<string, boolean>>({});
 
   const groupedEvidence = useMemo(() => {
     const groups: Record<(typeof STRENGTH_ORDER)[number], EvidenceItem[]> = {
@@ -111,15 +117,23 @@ export function EvidenceAppendix({
       {STRENGTH_ORDER.map((strength) => {
         const items = groupedEvidence[strength];
         if (items.length === 0) return null;
+        const expandedGroup = expandedGroups[strength] ?? false;
+        const visibleItems = expandedGroup ? items : items.slice(0, DEFAULT_VISIBLE_EVIDENCE_ITEMS);
+        const hiddenItemCount = Math.max(0, items.length - visibleItems.length);
 
         return (
           <div key={strength} className="space-y-3">
             <ReportMetaLabel>{t(`detail.scroll.strength.${strength}`)}</ReportMetaLabel>
 
             <div className="space-y-3">
-              {items.map((item) => {
+              {visibleItems.map((item) => {
                 const linkedConclusions = linkedConclusionsByEvidenceId.get(item.evidence_id) ?? [];
                 const relatedTextIds = Array.from(new Set(item.source_text_ids));
+                const expandedRelated = expandedRelatedTexts[item.evidence_id] ?? false;
+                const visibleRelatedTextIds = expandedRelated
+                  ? relatedTextIds
+                  : relatedTextIds.slice(0, DEFAULT_VISIBLE_RELATED_TEXTS);
+                const hiddenRelatedTextCount = Math.max(0, relatedTextIds.length - visibleRelatedTextIds.length);
                 return (
                   <article
                     key={item.evidence_id}
@@ -127,6 +141,7 @@ export function EvidenceAppendix({
                       "rounded-2xl bg-muted/15 p-5 transition-colors",
                       isEvidenceFocused(item) ? "opacity-100" : "opacity-55",
                     )}
+                    style={{ contentVisibility: "auto", containIntrinsicSize: "280px" }}
                   >
                     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
                       <div className="min-w-0 space-y-3">
@@ -143,20 +158,28 @@ export function EvidenceAppendix({
                           className="block space-y-2 text-left"
                         >
                           <div className="text-lg font-semibold text-foreground">{item.label}</div>
-                          <p className="text-sm leading-7 text-muted-foreground">
-                            {item.finding || item.summary}
-                          </p>
                         </button>
 
-                        {item.why_it_matters && (
-                          <p className="text-sm leading-7 text-foreground/85">{item.why_it_matters}</p>
-                        )}
+                        <AutoCollapse
+                          collapsedHeight={210}
+                          contentKey={item.evidence_id}
+                        >
+                          <div className="space-y-3">
+                            <p className="text-sm leading-7 text-muted-foreground">
+                              {item.finding || item.summary}
+                            </p>
 
-                        {item.counter_readings?.[0] && (
-                          <p className="text-sm leading-7 text-muted-foreground">
-                            {item.counter_readings[0]}
-                          </p>
-                        )}
+                            {item.why_it_matters && (
+                              <p className="text-sm leading-7 text-foreground/85">{item.why_it_matters}</p>
+                            )}
+
+                            {item.counter_readings?.[0] && (
+                              <p className="text-sm leading-7 text-muted-foreground">
+                                {item.counter_readings[0]}
+                              </p>
+                            )}
+                          </div>
+                        </AutoCollapse>
                       </div>
 
                       <div className="space-y-3">
@@ -187,7 +210,7 @@ export function EvidenceAppendix({
                         <div className="space-y-2">
                           <ReportMetaLabel>{t("detail.scroll.drawer.relatedTexts")}</ReportMetaLabel>
                           <div className="flex flex-wrap gap-2">
-                            {relatedTextIds.map((textId) => {
+                            {visibleRelatedTextIds.map((textId) => {
                               const meta = textMetaMap.get(textId);
                               const anomaly = anomaliesByTextId.has(textId);
                               return (
@@ -225,6 +248,23 @@ export function EvidenceAppendix({
                               );
                             })}
                           </div>
+                          {(hiddenRelatedTextCount > 0 || expandedRelated) && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              onClick={() =>
+                                setExpandedRelatedTexts((current) => ({
+                                  ...current,
+                                  [item.evidence_id]: !expandedRelated,
+                                }))
+                              }
+                            >
+                              {t(expandedRelated ? "common.showLess" : "common.showMore")}
+                              {!expandedRelated && hiddenRelatedTextCount > 0 ? ` (${hiddenRelatedTextCount})` : ""}
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -232,6 +272,24 @@ export function EvidenceAppendix({
                 );
               })}
             </div>
+
+            {(hiddenItemCount > 0 || expandedGroup) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() =>
+                  setExpandedGroups((current) => ({
+                    ...current,
+                    [strength]: !expandedGroup,
+                  }))
+                }
+              >
+                {t(expandedGroup ? "common.showLess" : "common.showMore")}
+                {!expandedGroup && hiddenItemCount > 0 ? ` (${hiddenItemCount})` : ""}
+              </Button>
+            )}
           </div>
         );
       })}

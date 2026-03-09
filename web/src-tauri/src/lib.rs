@@ -471,16 +471,23 @@ pub fn run() {
 
             #[cfg(not(target_os = "macos"))]
             let main_window = {
-                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
-                    .title("text")
-                    .inner_size(1320.0, 860.0)
-                    .min_inner_size(960.0, 640.0)
-                    .resizable(true)
-                    .background_color(tauri::webview::Color(2, 4, 7, 255))
-                    .build()
-                    .map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                    })?
+                let builder =
+                    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                        .title("text")
+                        .inner_size(1320.0, 860.0)
+                        .min_inner_size(960.0, 640.0)
+                        .resizable(true)
+                        .background_color(tauri::webview::Color(2, 4, 7, 255));
+
+                #[cfg(target_os = "windows")]
+                // WebView2 still enforces a user gesture for media unless autoplay is enabled explicitly.
+                let builder = builder.additional_browser_args(
+                    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required",
+                );
+
+                builder.build().map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                })?
             };
             let _ = main_window;
 

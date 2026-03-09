@@ -11,6 +11,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { FeatureVector } from "@/lib/types";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { Button } from "@/components/ui/button";
+import { MAX_VIEWER_ITEMS } from "@/components/features/chart-helpers";
 
 interface FeatureDataViewerProps {
   features: FeatureVector[];
@@ -27,11 +29,25 @@ export function FeatureDataViewer({
 }: FeatureDataViewerProps) {
   const { t } = useI18n();
   const [manualOpenItems, setManualOpenItems] = useState<string[]>([]);
+  const [showAllItems, setShowAllItems] = useState(false);
 
   const filtered = useMemo(() => {
     if (selectedAuthors.length === 0) return features;
     return features.filter((fv) => selectedAuthors.includes(authorMap[fv.text_id] ?? "unknown"));
   }, [features, authorMap, selectedAuthors]);
+
+  const prioritizedItems = useMemo(() => {
+    if (selectedTextIds.length === 0) return filtered;
+    const selectedSet = new Set(selectedTextIds);
+    const linked = filtered.filter((fv) => selectedSet.has(fv.text_id));
+    const rest = filtered.filter((fv) => !selectedSet.has(fv.text_id));
+    return [...linked, ...rest];
+  }, [filtered, selectedTextIds]);
+
+  const visibleItems = useMemo(
+    () => (showAllItems ? prioritizedItems : prioritizedItems.slice(0, MAX_VIEWER_ITEMS)),
+    [prioritizedItems, showAllItems],
+  );
 
   useEffect(() => {
     if (selectedTextIds.length === 0) return;
@@ -65,14 +81,34 @@ export function FeatureDataViewer({
       <CardHeader className="border-b border-border/50">
         <CardTitle className="text-lg">{t("viewer.title")}</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {prioritizedItems.length > MAX_VIEWER_ITEMS && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5">
+            <p className="text-xs text-muted-foreground">
+              {t("viewer.previewHint", {
+                visible: visibleItems.length,
+                total: prioritizedItems.length,
+              })}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="shrink-0"
+              onClick={() => setShowAllItems((value) => !value)}
+            >
+              {showAllItems ? t("common.showLess") : t("common.showMore")}
+            </Button>
+          </div>
+        )}
+
         <Accordion
           type="multiple"
           value={openItems}
           onValueChange={(next) => setManualOpenItems(next as string[])}
           className="w-full"
         >
-          {filtered.map((fv) => {
+          {visibleItems.map((fv) => {
             const author = authorMap[fv.text_id] ?? "unknown";
             const highlighted = selectedTextIds.includes(fv.text_id);
 
