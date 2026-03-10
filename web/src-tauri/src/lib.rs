@@ -1,16 +1,85 @@
-use std::fs::File;
+use std::collections::VecDeque;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
+
+const DEBUG_EVENT_LIMIT: usize = 200;
+const DEBUG_SCOPE_RUNTIME: &str = "runtime";
+const DEBUG_SCOPE_BACKEND: &str = "backend";
+const DEBUG_SCOPE_WEBVIEW: &str = "webview";
 
 struct BackendRuntime {
     api_origin: String,
     child: Mutex<Option<Child>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DesktopDebugEvent {
+    timestamp_ms: u64,
+    level: String,
+    scope: String,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct DesktopDebugSnapshot {
+    platform: String,
+    arch: String,
+    debug_build: bool,
+    devtools_enabled: bool,
+    api_origin: String,
+    backend_state: String,
+    launch_source: Option<String>,
+    backend_executable_path: Option<String>,
+    backend_log_path: Option<String>,
+    frontend_log_path: Option<String>,
+    app_log_dir: Option<String>,
+    resource_dir: Option<String>,
+    sidecar_debug_enabled: bool,
+    dev_backend_mode: String,
+    last_backend_error: Option<String>,
+    last_backend_started_at_ms: Option<u64>,
+    events: Vec<DesktopDebugEvent>,
+}
+
+#[derive(Default)]
+struct DesktopDebugStateInner {
+    backend_state: String,
+    launch_source: Option<String>,
+    backend_executable_path: Option<String>,
+    backend_log_path: Option<String>,
+    last_backend_error: Option<String>,
+    last_backend_started_at_ms: Option<u64>,
+    events: VecDeque<DesktopDebugEvent>,
+}
+
+struct DesktopDebugState {
+    inner: Mutex<DesktopDebugStateInner>,
+}
+
+struct SpawnedBackend {
+    child: Child,
+    launch_source: String,
+    backend_executable_path: String,
+    backend_log_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct FrontendDebugEventInput {
+    level: String,
+    message: String,
+    source: Option<String>,
+    timestamp_ms: Option<u64>,
 }
 
 impl BackendRuntime {
@@ -28,6 +97,128 @@ impl BackendRuntime {
             }
         }
     }
+}
+
+impl DesktopDebugState {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(DesktopDebugStateInner {
+                backend_state: "idle".to_string(),
+                ..DesktopDebugStateInner::default()
+            }),
+        }
+    }
+
+    fn push(&self, level: &str, scope: &str, message: impl Into<String>) {
+        if let Ok(mut lock) = self.inner.lock() {
+            if lock.events.len() >= DEBUG_EVENT_LIMIT {
+                lock.events.pop_front();
+            }
+            lock.events.push_back(DesktopDebugEvent {
+                timestamp_ms: unix_time_ms(),
+                level: level.to_string(),
+                scope: scope.to_string(),
+                message: message.into(),
+            });
+        }
+    }
+
+    fn set_backend_state(&self, backend_state: &str) {
+        if let Ok(mut lock) = self.inner.lock() {
+            lock.backend_state = backend_state.to_string();
+        }
+    }
+
+    fn record_backend_launch(&self, spawned: &SpawnedBackend) {
+        if let Ok(mut lock) = self.inner.lock() {
+            lock.backend_state = "ready".to_string();
+            lock.launch_source = Some(spawned.launch_source.clone());
+            lock.backend_executable_path = Some(spawned.backend_executable_path.clone());
+            lock.backend_log_path = spawned.backend_log_path.clone();
+            lock.last_backend_error = None;
+            lock.last_backend_started_at_ms = Some(unix_time_ms());
+        }
+    }
+
+    fn record_backend_error(&self, detail: &str) {
+        if let Ok(mut lock) = self.inner.lock() {
+            lock.backend_state = "error".to_string();
+            lock.last_backend_error = Some(detail.to_string());
+        }
+    }
+
+    fn snapshot<R: tauri::Runtime>(
+        &self,
+        app: &tauri::AppHandle<R>,
+        runtime: &BackendRuntime,
+    ) -> DesktopDebugSnapshot {
+        let app_log_dir = app
+            .path()
+            .app_log_dir()
+            .ok()
+            .map(|path| path.display().to_string());
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|path| path.display().to_string());
+
+        let (
+            backend_state,
+            launch_source,
+            backend_executable_path,
+            backend_log_path,
+            last_backend_error,
+            last_backend_started_at_ms,
+            events,
+        ) = match self.inner.lock() {
+            Ok(lock) => (
+                lock.backend_state.clone(),
+                lock.launch_source.clone(),
+                lock.backend_executable_path.clone(),
+                lock.backend_log_path.clone(),
+                lock.last_backend_error.clone(),
+                lock.last_backend_started_at_ms,
+                lock.events.iter().cloned().collect(),
+            ),
+            Err(_) => (
+                "error".to_string(),
+                None,
+                None,
+                None,
+                Some("Desktop debug state lock poisoned.".to_string()),
+                None,
+                Vec::new(),
+            ),
+        };
+
+        DesktopDebugSnapshot {
+            platform: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            debug_build: cfg!(debug_assertions),
+            devtools_enabled: true,
+            api_origin: runtime.api_origin.clone(),
+            backend_state,
+            launch_source,
+            backend_executable_path,
+            backend_log_path,
+            frontend_log_path: frontend_log_path(app),
+            app_log_dir,
+            resource_dir,
+            sidecar_debug_enabled: sidecar_debug_enabled(),
+            dev_backend_mode: dev_backend_mode(),
+            last_backend_error,
+            last_backend_started_at_ms,
+            events,
+        }
+    }
+}
+
+fn frontend_log_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<String> {
+    app.path()
+        .app_log_dir()
+        .ok()
+        .map(|dir| dir.join("frontend-console.ndjson").display().to_string())
 }
 
 impl Drop for BackendRuntime {
@@ -69,16 +260,131 @@ fn graceful_kill(child: &mut Child) {
     }
 }
 
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn debug_event<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    level: &str,
+    scope: &str,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    if let Some(state) = app.try_state::<DesktopDebugState>() {
+        state.push(level, scope, message.clone());
+    }
+    if level == "error" {
+        eprintln!("[text/{scope}] {message}");
+    }
+}
+
+fn append_frontend_debug_events_to_disk<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    events: &[FrontendDebugEventInput],
+) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
+    let log_path = log_dir.join("frontend-console.ndjson");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| {
+            format!(
+                "Failed to open frontend console log '{}': {e}",
+                log_path.display()
+            )
+        })?;
+
+    for event in events {
+        let line = serde_json::json!({
+            "timestamp_ms": event.timestamp_ms.unwrap_or_else(unix_time_ms),
+            "level": event.level,
+            "source": event.source,
+            "message": event.message,
+        });
+        writeln!(file, "{line}").map_err(|e| {
+            format!(
+                "Failed to append frontend console log '{}': {e}",
+                log_path.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 fn get_api_origin(state: State<'_, BackendRuntime>) -> String {
     state.api_origin.clone()
 }
 
 #[tauri::command]
+fn get_desktop_debug_snapshot(
+    app: tauri::AppHandle,
+    runtime: State<'_, BackendRuntime>,
+    debug_state: State<'_, DesktopDebugState>,
+) -> DesktopDebugSnapshot {
+    debug_state.snapshot(&app, &runtime)
+}
+
+#[tauri::command]
+fn record_frontend_debug_events(
+    app: tauri::AppHandle,
+    debug_state: State<'_, DesktopDebugState>,
+    events: Vec<FrontendDebugEventInput>,
+) -> Result<(), String> {
+    append_frontend_debug_events_to_disk(&app, &events)?;
+    for event in &events {
+        let source = event.source.as_deref().unwrap_or("console");
+        debug_state.push(
+            &event.level,
+            "frontend",
+            format!("[{source}] {}", event.message),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_main_webview_devtools(
+    app: tauri::AppHandle,
+    debug_state: State<'_, DesktopDebugState>,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main webview window is unavailable.")?;
+    debug_state.push("info", DEBUG_SCOPE_WEBVIEW, "Open DevTools requested.");
+    window.open_devtools();
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn close_main_webview_devtools(
+    app: tauri::AppHandle,
+    debug_state: State<'_, DesktopDebugState>,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main webview window is unavailable.")?;
+    debug_state.push("info", DEBUG_SCOPE_WEBVIEW, "Close DevTools requested.");
+    window.close_devtools();
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn save_file(app: tauri::AppHandle, content: String, filename: String) -> Result<String, String> {
-    let safe_name = Path::new(&filename)
-        .file_name()
-        .ok_or("Invalid filename")?;
+    let safe_name = Path::new(&filename).file_name().ok_or("Invalid filename")?;
     let dir = app.path().download_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(safe_name);
@@ -219,6 +525,63 @@ fn dev_backend_mode() -> String {
         .to_ascii_lowercase()
 }
 
+#[cfg(target_os = "macos")]
+fn macos_codesign_cache_path<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<PathBuf> {
+    app.path()
+        .app_local_data_dir()
+        .ok()
+        .map(|dir| dir.join("sidecar-codesign-cache-v1.txt"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_codesign_cache_key(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        format!(
+            "Failed to read sidecar metadata for '{}': {e}",
+            path.display()
+        )
+    })?;
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+
+    Ok(format!(
+        "{}|{}|{}",
+        path.display(),
+        metadata.len(),
+        modified_ns
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_codesign_cache_matches<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    cache_key: &str,
+) -> bool {
+    let Some(cache_path) = macos_codesign_cache_path(app) else {
+        return false;
+    };
+
+    match std::fs::read_to_string(cache_path) {
+        Ok(cached) => cached.trim() == cache_key,
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_macos_codesign_cache<R: tauri::Runtime>(app: &tauri::AppHandle<R>, cache_key: &str) {
+    let Some(cache_path) = macos_codesign_cache_path(app) else {
+        return;
+    };
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(cache_path, format!("{cache_key}\n"));
+}
+
 fn repo_root_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
@@ -276,7 +639,7 @@ fn try_spawn_dev_source_backend(
     port: u16,
     debug_sidecar: bool,
     log_dir: Option<&Path>,
-) -> Result<Option<Child>, String> {
+) -> Result<Option<SpawnedBackend>, String> {
     if !cfg!(debug_assertions) {
         return Ok(None);
     }
@@ -299,20 +662,26 @@ fn try_spawn_dev_source_backend(
         return Ok(None);
     }
 
-    let mut launchers: Vec<Command> = Vec::new();
+    let backend_log_path = if debug_sidecar {
+        None
+    } else {
+        log_dir.map(|dir| dir.join("text-api-stderr.log").display().to_string())
+    };
+
+    let mut launchers: Vec<(String, Command)> = Vec::new();
     let venv_python = dev_venv_python(&repo_root);
     if venv_python.exists() {
         let mut cmd = Command::new(venv_python);
         cmd.arg(&entry);
-        launchers.push(cmd);
+        launchers.push(("venv-python".to_string(), cmd));
     }
 
     let mut uv_cmd = Command::new("uv");
     uv_cmd.arg("run").arg("python").arg(&entry);
-    launchers.push(uv_cmd);
+    launchers.push(("uv-python".to_string(), uv_cmd));
 
     let mut last_error: Option<String> = None;
-    for mut command in launchers {
+    for (launcher_name, mut command) in launchers {
         command.current_dir(&repo_root);
         apply_backend_process_env(&mut command, port, debug_sidecar, log_dir);
         match command.spawn() {
@@ -321,7 +690,12 @@ fn try_spawn_dev_source_backend(
                     if debug_sidecar {
                         eprintln!("Started dev source backend at http://127.0.0.1:{port}");
                     }
-                    return Ok(Some(child));
+                    return Ok(Some(SpawnedBackend {
+                        child,
+                        launch_source: format!("dev-source:{launcher_name}"),
+                        backend_executable_path: entry.display().to_string(),
+                        backend_log_path: backend_log_path.clone(),
+                    }));
                 }
                 Err(err) => {
                     last_error = Some(err);
@@ -348,7 +722,15 @@ fn try_spawn_dev_source_backend(
 }
 
 #[cfg(target_os = "macos")]
-fn ensure_macos_codesign(path: &Path) -> Result<(), String> {
+fn ensure_macos_codesign<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    path: &Path,
+) -> Result<(), String> {
+    let initial_cache_key = macos_codesign_cache_key(path)?;
+    if macos_codesign_cache_matches(app, &initial_cache_key) {
+        return Ok(());
+    }
+
     let verify = Command::new("/usr/bin/codesign")
         .args(["--verify", "--deep", "--strict", "--verbose=1"])
         .arg(path)
@@ -360,6 +742,8 @@ fn ensure_macos_codesign(path: &Path) -> Result<(), String> {
             )
         })?;
     if verify.status.success() {
+        let verified_cache_key = macos_codesign_cache_key(path)?;
+        write_macos_codesign_cache(app, &verified_cache_key);
         return Ok(());
     }
 
@@ -399,27 +783,39 @@ fn ensure_macos_codesign(path: &Path) -> Result<(), String> {
         ));
     }
 
+    let verified_cache_key = macos_codesign_cache_key(path)?;
+    write_macos_codesign_cache(app, &verified_cache_key);
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn ensure_macos_codesign(_path: &Path) -> Result<(), String> {
+fn ensure_macos_codesign<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _path: &Path,
+) -> Result<(), String> {
     Ok(())
 }
 
 fn spawn_backend_child<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     port: u16,
-) -> Result<Child, String> {
+) -> Result<SpawnedBackend, String> {
     let debug_sidecar = sidecar_debug_enabled();
     let log_dir = app.path().app_log_dir().ok();
+    let backend_log_path = if debug_sidecar {
+        None
+    } else {
+        log_dir
+            .as_ref()
+            .map(|dir| dir.join("text-api-stderr.log").display().to_string())
+    };
 
-    if let Some(child) = try_spawn_dev_source_backend(port, debug_sidecar, log_dir.as_deref())? {
-        return Ok(child);
+    if let Some(spawned) = try_spawn_dev_source_backend(port, debug_sidecar, log_dir.as_deref())? {
+        return Ok(spawned);
     }
 
     let backend_binary = resolve_backend_binary(app)?;
-    ensure_macos_codesign(&backend_binary)?;
+    ensure_macos_codesign(app, &backend_binary)?;
 
     let mut command = Command::new(&backend_binary);
     apply_backend_process_env(&mut command, port, debug_sidecar, log_dir.as_deref());
@@ -432,7 +828,12 @@ fn spawn_backend_child<R: tauri::Runtime>(
     })?;
 
     wait_until_ready(&mut child, port)?;
-    Ok(child)
+    Ok(SpawnedBackend {
+        child,
+        launch_source: "bundled-sidecar".to_string(),
+        backend_executable_path: backend_binary.display().to_string(),
+        backend_log_path,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -440,6 +841,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            app.manage(DesktopDebugState::new());
+            debug_event(
+                &app.handle(),
+                "info",
+                DEBUG_SCOPE_RUNTIME,
+                "Desktop shell bootstrap started.",
+            );
+
             // Create the main window programmatically so we can configure WKWebView
             // to allow media autoplay without user gesture.
             #[cfg(target_os = "macos")]
@@ -490,25 +899,55 @@ pub fn run() {
                 })?
             };
             let _ = main_window;
+            debug_event(
+                &app.handle(),
+                "info",
+                DEBUG_SCOPE_WEBVIEW,
+                "Main webview window created.",
+            );
 
             let port = find_free_port()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             let api_origin = format!("http://127.0.0.1:{port}");
             app.manage(BackendRuntime::new(api_origin));
+            if let Some(debug_state) = app.try_state::<DesktopDebugState>() {
+                debug_state.set_backend_state("starting");
+            }
+            debug_event(
+                &app.handle(),
+                "info",
+                DEBUG_SCOPE_BACKEND,
+                format!("Preparing embedded backend on port {port}."),
+            );
 
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 match spawn_backend_child(&handle, port) {
-                    Ok(child) => {
+                    Ok(spawned) => {
+                        if let Some(debug_state) = handle.try_state::<DesktopDebugState>() {
+                            debug_state.record_backend_launch(&spawned);
+                        }
                         if let Some(state) = handle.try_state::<BackendRuntime>() {
                             if let Ok(mut lock) = state.child.lock() {
-                                *lock = Some(child);
+                                *lock = Some(spawned.child);
                             }
                         }
+                        debug_event(
+                            &handle,
+                            "info",
+                            DEBUG_SCOPE_BACKEND,
+                            format!(
+                                "Embedded backend ready via {}.",
+                                spawned.launch_source
+                            ),
+                        );
                         let _ = handle.emit("backend-ready", ());
                     }
                     Err(err) => {
-                        eprintln!("Backend startup failed: {err}");
+                        if let Some(debug_state) = handle.try_state::<DesktopDebugState>() {
+                            debug_state.record_backend_error(&err);
+                        }
+                        debug_event(&handle, "error", DEBUG_SCOPE_BACKEND, &err);
                         let _ = handle.emit("backend-error", &err);
                     }
                 }
@@ -516,7 +955,14 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_api_origin, save_file])
+        .invoke_handler(tauri::generate_handler![
+            get_api_origin,
+            get_desktop_debug_snapshot,
+            record_frontend_debug_events,
+            open_main_webview_devtools,
+            close_main_webview_devtools,
+            save_file
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -525,6 +971,15 @@ pub fn run() {
             event,
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
+            if let Some(debug_state) = app_handle.try_state::<DesktopDebugState>() {
+                debug_state.set_backend_state("stopped");
+            }
+            debug_event(
+                app_handle,
+                "info",
+                DEBUG_SCOPE_RUNTIME,
+                "Desktop shell shutdown requested.",
+            );
             if let Some(state) = app_handle.try_state::<BackendRuntime>() {
                 state.shutdown();
             }

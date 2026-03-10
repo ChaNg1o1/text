@@ -18,6 +18,9 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
@@ -49,7 +52,7 @@
 
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
+  --radius: 0.75rem;
   --background: oklch(0.968 0.008 228);
   --foreground: oklch(0.205 0.01 238);
   --card: oklch(0.988 0.004 228);
@@ -73,6 +76,9 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
+  --chart-6: oklch(0.6 0.2 330);
+  --chart-7: oklch(0.65 0.18 172);
+  --chart-8: oklch(0.72 0.16 45);
   --sidebar: oklch(0.982 0.006 228);
   --sidebar-foreground: oklch(0.205 0.01 238);
   --sidebar-primary: oklch(0.26 0.03 235);
@@ -164,6 +170,9 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
+  --chart-6: oklch(0.55 0.17 330);
+  --chart-7: oklch(0.62 0.15 172);
+  --chart-8: oklch(0.68 0.14 45);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -250,6 +259,17 @@
       );
     background-attachment: fixed;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Surface card variants
+   --------------------------------------------------------------------------- */
+.surface-elevated {
+  @apply bg-card/80 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.5)] backdrop-blur-sm;
+}
+
+.surface-flat {
+  @apply bg-card/96 shadow-none;
 }
 
 /* ---------------------------------------------------------------------------

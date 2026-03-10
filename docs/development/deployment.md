@@ -114,6 +114,14 @@ LLM backend 配置不应写入真实密钥。建议：
 
 这些变量适合内部排查开发态 sidecar 问题，不建议作为最终用户常规配置。
 
+此外，桌面端会把 WebView 前端日志自动桥接到 Rust：
+
+- `console.log/info/warn/error/debug`
+- `window.error`
+- `unhandledrejection`
+
+这些事件会写入应用日志目录下的 `frontend-console.ndjson`，供 agent 直接读取；Rust 壳层事件仍会进入内部调试缓冲和 stderr / sidecar 日志链路。
+
 ## 发布检查清单
 
 - 确认 Python 依赖完整

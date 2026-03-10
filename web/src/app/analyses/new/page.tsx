@@ -81,9 +81,9 @@ export default function NewAnalysisPage() {
             description={t("analysis.newSubtitle")}
           />
           <div className="flex flex-wrap gap-2">
-            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em]">{t("analysis.newStepUpload")}</Badge>
-            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em]">{t("analysis.newStepStrategy")}</Badge>
-            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em]">{t("analysis.newStepMetadata")}</Badge>
+            <Badge variant="outline" className="rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em]">{t("analysis.newStepUpload")}</Badge>
+            <Badge variant="outline" className="rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em]">{t("analysis.newStepStrategy")}</Badge>
+            <Badge variant="outline" className="rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em]">{t("analysis.newStepMetadata")}</Badge>
           </div>
 
           <PageIntroStatGrid>

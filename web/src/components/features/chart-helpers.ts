@@ -1,14 +1,14 @@
 import type { FeatureVector } from "@/lib/types";
 
 export const AUTHOR_COLORS = [
-  "hsl(221, 83%, 53%)",
-  "hsl(142, 71%, 45%)",
-  "hsl(0, 84%, 60%)",
-  "hsl(38, 92%, 50%)",
-  "hsl(280, 67%, 55%)",
-  "hsl(172, 66%, 50%)",
-  "hsl(330, 80%, 60%)",
-  "hsl(45, 93%, 47%)",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--chart-6)",
+  "var(--chart-7)",
+  "var(--chart-8)",
 ];
 
 export const MAX_CHART_GROUPS = 12;

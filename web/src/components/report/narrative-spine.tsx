@@ -38,7 +38,7 @@ export const NarrativeSpine = memo(function NarrativeSpine({ report, onFocusEvid
   }
 
   return (
-    <section className="rounded-[28px] border border-border/60 bg-card/88 p-7 shadow-[0_28px_72px_-58px_rgba(15,23,42,0.95)]">
+    <section className="rounded-3xl border border-border/60 bg-card/88 p-7 shadow-[0_28px_72px_-58px_rgba(15,23,42,0.95)]">
       <div className="mb-5 flex items-center justify-between gap-3">
         <ReportSectionIntro
           kicker={t("report.narrativeSpine.kicker")}
@@ -64,7 +64,7 @@ export const NarrativeSpine = memo(function NarrativeSpine({ report, onFocusEvid
                 }}
                 aria-pressed={active}
                 className={cn(
-                  "group flex w-full items-start gap-3 rounded-[22px] border border-border/60 bg-background/30 px-4 py-3.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                  "group flex w-full items-start gap-3 rounded-2xl border border-border/60 bg-background/30 px-4 py-3.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
                   active && "border-cyan-400/35 bg-cyan-500/[0.08]",
                 )}
               >
@@ -80,7 +80,7 @@ export const NarrativeSpine = memo(function NarrativeSpine({ report, onFocusEvid
                   )}
                 </div>
                 <div className="min-w-0 space-y-1">
-                  <ReportMetaLabel>{section.key.replaceAll("_", " ")}</ReportMetaLabel>
+                  <ReportMetaLabel>{t(`report.sectionName.${section.key}`) !== `report.sectionName.${section.key}` ? t(`report.sectionName.${section.key}`) : section.key.replaceAll("_", " ")}</ReportMetaLabel>
                   <div className="font-medium">{section.title}</div>
                   <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">
                     {section.summary}
@@ -122,11 +122,12 @@ function NarrativeSectionPanel({
   section: NarrativeSection;
   onFocusEvidence?: (evidenceId: string) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <div className="rounded-[26px] bg-background/40 p-6">
+    <div className="rounded-3xl bg-background/40 p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-2">
-          <ReportMetaLabel>{section.key.replaceAll("_", " ")}</ReportMetaLabel>
+          <ReportMetaLabel>{t(`report.sectionName.${section.key}`) !== `report.sectionName.${section.key}` ? t(`report.sectionName.${section.key}`) : section.key.replaceAll("_", " ")}</ReportMetaLabel>
           <h4 className="text-xl font-semibold">{section.title}</h4>
           <p className="text-base leading-8 text-foreground/90">{section.summary}</p>
         </div>
@@ -143,7 +144,7 @@ function NarrativeSectionPanel({
           ))}
         </div>
       </div>
-      <div className="mt-5 rounded-[22px] bg-card/70 p-5">
+      <div className="mt-5 rounded-2xl bg-card/70 p-5">
         <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">
           {section.detail}
         </p>

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 
 interface UploadZoneProps {
   onUpload: (payload: UploadResponse) => void;
@@ -163,14 +164,14 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
             onDrop={handleDrop}
             role="region"
             aria-label={t("upload.dropHint")}
-            className={`group relative overflow-hidden rounded-[24px] border-2 border-dashed p-8 text-center transition-all duration-200 ${
+            className={`group relative overflow-hidden rounded-3xl border-2 border-dashed p-8 text-center transition-all duration-200 ${
               isDragging
                 ? "scale-[1.005] border-primary bg-primary/10 shadow-sm ring-2 ring-primary/20 ring-offset-2"
                 : "border-muted-foreground/25 bg-background/40 hover:border-primary/45 hover:bg-primary/5"
             }`}
           >
             <div className="relative flex flex-col items-center">
-              <div className="mb-4 rounded-[22px] bg-background/78 p-3">
+              <div className="mb-4 rounded-2xl bg-background/78 p-3">
                 <Upload className="h-8 w-8 text-muted-foreground transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:scale-105" />
               </div>
               <p className="mb-1 text-base font-semibold">{t("upload.dropHint")}</p>
@@ -215,16 +216,16 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-[24px] bg-background/60 p-4">
+            <div className="rounded-3xl bg-background/60 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="rounded-2xl bg-background/80 p-2.5">
                     <FileText className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">
+                    <SectionEyebrow>
                       {t("upload.readyLabel")}
-                    </div>
+                    </SectionEyebrow>
                     <div className="mt-1 truncate text-sm font-semibold">{selectionLabel}</div>
                   </div>
                 </div>
@@ -259,9 +260,9 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
                       transition={{ ...TRANSITION_ENTER, delay: index * 0.04 }}
                       className="rounded-2xl bg-background/45 p-4"
                     >
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                      <SectionEyebrow>
                         {card.label}
-                      </div>
+                      </SectionEyebrow>
                       <div className="mt-2 text-2xl font-semibold">{card.value}</div>
                     </motion.div>
                   ))}
@@ -279,9 +280,9 @@ export function UploadZone({ onUpload }: UploadZoneProps) {
                   transition={TRANSITION_ENTER}
                   className="rounded-2xl bg-background/35 p-4"
                 >
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                  <SectionEyebrow>
                     {t("upload.authorRoster")}
-                  </div>
+                  </SectionEyebrow>
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {preview.authors.slice(0, 8).map((author) => (
                       <Badge key={author} variant="secondary" className="rounded-full text-xs">

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { FadeIn } from "@/components/motion/fade-in";
+import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 
 interface PageIntroProps {
   children: ReactNode;
@@ -33,7 +34,7 @@ export function PageIntro({ children, className, contentClassName }: PageIntroPr
     <FadeIn>
       <section
         className={cn(
-          "rounded-[24px] border border-border/60 bg-card/82 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.55)] backdrop-blur-sm",
+          "rounded-3xl border border-border/60 surface-elevated",
           className,
         )}
       >
@@ -93,23 +94,11 @@ export function PageIntroStat({
         className,
       )}
     >
-      <SectionEyebrow className="tracking-[0.22em]">{label}</SectionEyebrow>
+      <SectionEyebrow>{label}</SectionEyebrow>
       <div className={cn("mt-3 text-2xl font-semibold", valueClassName)}>{value}</div>
       {description ? <p className="mt-2 text-xs text-muted-foreground">{description}</p> : null}
     </div>
   );
 }
 
-export function SectionEyebrow({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <div className={cn("text-[11px] uppercase tracking-[0.24em] text-muted-foreground", className)}>
-      {children}
-    </div>
-  );
-}
+export { SectionEyebrow } from "@/components/ui/section-eyebrow";

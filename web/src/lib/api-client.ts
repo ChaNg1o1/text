@@ -31,12 +31,14 @@ const REQUEST_ID_HEADER = "X-Request-ID";
 const DEBUG_API_FLAG = process.env.NEXT_PUBLIC_TEXT_DEBUG_API ?? "";
 const TAURI_ORIGIN_RETRY_DELAYS_MS = [80, 180, 320, 500, 800] as const;
 const TAURI_BACKEND_READY_RETRY_DELAYS_MS = [40, 80, 140, 220, 320, 450, 650, 900] as const;
+const TAURI_BACKEND_READY_TIMEOUT_MS = 65000;
 let tauriApiOriginPromise: Promise<string> | null = null;
 let tauriBackendReadyPromise: Promise<void> | null = null;
 
 type RuntimeWindow = Window & {
   __TEXT_API_ORIGIN__?: string;
   __TEXT_BACKEND_READY__?: boolean;
+  __TEXT_BACKEND_ERROR__?: string;
 };
 
 function currentWindow(): RuntimeWindow | null {
@@ -56,6 +58,14 @@ function markTauriBackendReady(): void {
   const win = currentWindow();
   if (!win) return;
   win.__TEXT_BACKEND_READY__ = true;
+  delete win.__TEXT_BACKEND_ERROR__;
+}
+
+function getTauriBackendError(): string | null {
+  const error = currentWindow()?.__TEXT_BACKEND_ERROR__;
+  if (typeof error !== "string") return null;
+  const normalized = error.trim();
+  return normalized || null;
 }
 
 function isTauriRuntime(): boolean {
@@ -208,13 +218,41 @@ async function waitForTauriBackendReady(origin: string): Promise<void> {
     return;
   }
 
+  const startupError = getTauriBackendError();
+  if (startupError) {
+    throw new Error(startupError);
+  }
+
   if (!tauriBackendReadyPromise) {
     tauriBackendReadyPromise = (async () => {
-      for (const delay of TAURI_BACKEND_READY_RETRY_DELAYS_MS) {
+      const startedAt = nowMs();
+      let attempt = 0;
+
+      while (nowMs() - startedAt < TAURI_BACKEND_READY_TIMEOUT_MS) {
+        const runtimeError = getTauriBackendError();
+        if (runtimeError) {
+          throw new Error(runtimeError);
+        }
+
+        if (isTauriBackendReady()) {
+          return;
+        }
+
         if (await probeTauriBackendHealth(origin)) {
           return;
         }
+
+        const delay =
+          TAURI_BACKEND_READY_RETRY_DELAYS_MS[
+            Math.min(attempt, TAURI_BACKEND_READY_RETRY_DELAYS_MS.length - 1)
+          ];
+        attempt += 1;
         await wait(delay);
+      }
+
+      const runtimeError = getTauriBackendError();
+      if (runtimeError) {
+        throw new Error(runtimeError);
       }
 
       if (await probeTauriBackendHealth(origin)) {
@@ -222,7 +260,9 @@ async function waitForTauriBackendReady(origin: string): Promise<void> {
       }
 
       tauriBackendReadyPromise = null;
-      throw new Error("Local desktop API service is still starting.");
+      throw new Error(
+        "Local desktop API service did not become ready in time. The embedded backend may have failed to start.",
+      );
     })().catch((error) => {
       tauriBackendReadyPromise = null;
       throw error;

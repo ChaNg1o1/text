@@ -94,9 +94,6 @@ class AnalysisStore:
                 "CREATE INDEX IF NOT EXISTS idx_progress_events_analysis_id_id "
                 "ON analysis_progress_events (analysis_id, id)"
             )
-            await self._ensure_column(
-                self._db, table="analyses", column="perf_json", col_type="TEXT"
-            )
             await self._db.commit()
         return self._db
 

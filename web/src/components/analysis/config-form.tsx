@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/components/providers/i18n-provider";
+import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 
 const TASK_OPTIONS: {
   value: TaskType;
@@ -399,10 +400,10 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
               </div>
             </div>
 
-            <div className="rounded-[24px] border border-border/60 bg-background/35 p-4">
-              <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+            <div className="rounded-3xl border border-border/60 bg-background/35 p-4">
+              <SectionEyebrow>
                 {t("config.activePreset")}
-              </div>
+              </SectionEyebrow>
               {selectedTask && (
                 <AnimatePresence mode="wait">
                   <motion.div
@@ -429,9 +430,9 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
                     transition={TRANSITION_ENTER}
                     className="mt-4 rounded-2xl border border-border/60 bg-background/60 p-3"
                   >
-                    <div className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    <SectionEyebrow>
                       {t("config.llmBackend")}
-                    </div>
+                    </SectionEyebrow>
                     <div className="mt-2 text-sm font-medium">{selectedBackend.name}</div>
                     <div className="text-xs text-muted-foreground">{selectedBackend.model}</div>
                   </motion.div>
@@ -475,15 +476,15 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
             <Label>{t("config.caseId")}</Label>
-            <Input placeholder="CASE-2026-001" {...form.register("case_id")} />
+            <Input placeholder={t("config.placeholder.caseId")} {...form.register("case_id")} />
           </div>
           <div className="space-y-2">
             <Label>{t("config.caseClient")}</Label>
-            <Input placeholder="Client / requester" {...form.register("client")} />
+            <Input placeholder={t("config.placeholder.client")} {...form.register("client")} />
           </div>
           <div className="space-y-2">
             <Label>{t("config.caseAnalyst")}</Label>
-            <Input placeholder="Analyst" {...form.register("analyst")} />
+            <Input placeholder={t("config.placeholder.analyst")} {...form.register("analyst")} />
           </div>
           <div className="space-y-2 md:col-span-2">
             <Label>{t("config.caseNotes")}</Label>
@@ -496,7 +497,7 @@ export function ConfigForm({ texts, onSubmit, isSubmitting }: ConfigFormProps) {
         </CardContent>
       </Card>
 
-      <div className="flex flex-col gap-3 rounded-[24px] border border-border/60 bg-card/82 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 rounded-3xl border border-border/60 bg-card/82 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-muted-foreground">{t("config.submitHint")}</p>
         <Button
           type="submit"

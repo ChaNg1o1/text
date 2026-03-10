@@ -537,3 +537,29 @@ export interface ProgressSnapshotResponse {
   analysis_id: string;
   events: ProgressEventRecord[];
 }
+
+export interface DesktopDebugEvent {
+  timestamp_ms: number;
+  level: string;
+  scope: string;
+  message: string;
+}
+
+export interface DesktopDebugSnapshot {
+  platform: string;
+  arch: string;
+  debug_build: boolean;
+  devtools_enabled: boolean;
+  api_origin: string;
+  backend_state: string;
+  launch_source?: string;
+  backend_executable_path?: string;
+  backend_log_path?: string;
+  app_log_dir?: string;
+  resource_dir?: string;
+  sidecar_debug_enabled: boolean;
+  dev_backend_mode: string;
+  last_backend_error?: string;
+  last_backend_started_at_ms?: number;
+  events: DesktopDebugEvent[];
+}

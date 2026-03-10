@@ -43,7 +43,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { FadeIn } from "@/components/motion/fade-in";
 import { NumberTween } from "@/components/motion/number-tween";
-import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
 import { AnimatePresence } from "framer-motion";
 import { useI18n } from "@/components/providers/i18n-provider";
 import { PageIntro, PageIntroHeader, PageIntroStat, PageIntroStatGrid } from "@/components/shell/page-intro";
@@ -254,8 +253,8 @@ export default function AnalysesPage() {
   };
 
   return (
-    <StaggerContainer className="space-y-6" delayChildren={0.03} staggerChildren={0.04}>
-      <StaggerItem>
+    <div className="space-y-6">
+      <>
         <PageIntro>
           <PageIntroHeader
             eyebrow={t("analysis.workbenchEyebrow")}
@@ -282,10 +281,10 @@ export default function AnalysesPage() {
           </PageIntroStatGrid>
           <p className="text-xs text-muted-foreground">{t("analysis.historyHint")}</p>
         </PageIntro>
-      </StaggerItem>
+      </>
 
-      <StaggerItem>
-        <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm">
+      <>
+        <Card className="border-border/60 surface-elevated">
           <CardContent className="space-y-4 pt-6">
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative">
@@ -351,9 +350,9 @@ export default function AnalysesPage() {
             </div>
           </CardContent>
         </Card>
-      </StaggerItem>
+      </>
 
-      <StaggerItem>
+      <>
         {isLoading ? (
           <HistorySkeleton />
         ) : error && !data ? (
@@ -399,7 +398,7 @@ export default function AnalysesPage() {
               </FadeIn>
             )}
             </AnimatePresence>
-            <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm">
+            <Card className="border-border/60 surface-elevated">
               <CardContent className="pt-6">
                 <Table>
                   <TableHeader>
@@ -512,7 +511,7 @@ export default function AnalysesPage() {
             )}
           </>
         )}
-      </StaggerItem>
+      </>
 
       <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <DialogContent>
@@ -553,6 +552,6 @@ export default function AnalysesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </StaggerContainer>
+    </div>
   );
 }

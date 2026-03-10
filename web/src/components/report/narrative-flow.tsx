@@ -59,7 +59,7 @@ export function NarrativeFlow({ report }: NarrativeFlowProps) {
 
   if (sections.length === 0) {
     return (
-      <div className="rounded-[22px] border border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-border/60 bg-background/40 p-4 text-sm text-muted-foreground">
         {report.summary || t("report.narrativeEmpty")}
       </div>
     );
@@ -70,7 +70,7 @@ export function NarrativeFlow({ report }: NarrativeFlowProps) {
     .map((section) => section.key);
 
   return (
-    <Accordion type="multiple" defaultValue={defaultOpen} className="rounded-[24px] border border-border/60 px-4">
+    <Accordion type="multiple" defaultValue={defaultOpen} className="rounded-3xl border border-border/60 px-4">
       {sections.map((section) => {
         const normalizedSummary = replaceRawTextIds(section.summary, textAliases);
         const normalizedDetail = replaceRawTextIds(section.detail, textAliases);

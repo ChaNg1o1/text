@@ -20,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { NumberTween } from "@/components/motion/number-tween";
-import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
 import { DistributionChart } from "@/components/features/distribution-chart";
 import { FeatureComparison } from "@/components/features/feature-comparison";
 import {
@@ -36,36 +35,37 @@ const SimilarityHeatmap = dynamic(
 );
 import { useI18n } from "@/components/providers/i18n-provider";
 import { cn } from "@/lib/utils";
+import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 
 const SCALAR_FEATURES: {
   key: string;
-  label: string;
+  labelKey: string;
   source: "rust" | "nlp";
-  group: string;
+  groupKey: string;
 }[] = [
-  { key: "type_token_ratio", label: "Type-Token Ratio", source: "rust", group: "Lexical" },
-  { key: "hapax_legomena_ratio", label: "Hapax Ratio", source: "rust", group: "Lexical" },
-  { key: "yules_k", label: "Yule's K", source: "rust", group: "Lexical" },
-  { key: "simpsons_d", label: "Simpson's D", source: "rust", group: "Lexical" },
-  { key: "mtld", label: "MTLD", source: "rust", group: "Lexical" },
-  { key: "hd_d", label: "HD-D", source: "rust", group: "Lexical" },
-  { key: "brunets_w", label: "Brunet's W", source: "rust", group: "Lexical" },
-  { key: "honores_r", label: "Honore's R", source: "rust", group: "Lexical" },
-  { key: "avg_word_length", label: "Avg Word Length", source: "rust", group: "Sentence" },
-  { key: "avg_sentence_length", label: "Avg Sentence Length", source: "rust", group: "Sentence" },
-  { key: "sentence_length_variance", label: "Sentence Len Variance", source: "rust", group: "Sentence" },
-  { key: "coleman_liau_index", label: "Coleman-Liau Index", source: "rust", group: "Sentence" },
-  { key: "formality_score", label: "Formality Score", source: "rust", group: "Style" },
-  { key: "cjk_ratio", label: "CJK Ratio", source: "rust", group: "Style" },
-  { key: "emoji_density", label: "Emoji Density", source: "rust", group: "Style" },
-  { key: "code_switching_ratio", label: "Code-Switching Ratio", source: "rust", group: "Style" },
-  { key: "sentiment_valence", label: "Sentiment Valence", source: "nlp", group: "NLP" },
-  { key: "emotional_tone", label: "Emotional Tone", source: "nlp", group: "NLP" },
-  { key: "cognitive_complexity", label: "Cognitive Complexity", source: "nlp", group: "NLP" },
-  { key: "clause_depth_avg", label: "Clause Depth Avg", source: "nlp", group: "NLP" },
+  { key: "type_token_ratio", labelKey: "features.scalar.type_token_ratio", source: "rust", groupKey: "features.group.lexical" },
+  { key: "hapax_legomena_ratio", labelKey: "features.scalar.hapax_legomena_ratio", source: "rust", groupKey: "features.group.lexical" },
+  { key: "yules_k", labelKey: "features.scalar.yules_k", source: "rust", groupKey: "features.group.lexical" },
+  { key: "simpsons_d", labelKey: "features.scalar.simpsons_d", source: "rust", groupKey: "features.group.lexical" },
+  { key: "mtld", labelKey: "features.scalar.mtld", source: "rust", groupKey: "features.group.lexical" },
+  { key: "hd_d", labelKey: "features.scalar.hd_d", source: "rust", groupKey: "features.group.lexical" },
+  { key: "brunets_w", labelKey: "features.scalar.brunets_w", source: "rust", groupKey: "features.group.lexical" },
+  { key: "honores_r", labelKey: "features.scalar.honores_r", source: "rust", groupKey: "features.group.lexical" },
+  { key: "avg_word_length", labelKey: "features.scalar.avg_word_length", source: "rust", groupKey: "features.group.sentence" },
+  { key: "avg_sentence_length", labelKey: "features.scalar.avg_sentence_length", source: "rust", groupKey: "features.group.sentence" },
+  { key: "sentence_length_variance", labelKey: "features.scalar.sentence_length_variance", source: "rust", groupKey: "features.group.sentence" },
+  { key: "coleman_liau_index", labelKey: "features.scalar.coleman_liau_index", source: "rust", groupKey: "features.group.sentence" },
+  { key: "formality_score", labelKey: "features.scalar.formality_score", source: "rust", groupKey: "features.group.style" },
+  { key: "cjk_ratio", labelKey: "features.scalar.cjk_ratio", source: "rust", groupKey: "features.group.style" },
+  { key: "emoji_density", labelKey: "features.scalar.emoji_density", source: "rust", groupKey: "features.group.style" },
+  { key: "code_switching_ratio", labelKey: "features.scalar.code_switching_ratio", source: "rust", groupKey: "features.group.style" },
+  { key: "sentiment_valence", labelKey: "features.scalar.sentiment_valence", source: "nlp", groupKey: "features.group.nlp" },
+  { key: "emotional_tone", labelKey: "features.scalar.emotional_tone", source: "nlp", groupKey: "features.group.nlp" },
+  { key: "cognitive_complexity", labelKey: "features.scalar.cognitive_complexity", source: "nlp", groupKey: "features.group.nlp" },
+  { key: "clause_depth_avg", labelKey: "features.scalar.clause_depth_avg", source: "nlp", groupKey: "features.group.nlp" },
 ];
 
-const FEATURE_GROUPS = [...new Set(SCALAR_FEATURES.map((feature) => feature.group))];
+const FEATURE_GROUPS = [...new Set(SCALAR_FEATURES.map((feature) => feature.groupKey))];
 
 function getValue(
   featureVector: FeaturesResponse["features"][number],
@@ -97,7 +97,7 @@ function FeaturesPageContent() {
   );
 
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
-  const [selectedGroup, setSelectedGroup] = useState<string>("Lexical");
+  const [selectedGroup, setSelectedGroup] = useState<string>("features.group.lexical");
   const [selectedFeature, setSelectedFeature] = useState<string>("type_token_ratio");
   const [selectedTextIds, setSelectedTextIds] = useState<string[]>([]);
   const [showAllAuthors, setShowAllAuthors] = useState(false);
@@ -115,7 +115,7 @@ function FeaturesPageContent() {
   const features = useMemo(() => featuresData?.features ?? [], [featuresData?.features]);
 
   const groupFeatures = useMemo(
-    () => SCALAR_FEATURES.filter((feature) => feature.group === selectedGroup),
+    () => SCALAR_FEATURES.filter((feature) => feature.groupKey === selectedGroup),
     [selectedGroup],
   );
 
@@ -263,12 +263,12 @@ function FeaturesPageContent() {
   }
 
   const controlsPanel = (
-    <Card className="border-border/70 bg-card/96 shadow-none">
+    <Card className="border-border/70 surface-flat">
       <CardContent className="space-y-4 pt-5">
         <div>
-          <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+          <SectionEyebrow>
             {t("features.controlsTitle")}
-          </div>
+          </SectionEyebrow>
           <p className="mt-2 text-sm leading-7 text-muted-foreground">
             {t("features.contextHint")}
           </p>
@@ -349,9 +349,9 @@ function FeaturesPageContent() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {FEATURE_GROUPS.map((groupName) => (
-                  <SelectItem key={groupName} value={groupName}>
-                    {groupName}
+                {FEATURE_GROUPS.map((groupKey) => (
+                  <SelectItem key={groupKey} value={groupKey}>
+                    {t(groupKey)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -367,7 +367,7 @@ function FeaturesPageContent() {
               <SelectContent>
                 {groupFeatures.map((feature) => (
                   <SelectItem key={feature.key} value={feature.key}>
-                    {feature.label}
+                    {t(feature.labelKey)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -396,9 +396,9 @@ function FeaturesPageContent() {
   );
 
   return (
-    <StaggerContainer className="space-y-6" delayChildren={0.03} staggerChildren={0.04}>
-      <StaggerItem>
-        <div className="rounded-[28px] border border-border/70 bg-card/96 p-6 shadow-none">
+    <div className="space-y-6">
+      <>
+        <div className="rounded-3xl border border-border/70 surface-flat p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-3">
               <Button asChild variant="ghost" size="sm" className="w-fit rounded-full">
@@ -408,9 +408,9 @@ function FeaturesPageContent() {
                 </Link>
               </Button>
               <div>
-                <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <SectionEyebrow>
                   {t("features.labEyebrow")}
-                </div>
+                </SectionEyebrow>
                 <h1 className="mt-2 text-3xl font-semibold tracking-tight">{t("features.title")}</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-7 text-muted-foreground">
                   {t("features.labHint")}
@@ -419,9 +419,9 @@ function FeaturesPageContent() {
             </div>
 
             <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
-              <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              <SectionEyebrow>
                 {t("features.contextTitle")}
-              </div>
+              </SectionEyebrow>
               <div className="mt-3 space-y-2 text-sm">
                 <div className="font-mono">{analysis.id}</div>
                 <div className="text-muted-foreground">{analysis.llm_backend}</div>
@@ -450,12 +450,12 @@ function FeaturesPageContent() {
             {controlsPanel}
           </div>
         </div>
-      </StaggerItem>
+      </>
 
       {features.length === 0 ? (
-        <StaggerItem>
+        <>
           <p className="text-muted-foreground">{t("features.noData")}</p>
-        </StaggerItem>
+        </>
       ) : (
         <div className="space-y-6">
           {currentFeatureMeta && (
@@ -465,7 +465,7 @@ function FeaturesPageContent() {
               selectedAuthors={selectedAuthors}
               highlightedAuthors={highlightedAuthors}
               featureKey={currentFeatureMeta.key}
-              featureLabel={currentFeatureMeta.label}
+              featureLabel={currentFeatureMeta ? t(currentFeatureMeta.labelKey) : ""}
               source={currentFeatureMeta.source}
             />
           )}
@@ -494,7 +494,7 @@ function FeaturesPageContent() {
           />
         </div>
       )}
-    </StaggerContainer>
+    </div>
   );
 }
 
@@ -509,7 +509,7 @@ function InsightStat({
 }) {
   return (
     <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
-      <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</div>
+      <SectionEyebrow>{label}</SectionEyebrow>
       <div className="mt-2 text-2xl font-semibold">{value}</div>
       {caption && <div className="mt-1 text-xs text-muted-foreground">{caption}</div>}
     </div>

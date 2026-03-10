@@ -47,7 +47,7 @@ export const EvidenceInspector = memo(function EvidenceInspector({ item }: Evide
             transition={TRANSITION_REVEAL}
           >
             {!item && (
-              <div className="mt-3 rounded-[20px] border border-border/60 bg-background/30 p-4 text-sm leading-7 text-muted-foreground">
+              <div className="mt-3 rounded-2xl border border-border/60 bg-background/30 p-4 text-sm leading-7 text-muted-foreground">
                 {t("report.evidenceInspector.empty")}
               </div>
             )}
@@ -66,7 +66,7 @@ export const EvidenceInspector = memo(function EvidenceInspector({ item }: Evide
                     {item.evidence.counter_readings.map((entry) => (
                       <div
                         key={entry}
-                        className="rounded-[18px] border border-border/50 bg-background/30 p-3 text-sm leading-7 text-muted-foreground"
+                        className="rounded-xl border border-border/50 bg-background/30 p-3 text-sm leading-7 text-muted-foreground"
                       >
                         {entry}
                       </div>

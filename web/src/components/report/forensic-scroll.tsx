@@ -10,11 +10,13 @@ import {
 } from "react";
 import type {
   AnalysisDetail,
+  ArtifactRecord,
   ClusterViewCluster,
   EvidenceItem,
   FeatureVector,
   ForensicReport,
   ReportConclusion,
+  TextEntry,
   WritingProfile,
   WritingProfileDimension,
 } from "@/lib/types";
@@ -231,6 +233,119 @@ function firstMeaningful(...values: Array<string | null | undefined>) {
   return values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim();
 }
 
+const PLACEHOLDER_LABELS = new Set([
+  "",
+  "unknown",
+  "unknownsource",
+  "unknowntime",
+  "unnamedsubject",
+  "none",
+  "null",
+  "n/a",
+  "na",
+  "未命名目标",
+]);
+
+const GENERIC_SOURCE_STEMS = new Set([
+  "index",
+  "data",
+  "dump",
+  "export",
+  "sample",
+  "samples",
+  "message",
+  "messages",
+  "chat",
+  "bundle",
+  "records",
+  "record",
+  "text",
+  "texts",
+]);
+
+function normalizeComparableText(value?: string) {
+  return (value ?? "").toLowerCase().replace(/[\s./:_-]+/g, "").trim();
+}
+
+function isPlaceholderLabel(value?: string) {
+  return PLACEHOLDER_LABELS.has(normalizeComparableText(value));
+}
+
+function firstInformative(...values: Array<string | null | undefined>) {
+  return values.find((value) => {
+    if (typeof value !== "string") return false;
+    const trimmed = value.trim();
+    return trimmed.length > 0 && !isPlaceholderLabel(trimmed);
+  })?.trim();
+}
+
+function pickRecordString(
+  record: Record<string, unknown>,
+  ...keys: string[]
+) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function summarizeSourceLabel(value?: string) {
+  if (!value) return "";
+  const cleaned = value
+    .trim()
+    .replace(/^file:\/\//i, "")
+    .replace(/\\/g, "/")
+    .replace(/[?#].*$/u, "")
+    .replace(/:(line|item|segment|text):\d+$/iu, "");
+  const rawSegments = cleaned.split("/").filter(Boolean);
+  if (rawSegments.length === 0) return "";
+  const segments = rawSegments
+    .map((segment) => segment.replace(/\.[^.]+$/u, "").trim())
+    .filter(Boolean);
+  const chosen =
+    [...segments]
+      .reverse()
+      .find((segment) => {
+        const normalized = normalizeComparableText(segment);
+        return !isPlaceholderLabel(segment) && !GENERIC_SOURCE_STEMS.has(normalized);
+      }) ??
+    [...segments].reverse().find((segment) => !isPlaceholderLabel(segment)) ??
+    "";
+
+  return chosen.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function inferTextGroupLabel({
+  text,
+  aliasAuthor,
+  artifact,
+}: {
+  text: TextEntry;
+  aliasAuthor?: string;
+  artifact?: ArtifactRecord;
+}) {
+  const metadata = (text.metadata ?? {}) as Record<string, unknown>;
+  const directAuthor = firstInformative(
+    text.author,
+    aliasAuthor,
+    pickRecordString(metadata, "author", "account", "username", "handle"),
+  );
+  if (directAuthor) return directAuthor;
+
+  const sourceLabel = firstInformative(
+    summarizeSourceLabel(
+      pickRecordString(metadata, "source", "source_name", "file_name", "filename", "path"),
+    ),
+    summarizeSourceLabel(text.source),
+    summarizeSourceLabel(artifact?.source_name),
+  );
+
+  return sourceLabel ?? text.id.slice(0, 8);
+}
+
 const FOCUS_ENTITY_LABEL_KEYS: Record<FocusContext["entityType"], string> = {
   conclusion: "detail.scroll.focusEntity.conclusion",
   evidence: "detail.scroll.focusEntity.evidence",
@@ -412,6 +527,7 @@ function buildCaseHeaderDigest({
   subjectivePortrait,
   fragmentedClusterCount,
   textMetaMap,
+  dominantGroupLabel,
 }: {
   t: (key: string, params?: Record<string, string | number>) => string;
   analysis: AnalysisDetail;
@@ -430,6 +546,7 @@ function buildCaseHeaderDigest({
       group: string;
     }
   >;
+  dominantGroupLabel: string;
 }): CaseHeaderDigest {
   const caseMeta = report.request.case_metadata;
   const taskLabel = t(`task.${report.request.task}`);
@@ -439,9 +556,19 @@ function buildCaseHeaderDigest({
   const caseId = firstMeaningful(caseMeta?.case_id, analysis.id) ?? analysis.id;
   const client = firstMeaningful(caseMeta?.client);
   const analyst = firstMeaningful(caseMeta?.analyst);
+  const representativeTextId =
+    leadProfile?.representative_text_ids?.[0] ??
+    leadCluster?.representative_text_id ??
+    leadCluster?.member_text_ids[0];
+  const representativeText = representativeTextId ? textMetaMap.get(representativeTextId) : undefined;
   const subject =
-    firstMeaningful(leadConclusion?.subject, leadProfile?.subject, leadCluster?.label) ??
-    t("detail.scroll.caseFile.unknownSubject");
+    firstInformative(
+      leadConclusion?.subject,
+      leadProfile?.subject,
+      representativeText?.group,
+      leadCluster?.label,
+      dominantGroupLabel,
+    ) ?? t("detail.scroll.caseFile.unknownSubject");
 
   const primaryEvidence =
     report.evidence_items.find((item) => item.strength === "core") ?? report.evidence_items[0];
@@ -450,8 +577,9 @@ function buildCaseHeaderDigest({
     t("detail.scroll.caseFile.noTrace");
 
   const dossierHeadline =
-    firstMeaningful(
+    firstInformative(
       leadProfile?.headline,
+      representativeText?.group,
       subjectivePortrait[0]?.value,
       leadProfile?.subject,
       subject,
@@ -466,12 +594,6 @@ function buildCaseHeaderDigest({
       ),
       170,
     ) || compactText(report.summary, 170);
-
-  const representativeTextId =
-    leadProfile?.representative_text_ids?.[0] ??
-    leadCluster?.representative_text_id ??
-    leadCluster?.member_text_ids[0];
-  const representativeText = representativeTextId ? textMetaMap.get(representativeTextId) : undefined;
   const excerpt =
     compactText(
       firstMeaningful(representativeText?.preview, leadCluster?.representative_excerpt),
@@ -514,15 +636,6 @@ function buildCaseHeaderDigest({
     ) || t("detail.scroll.readingHint");
 
   const memo = compactText(caseMeta?.notes, 220);
-  const portraitSentence = dossierSummary
-    ? t("detail.scroll.caseFile.storyPortrait", {
-        portrait: dossierHeadline,
-        detail: dossierSummary,
-      })
-    : t("detail.scroll.caseFile.storyPortraitFallback", {
-        portrait: dossierHeadline,
-      });
-
   const topMarkers = (leadCluster?.top_markers ?? [])
     .map((marker) => compactText(marker, 30))
     .filter(Boolean);
@@ -540,6 +653,25 @@ function buildCaseHeaderDigest({
   ).slice(0, 6) as string[];
 
   const coreEvidenceCount = report.evidence_items.filter((item) => item.strength === "core").length;
+  const storyOpening = leadConclusion
+    ? t("detail.scroll.caseFile.storyOpening", {
+        task: taskLabel,
+        grade: gradeLabel,
+        texts: analysis.text_count,
+        groups: analysis.author_count,
+        subject,
+      })
+    : t("detail.scroll.caseFile.storyOpeningFallback", {
+        task: taskLabel,
+        texts: analysis.text_count,
+        groups: analysis.author_count,
+      });
+  const storyEvidence = primaryEvidence
+    ? t("detail.scroll.caseFile.storyEvidence", {
+        evidence: primaryEvidence.evidence_id,
+        detail: primaryTrace,
+      })
+    : t("detail.scroll.caseFile.storyEvidenceFallback");
 
   return {
     headline: leadConclusion
@@ -552,30 +684,7 @@ function buildCaseHeaderDigest({
           task: taskLabel,
           subject,
         }),
-    narrativeBlocks: [
-      leadConclusion
-        ? t("detail.scroll.caseFile.storyOpening", {
-            task: taskLabel,
-            grade: gradeLabel,
-            texts: analysis.text_count,
-            groups: analysis.author_count,
-            subject,
-          })
-        : t("detail.scroll.caseFile.storyOpeningFallback", {
-            task: taskLabel,
-            texts: analysis.text_count,
-            groups: analysis.author_count,
-          }),
-      primaryEvidence
-        ? `${t("detail.scroll.caseFile.storyEvidence", {
-            evidence: primaryEvidence.evidence_id,
-            detail: primaryTrace,
-          })} ${t("detail.scroll.caseFile.storyRisk", { risk: openQuestion })}`
-        : `${t("detail.scroll.caseFile.storyEvidenceFallback")} ${t("detail.scroll.caseFile.storyRisk", {
-            risk: openQuestion,
-          })}`,
-      portraitSentence,
-    ],
+    narrativeBlocks: [storyOpening, storyEvidence],
     factPills: [
       {
         label: t("detail.scroll.caseFile.caseId"),
@@ -659,13 +768,6 @@ function buildCaseHeaderDigest({
         tone: "neutral",
       },
       {
-        label: t("detail.scroll.caseFile.personaHook"),
-        detail: dossierSummary
-          ? `${dossierHeadline} · ${dossierSummary}`
-          : dossierHeadline,
-        tone: "neutral",
-      },
-      {
         label: t("detail.scroll.caseFile.openQuestion"),
         detail: openQuestion,
         tone:
@@ -675,7 +777,9 @@ function buildCaseHeaderDigest({
     dossierHeadline,
     dossierSummary,
     excerpt,
-    excerptLabel: representativeText?.alias ?? representativeTextId,
+    excerptLabel: [representativeText?.group, representativeText?.alias]
+      .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+      .join(" · ") || representativeTextId,
     tags,
     memo,
     nextStep,
@@ -730,6 +834,11 @@ export function ForensicScroll({
     [features],
   );
 
+  const artifactMap = useMemo(
+    () => new Map(report.request.artifacts.map((artifact) => [artifact.artifact_id, artifact])),
+    [report.request.artifacts],
+  );
+
   const clusterByTextId = useMemo(() => {
     const map = new Map<string, number>();
     report.cluster_view?.clusters.forEach((cluster) => {
@@ -748,19 +857,33 @@ export function ForensicScroll({
     const aliasMap = new Map(aliasRecords.map((item) => [item.text_id, item]));
     return report.request.texts.map((text) => {
       const alias = aliasMap.get(text.id);
+      const artifact = text.artifact_id ? artifactMap.get(text.artifact_id) : undefined;
       return {
         textId: text.id,
         alias: alias?.alias ?? text.id.slice(0, 8),
         preview: stripPreview(alias?.preview || text.content),
-        group: text.author?.trim() || alias?.author || text.id,
+        group: inferTextGroupLabel({
+          text,
+          aliasAuthor: alias?.author,
+          artifact,
+        }),
       };
     });
-  }, [report.entity_aliases?.text_aliases, report.request.texts]);
+  }, [artifactMap, report.entity_aliases?.text_aliases, report.request.texts]);
 
   const textMetaMap = useMemo(
     () => new Map(textMeta.map((item) => [item.textId, item])),
     [textMeta],
   );
+
+  const dominantGroupLabel = useMemo(() => {
+    const counts = new Map<string, number>();
+    textMeta.forEach((item) => {
+      if (isPlaceholderLabel(item.group)) return;
+      counts.set(item.group, (counts.get(item.group) ?? 0) + 1);
+    });
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  }, [textMeta]);
 
   const conclusionTextIds = useMemo(
     () =>
@@ -891,6 +1014,7 @@ export function ForensicScroll({
         subjectivePortrait,
         fragmentedClusterCount,
         textMetaMap,
+        dominantGroupLabel,
       }),
     [
       t,
@@ -902,6 +1026,7 @@ export function ForensicScroll({
       subjectivePortrait,
       fragmentedClusterCount,
       textMetaMap,
+      dominantGroupLabel,
     ],
   );
 
@@ -1415,7 +1540,7 @@ export function ForensicScroll({
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
+                  className="rounded-3xl border border-border/70 bg-card/96 p-5 lg:p-6"
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
                   <div className="space-y-2.5">
@@ -1429,7 +1554,7 @@ export function ForensicScroll({
                           type="button"
                           onClick={() => openDrawer({ kind: "conclusion", conclusion }, "conclusion-rail")}
                           className={cn(
-                            "w-full rounded-[22px] border border-transparent bg-muted/15 px-4 py-3.5 text-left transition-colors hover:bg-muted/24 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                            "w-full rounded-2xl border border-transparent bg-muted/15 px-4 py-3.5 text-left transition-colors hover:bg-muted/24 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                             focused ? "opacity-100" : "opacity-50",
                             focus && focused && "border-foreground/10 ring-1 ring-foreground/12",
                           )}
@@ -1486,7 +1611,7 @@ export function ForensicScroll({
                   }}
                   data-section-key={section.key}
                   className={cn(
-                    "rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6",
+                    "rounded-3xl border border-border/70 bg-card/96 p-5 lg:p-6",
                   )}
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
@@ -1584,7 +1709,7 @@ export function ForensicScroll({
                   }}
                   data-section-key={section.key}
                   className={cn(
-                    "rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6",
+                    "rounded-3xl border border-border/70 bg-card/96 p-5 lg:p-6",
                   )}
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
@@ -1607,7 +1732,7 @@ export function ForensicScroll({
                             />
                           </div>
 
-                          <div className="rounded-[20px] bg-muted/15 p-3">
+                          <div className="rounded-2xl bg-muted/15 p-3">
                             <ReportMetaLabel>{t("detail.scroll.profileIndex")}</ReportMetaLabel>
                             <div className="mt-2 space-y-2">
                               {visibleProfiles.map((profile, index) => {
@@ -1623,7 +1748,7 @@ export function ForensicScroll({
                                     type="button"
                                     onClick={() => openDrawer({ kind: "profile", profile }, "writing-profile-index")}
                                     className={cn(
-                                      "w-full rounded-[16px] border border-transparent bg-background/40 px-3 py-2.5 text-left transition-colors hover:bg-background/70 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                                      "w-full rounded-xl border border-transparent bg-background/40 px-3 py-2.5 text-left transition-colors hover:bg-background/70 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                                       selected && "border-border/70 bg-background/78",
                                       !selected &&
                                         (isProfileFocused(profile) ? "opacity-100" : "opacity-50"),
@@ -1677,7 +1802,7 @@ export function ForensicScroll({
                       )}
 
                       <div className="space-y-3">
-                        <div className="rounded-[20px] bg-muted/15 p-4">
+                        <div className="rounded-2xl bg-muted/15 p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="text-base font-semibold text-foreground">
@@ -1733,7 +1858,7 @@ export function ForensicScroll({
                             ].map(([label, value]) => (
                               <div
                                 key={`${label}-${value}`}
-                                className="rounded-[14px] border border-border/35 bg-background/35 px-3 py-2.5"
+                                className="rounded-xl border border-border/35 bg-background/35 px-3 py-2.5"
                               >
                                 <ReportMetaLabel>{label}</ReportMetaLabel>
                                 <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
@@ -1747,7 +1872,7 @@ export function ForensicScroll({
                           )}
                         </div>
 
-                        <div className="rounded-[20px] bg-muted/15 p-4">
+                        <div className="rounded-2xl bg-muted/15 p-4">
                           <div className="flex items-center justify-between gap-3">
                             <ReportMetaLabel>{t("detail.scroll.dimensionLedger")}</ReportMetaLabel>
                             <div className="text-xs text-muted-foreground">
@@ -1794,7 +1919,7 @@ export function ForensicScroll({
                         </div>
 
                         {(activeProfile?.representative_text_ids?.length ?? 0) > 0 && (
-                          <section className="rounded-[20px] bg-muted/15 p-3.5">
+                          <section className="rounded-2xl bg-muted/15 p-3.5">
                             <div className="flex items-center justify-between gap-3">
                               <ReportMetaLabel>{t("detail.scroll.relatedTexts")}</ReportMetaLabel>
                               <div className="text-xs text-muted-foreground">
@@ -1864,14 +1989,14 @@ export function ForensicScroll({
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
+                  className="rounded-3xl border border-border/70 bg-card/96 p-5 lg:p-6"
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
                   {clusters.length > 0 ? (
                     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
                       <div className="space-y-4">
                         <div className="grid gap-4 xl:grid-cols-[minmax(340px,0.96fr)_minmax(220px,0.74fr)]">
-                          <div className="overflow-x-auto rounded-[22px] bg-muted/15 p-4">
+                          <div className="overflow-x-auto rounded-2xl bg-muted/15 p-4">
                             <div
                               className="inline-grid gap-1.5"
                               style={{
@@ -1937,7 +2062,7 @@ export function ForensicScroll({
                                               )
                                             }
                                             className={cn(
-                                              "h-7 w-7 rounded-[8px] transition-opacity",
+                                              "h-7 w-7 rounded-sm transition-opacity",
                                               pairSelected ? "opacity-100" : focus ? "opacity-40" : "opacity-100",
                                             )}
                                             style={{ backgroundColor: heatColor(value) }}
@@ -1971,7 +2096,7 @@ export function ForensicScroll({
                             </div>
                           </div>
 
-                          <div className="rounded-[22px] bg-muted/15 p-4">
+                          <div className="rounded-2xl bg-muted/15 p-4">
                             <div className="space-y-3">
                               {visibleClusters.map((cluster) => {
                                 const anomalyCount = cluster.member_text_ids.filter((textId) => anomaliesByTextId.has(textId)).length;
@@ -2035,7 +2160,7 @@ export function ForensicScroll({
                               type="button"
                               onClick={() => openDrawer({ kind: "cluster", cluster }, "cluster-view")}
                               className={cn(
-                                "w-full rounded-[22px] bg-muted/15 p-4 text-left transition-colors hover:bg-muted/28 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                                "w-full rounded-2xl bg-muted/15 p-4 text-left transition-colors hover:bg-muted/28 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                                 isClusterFocused(cluster) ? "opacity-100" : "opacity-50",
                               )}
                               style={{ contentVisibility: "auto", containIntrinsicSize: "180px" }}
@@ -2102,7 +2227,7 @@ export function ForensicScroll({
                     sectionRefs.current[section.key] = node;
                   }}
                   data-section-key={section.key}
-                  className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
+                  className="rounded-3xl border border-border/70 bg-card/96 p-5 lg:p-6"
                 >
                   <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
                   {narrativeSections.length > 0 ? (
@@ -2214,7 +2339,7 @@ export function ForensicScroll({
                   sectionRefs.current[section.key] = node;
                 }}
                 data-section-key={section.key}
-                className="rounded-[26px] border border-border/70 bg-card/96 p-5 lg:p-6"
+                className="rounded-3xl border border-border/70 bg-card/96 p-5 lg:p-6"
               >
                 <SectionHeader title={t(section.labelKey)} accentColor={section.color} />
                 <Accordion type="multiple" className="space-y-3">
@@ -2351,7 +2476,7 @@ function CaseHeaderPanel({
     <section
       ref={sectionRef}
       data-section-key={sectionKey}
-      className="rounded-[30px] border border-border/50 bg-card/96 p-5 lg:p-6"
+      className="rounded-3xl border border-border/50 surface-flat p-5 lg:p-6"
     >
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/45 pb-3">
         <div className="min-w-0 space-y-2">
@@ -2396,7 +2521,7 @@ function CaseHeaderPanel({
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.38fr)_360px]">
         <div className="space-y-4">
-          <div className="space-y-3 rounded-[24px] border border-white/5 bg-background/35 p-4 lg:p-5">
+          <div className="space-y-3 rounded-3xl border border-white/5 bg-background/35 p-4 lg:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <ReportMetaLabel>{t("detail.scroll.verdictBar")}</ReportMetaLabel>
@@ -2410,11 +2535,11 @@ function CaseHeaderPanel({
               {digest.headline}
             </div>
 
-            <div className="grid gap-2.5 md:grid-cols-[1.05fr_0.95fr]">
+            <div className="grid gap-2.5 md:grid-cols-[1.08fr_0.92fr]">
               {digest.narrativeBlocks.map((block, index) => (
                 <div
                   key={`${sectionKey}-narrative-${index}`}
-                  className="rounded-[18px] border border-border/35 bg-background/30 px-3.5 py-3"
+                  className="rounded-xl border border-border/35 bg-background/30 px-3.5 py-3"
                 >
                   <p className="text-sm leading-6 text-foreground/88">{block}</p>
                 </div>
@@ -2422,13 +2547,13 @@ function CaseHeaderPanel({
             </div>
 
             {digest.memo && (
-              <div className="rounded-[18px] border border-border/35 bg-background/26 px-3.5 py-3">
+              <div className="rounded-xl border border-border/35 bg-background/26 px-3.5 py-3">
                 <ReportMetaLabel>{t("detail.scroll.caseFile.caseMemo")}</ReportMetaLabel>
                 <p className="mt-1.5 text-sm leading-6 text-foreground/84">{digest.memo}</p>
               </div>
             )}
 
-            <div className="grid gap-2 md:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {digest.beats.map((beat) => (
                 <CaseBeatCard key={`${beat.label}-${beat.detail}`} {...beat} />
               ))}
@@ -2442,7 +2567,7 @@ function CaseHeaderPanel({
           </div>
         </div>
 
-        <aside className="space-y-3 rounded-[24px] border border-amber-400/15 bg-muted/10 p-4">
+        <aside className="space-y-3 rounded-3xl border border-amber-400/15 bg-muted/10 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <ReportMetaLabel>{t("detail.scroll.subjectivePortrait")}</ReportMetaLabel>
@@ -2472,7 +2597,7 @@ function CaseHeaderPanel({
             </div>
           )}
 
-          <div className="rounded-[18px] border border-border/35 bg-background/42 p-3">
+          <div className="rounded-xl border border-border/35 bg-background/42 p-3">
             <ReportMetaLabel>{t("detail.scroll.caseFile.representativeExcerpt")}</ReportMetaLabel>
             <p className="mt-2 text-sm leading-6 text-foreground/88">“{digest.excerpt}”</p>
             {digest.excerptLabel && (
@@ -2534,7 +2659,7 @@ function CaseBeatCard({ label, detail, tone }: CaseHeaderBeat) {
   }[tone];
 
   return (
-    <div className={cn("rounded-[18px] border px-3.5 py-3", toneClass)}>
+    <div className={cn("rounded-xl border px-3.5 py-3", toneClass)}>
       <ReportMetaLabel>{label}</ReportMetaLabel>
       <p className="mt-1.5 text-sm leading-6 text-foreground/88">{detail}</p>
     </div>
@@ -2543,7 +2668,7 @@ function CaseBeatCard({ label, detail, tone }: CaseHeaderBeat) {
 
 function CaseStatCell({ label, value }: CaseHeaderFact) {
   return (
-    <div className="rounded-[16px] border border-border/35 bg-background/30 px-3 py-2.5">
+    <div className="rounded-xl border border-border/35 bg-background/30 px-3 py-2.5">
       <ReportMetaLabel className="truncate">{label}</ReportMetaLabel>
       <div className="mt-1 text-sm font-semibold leading-5 text-foreground">{value}</div>
     </div>
@@ -2563,7 +2688,7 @@ function PortraitCueRow({
   }[tone];
 
   return (
-    <div className="rounded-[18px] border border-border/35 bg-background/34 px-3 py-3">
+    <div className="rounded-xl border border-border/35 bg-background/34 px-3 py-3">
       <div className="flex items-start justify-between gap-3">
         <ReportMetaLabel>{title}</ReportMetaLabel>
         <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full", dotClass)} aria-hidden="true" />
@@ -2587,7 +2712,7 @@ function ProfileDimensionLedgerCard({
 
   return (
     <div
-      className="rounded-[16px] border border-border/40 bg-background/35 px-3 py-3"
+      className="rounded-xl border border-border/40 bg-background/35 px-3 py-3"
       style={{ contentVisibility: "auto", containIntrinsicSize: "160px" }}
     >
       <div className="flex items-start justify-between gap-3">
@@ -2660,7 +2785,7 @@ function CompactSignalPanel({
   return (
     <section
       className={cn(
-        "rounded-[18px] bg-muted/15 p-3.5",
+        "rounded-xl bg-muted/15 p-3.5",
         tone === "warning" && "border border-red-500/15 bg-red-500/[0.04]",
       )}
     >
@@ -2704,12 +2829,8 @@ function NarrativeTopologyGraph({
   const { t } = useI18n();
   const visibleEvidence = evidenceItems.slice(0, 4);
   const visibleTextIds = relatedTextIds.slice(0, 8);
-  const hiddenEvidenceCount = Math.max(0, evidenceItems.length - visibleEvidence.length);
-  const hiddenTextCount = Math.max(0, relatedTextIds.length - visibleTextIds.length);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [viewportWidth, setViewportWidth] = useState<number>(0);
-  const [isFitMode, setIsFitMode] = useState(true);
-  const [manualZoom, setManualZoom] = useState(1);
   const dragStateRef = useRef<{
     pointerId: number;
     startX: number;
@@ -2820,9 +2941,7 @@ function NarrativeTopologyGraph({
       .filter((edge): edge is { id: string; path: string } => Boolean(edge)),
   );
   const fitZoom = viewportWidth > 0 ? Math.min(1, Math.max(0.72, (viewportWidth - 8) / canvasWidth)) : 1;
-  const MIN_ZOOM = 0.6;
-  const MAX_ZOOM = 1.45;
-  const zoom = isFitMode ? fitZoom : manualZoom;
+  const zoom = fitZoom;
 
   const viewportHeight = Math.min(440, Math.max(220, Math.round(canvasHeight * zoom)));
   const scaledWidth = Math.round(canvasWidth * zoom);
@@ -2831,29 +2950,12 @@ function NarrativeTopologyGraph({
   const stageHeight = Math.max(viewportHeight, scaledHeight);
   const stageOffsetX = Math.max(0, Math.round((stageWidth - scaledWidth) / 2));
 
-  const clampZoom = useCallback((value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value)), []);
-
-  const handleZoomIn = useCallback(() => {
-    setManualZoom(clampZoom(zoom + 0.12));
-    setIsFitMode(false);
-  }, [clampZoom, zoom]);
-
-  const handleZoomOut = useCallback(() => {
-    setManualZoom(clampZoom(zoom - 0.12));
-    setIsFitMode(false);
-  }, [clampZoom, zoom]);
-
-  const handleFitView = useCallback(() => {
-    setIsFitMode(true);
-    setManualZoom(fitZoom);
-    const node = viewportRef.current;
-    if (node) {
-      node.scrollTo({ left: 0, top: 0, behavior: "smooth" });
-    }
-  }, [fitZoom]);
-
   const handleViewportPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "touch") {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest('[data-topology-interactive="true"]')) {
       return;
     }
     const node = viewportRef.current;
@@ -2907,44 +3009,10 @@ function NarrativeTopologyGraph({
   }
 
   return (
-    <div className="rounded-[20px] border border-border/45 bg-background/30 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs text-muted-foreground">
-          {t("detail.scroll.topology.description")}
-        </div>
-        {(hiddenEvidenceCount > 0 || hiddenTextCount > 0) && (
-          <div className="text-[11px] text-muted-foreground">
-            {hiddenEvidenceCount > 0
-              ? `+${hiddenEvidenceCount} ${t("detail.scroll.topology.hiddenEvidence")}`
-              : null}
-            {hiddenEvidenceCount > 0 && hiddenTextCount > 0 ? " · " : null}
-            {hiddenTextCount > 0
-              ? `+${hiddenTextCount} ${t("detail.scroll.topology.hiddenTexts")}`
-              : null}
-          </div>
-        )}
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="text-[11px] text-muted-foreground">
-          {t("detail.scroll.topology.panHint")}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleZoomOut}>
-            {t("detail.scroll.topology.zoomOut")}
-          </Button>
-          <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleFitView}>
-            {t("detail.scroll.topology.fit")}
-          </Button>
-          <Button type="button" variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleZoomIn}>
-            {t("detail.scroll.topology.zoomIn")}
-          </Button>
-        </div>
-      </div>
-
+    <div className="rounded-2xl border border-border/45 bg-background/30 p-3">
       <div
         ref={viewportRef}
-        className="mt-3 overflow-auto rounded-[16px] border border-border/40 bg-background/20 cursor-grab active:cursor-grabbing"
+        className="overflow-auto rounded-xl border border-border/40 bg-background/20 cursor-grab active:cursor-grabbing [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ height: viewportHeight }}
         onPointerDown={handleViewportPointerDown}
         onPointerMove={handleViewportPointerMove}
@@ -3002,7 +3070,7 @@ function NarrativeTopologyGraph({
               </svg>
 
               <div
-                className="absolute rounded-[18px] border border-border/45 bg-card/95 px-3 py-2"
+                className="absolute rounded-xl border border-border/45 bg-card/95 px-3 py-2"
                 style={{
                   left: rootPosition.x,
                   top: rootPosition.y,
@@ -3020,12 +3088,13 @@ function NarrativeTopologyGraph({
                 <button
                   key={item.evidence_id}
                   type="button"
+                  data-topology-interactive="true"
                   onClick={() => {
                     if (shouldSuppressClick()) return;
                     onOpenEvidence(item);
                   }}
                   className={cn(
-                    "absolute rounded-[18px] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                    "absolute cursor-pointer rounded-xl border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                     "border-amber-300/20 bg-amber-500/[0.06] hover:bg-amber-500/[0.12]",
                     isEvidenceFocused(item) ? "opacity-100" : "opacity-55",
                   )}
@@ -3048,12 +3117,13 @@ function NarrativeTopologyGraph({
                   <button
                     key={textId}
                     type="button"
+                    data-topology-interactive="true"
                     onClick={() => {
                       if (shouldSuppressClick()) return;
                       onOpenText(textId);
                     }}
                     className={cn(
-                      "absolute rounded-[16px] border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                      "absolute cursor-pointer rounded-xl border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                       "border-border/45 bg-card/92 hover:bg-card",
                       isTextFocused(textId) ? "opacity-100" : "opacity-55",
                     )}

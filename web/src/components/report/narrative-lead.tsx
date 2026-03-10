@@ -55,7 +55,7 @@ export function NarrativeLead({ report }: NarrativeLeadProps) {
 
   return (
     <FadeIn delay={0.06}>
-      <div className={cn("rounded-[26px] border p-5", meta.shell)}>
+      <div className={cn("rounded-3xl border p-5", meta.shell)}>
         <div className="flex items-start gap-4">
           <div className="mt-0.5 rounded-2xl bg-background/80 p-2.5">
             <LeadIcon className="h-5 w-5" />

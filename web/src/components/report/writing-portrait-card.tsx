@@ -57,7 +57,7 @@ export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardPro
             <PortraitList title={t("report.writingPortrait.anomalies")} items={profile.anomalies ?? []} tone="rose" />
 
             {profile.confidence_note && (
-              <div className="rounded-[20px] bg-background/35 p-5 text-sm leading-7 text-muted-foreground">
+              <div className="rounded-2xl bg-background/35 p-5 text-sm leading-7 text-muted-foreground">
                 {profile.confidence_note}
               </div>
             )}
@@ -78,10 +78,10 @@ export function WritingPortraitCard({ profile, aliases }: WritingPortraitCardPro
             <ChartContainer
               className="mt-4 h-[320px] w-full"
               role="img"
-              aria-label={`Feature portrait radar chart for ${profile.subject}`}
+              aria-label={t("report.chart.featurePortraitAria", { subject: profile.subject })}
               config={{
                 score: {
-                  label: "Score",
+                  label: t("report.chart.score"),
                   color: "hsl(192 91% 46%)",
                 },
               }}
@@ -134,7 +134,7 @@ function PortraitList({
         {items.map((item) => (
           <div
             key={`${title}-${item}`}
-            className="flex gap-3 rounded-[20px] bg-background/35 px-5 py-4"
+            className="flex gap-3 rounded-2xl bg-background/35 px-5 py-4"
           >
             <span className={`mt-2 size-2 shrink-0 rounded-full ${bulletTone}`} aria-hidden="true" />
             <p className="text-sm leading-7 text-foreground/88">{item}</p>

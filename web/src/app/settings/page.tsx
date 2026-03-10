@@ -54,50 +54,50 @@ const EMPTY_SETTINGS: AppSettings = {
 
 type SettingsTabValue = "general" | "prompts";
 
-const TASK_OPTIONS: Array<{ value: TaskType; label: string }> = [
-  { value: "full", label: "Full" },
-  { value: "verification", label: "Verification" },
-  { value: "closed_set_id", label: "Closed-set ID" },
-  { value: "open_set_id", label: "Open-set ID" },
-  { value: "clustering", label: "Clustering" },
-  { value: "profiling", label: "Profiling" },
-  { value: "sockpuppet", label: "Sockpuppet" },
+const TASK_OPTIONS: Array<{ value: TaskType; labelKey: string }> = [
+  { value: "full", labelKey: "settings.task.full" },
+  { value: "verification", labelKey: "settings.task.verification" },
+  { value: "closed_set_id", labelKey: "settings.task.closed_set_id" },
+  { value: "open_set_id", labelKey: "settings.task.open_set_id" },
+  { value: "clustering", labelKey: "settings.task.clustering" },
+  { value: "profiling", labelKey: "settings.task.profiling" },
+  { value: "sockpuppet", labelKey: "settings.task.sockpuppet" },
 ];
 
 const PROMPT_FIELDS: Array<{
   key: keyof PromptOverrides;
-  title: string;
-  description: string;
+  titleKey: string;
+  descriptionKey: string;
 }> = [
   {
     key: "stylometry",
-    title: "Stylometry",
-    description: "用于文体学 agent 的附加指令，适合强调证据风格、输出边界或术语习惯。",
+    titleKey: "settings.prompts.stylometry.title",
+    descriptionKey: "settings.prompts.stylometry.desc",
   },
   {
     key: "writing_process",
-    title: "Psycholinguistics",
-    description: "用于心理语言学分析的附加约束，可同时规范可观察线索与主观推测的表达边界。",
+    titleKey: "settings.prompts.writing_process.title",
+    descriptionKey: "settings.prompts.writing_process.desc",
   },
   {
     key: "computational",
-    title: "Computational",
-    description: "用于统计解释层，适合强调分数措辞、校准边界和对照要求。",
+    titleKey: "settings.prompts.computational.title",
+    descriptionKey: "settings.prompts.computational.desc",
   },
   {
     key: "sociolinguistics",
-    title: "Sociolinguistics",
-    description: "用于可观察语体、代码切换和社群语言线索的附加说明。",
+    titleKey: "settings.prompts.sociolinguistics.title",
+    descriptionKey: "settings.prompts.sociolinguistics.desc",
   },
   {
     key: "synthesis",
-    title: "Synthesis",
-    description: "用于最终报告摘要，适合要求特定模板、段落结构或限制语句。",
+    titleKey: "settings.prompts.synthesis.title",
+    descriptionKey: "settings.prompts.synthesis.desc",
   },
   {
     key: "qa",
-    title: "QA",
-    description: "用于报告问答系统，适合指定回答风格、引用习惯或答复长度。",
+    titleKey: "settings.prompts.qa.title",
+    descriptionKey: "settings.prompts.qa.desc",
   },
 ];
 
@@ -261,7 +261,7 @@ export default function SettingsPage() {
                   <SelectContent>
                     {TASK_OPTIONS.map((task) => (
                       <SelectItem key={task.value} value={task.value}>
-                        {task.label}
+                        {t(task.labelKey)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -384,8 +384,8 @@ export default function SettingsPage() {
             <CardContent className="grid gap-4 xl:grid-cols-2">
               {PROMPT_FIELDS.map((field) => (
                 <div key={field.key} className="rounded-2xl border border-border/60 p-4">
-                  <Label htmlFor={`setting-prompt-${field.key}`} className="text-sm font-semibold">{field.title}</Label>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{field.description}</p>
+                  <Label htmlFor={`setting-prompt-${field.key}`} className="text-sm font-semibold">{t(field.titleKey)}</Label>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{t(field.descriptionKey)}</p>
                   <Textarea
                     id={`setting-prompt-${field.key}`}
                     className="mt-3 min-h-32"
@@ -409,7 +409,7 @@ export default function SettingsPage() {
 
       </Tabs>
 
-        <div className="flex flex-col gap-3 rounded-[24px] border border-border/60 bg-card/72 p-4 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-3xl border border-border/60 surface-elevated p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">{t("settings.saveHint")}</p>
           <Button onClick={handleSave} disabled={isSaving} className="sm:min-w-36">
             {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

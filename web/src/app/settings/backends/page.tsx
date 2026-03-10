@@ -585,7 +585,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
       )}
 
       <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm xl:sticky xl:top-20 xl:self-start">
+        <Card className="border-border/60 bg-card/80 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.5)] backdrop-blur-sm xl:sticky xl:top-20 xl:self-start">
           <CardHeader className="space-y-3 pb-3">
             <CardTitle className="text-base">{t("settings.backends.customTitle")}</CardTitle>
             <AnimatePresence>
@@ -673,7 +673,7 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
           </CardContent>
         </Card>
 
-        <Card className="border-border/60 bg-card/84 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.52)] backdrop-blur-sm">
+        <Card className="border-border/60 bg-card/80 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.5)] backdrop-blur-sm">
           <CardHeader className="border-b border-border/60">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

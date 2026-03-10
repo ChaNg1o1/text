@@ -113,7 +113,9 @@ Tauri 入口在 `web/src-tauri/src/lib.rs`，主要负责：
 - 选择可用端口
 - 启动 sidecar 后端
 - 轮询健康检查直到 `/api/v1/health` 可用
-- 暴露 `get_api_origin` 和 `save_file` 原生命令
+- 暴露 `get_api_origin`、`save_file`、`get_desktop_debug_snapshot`、`record_frontend_debug_events`、`open_main_webview_devtools`、`close_main_webview_devtools` 原生命令
+
+桌面端现在会在 Tauri runtime 中把前端 `console.*`、`window.error` 与 `unhandledrejection` 转发到 Rust 层，并落盘到应用日志目录下的 `frontend-console.ndjson`。因此排查桌面端问题时，agent 可以直接读取本地日志文件，而不需要依赖额外的可视化调试页。
 
 ### 开发态与发布态差异
 

@@ -130,7 +130,7 @@ export const ClusterLandscape = memo(function ClusterLandscape({
             {matrix ? (
               <div className="mt-5 overflow-x-auto">
                 <div
-                  className="inline-grid gap-1 rounded-[24px] bg-background/25 p-4"
+                  className="inline-grid gap-1 rounded-3xl bg-background/25 p-4"
                   style={{ gridTemplateColumns: `repeat(${items.length}, 22px)` }}
                 >
                   {matrix.flatMap((row, rowIndex) =>
@@ -160,7 +160,7 @@ export const ClusterLandscape = memo(function ClusterLandscape({
                 </div>
               </div>
             ) : (
-              <div className="mt-5 rounded-[22px] bg-background/30 p-4 text-sm text-muted-foreground">
+              <div className="mt-5 rounded-2xl bg-background/30 p-4 text-sm text-muted-foreground">
                 {t("report.cluster.noFeatures")}
               </div>
             )}
@@ -194,7 +194,7 @@ export const ClusterLandscape = memo(function ClusterLandscape({
                     {cluster.separation_summary}
                   </p>
                   {cluster.representative_excerpt && (
-                    <div className="mt-4 rounded-[18px] bg-background/30 p-5 text-sm leading-7 text-muted-foreground">
+                    <div className="mt-4 rounded-xl bg-background/30 p-5 text-sm leading-7 text-muted-foreground">
                       {cluster.representative_excerpt}
                     </div>
                   )}
@@ -221,7 +221,7 @@ export const ClusterLandscape = memo(function ClusterLandscape({
               className="mt-4 h-[220px] w-full"
               config={{
                 value: {
-                  label: "Outliers",
+                  label: t("report.chart.outliers"),
                   color: "hsl(38 92% 50%)",
                 },
               }}

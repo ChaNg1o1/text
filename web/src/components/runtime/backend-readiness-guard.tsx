@@ -4,6 +4,7 @@ import { useEffect, type ReactNode } from "react";
 
 type RuntimeWindow = Window & {
   __TEXT_BACKEND_READY__?: boolean;
+  __TEXT_BACKEND_ERROR__?: string;
 };
 
 function isTauriRuntime(): boolean {
@@ -23,7 +24,14 @@ function markBackendReady(): void {
   const runtimeWindow = window as RuntimeWindow;
   if (runtimeWindow.__TEXT_BACKEND_READY__) return;
   runtimeWindow.__TEXT_BACKEND_READY__ = true;
+  delete runtimeWindow.__TEXT_BACKEND_ERROR__;
   window.dispatchEvent(new Event("text:backend-ready"));
+}
+
+function markBackendError(detail: string): void {
+  const runtimeWindow = window as RuntimeWindow;
+  runtimeWindow.__TEXT_BACKEND_ERROR__ = detail;
+  window.dispatchEvent(new CustomEvent("text:backend-error", { detail }));
 }
 
 function markHomeReady(): void {
@@ -53,6 +61,7 @@ export function BackendReadinessGuard({ children }: { children: ReactNode }) {
       const unlistenError = await listen<string>("backend-error", (e) => {
         if (cancelled) return;
         console.error("[text/backend] startup error", e.payload);
+        markBackendError(e.payload || "Local desktop API service failed to start.");
         markHomeReady();
       });
 
@@ -67,6 +76,7 @@ export function BackendReadinessGuard({ children }: { children: ReactNode }) {
       } catch (error) {
         if (!cancelled) {
           console.error("[text/backend] failed to resolve api origin", error);
+          markBackendError("Failed to resolve desktop API origin.");
           markHomeReady();
         }
       }
@@ -88,6 +98,7 @@ export function BackendReadinessGuard({ children }: { children: ReactNode }) {
     setup().catch((error) => {
       if (!cancelled) {
         console.error("[text/backend] background bootstrap failed", error);
+        markBackendError("Desktop backend bootstrap failed.");
         markHomeReady();
       }
     });
