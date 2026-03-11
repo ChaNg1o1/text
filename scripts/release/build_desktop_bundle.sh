@@ -29,6 +29,10 @@ case "$(uname -s)" in
     fi
     ;;
   Linux)
+    # GitHub-hosted Linux runners can fail to execute linuxdeploy's AppImage
+    # runtime directly; extract-and-run avoids the FUSE-dependent path.
+    export APPIMAGE_EXTRACT_AND_RUN=1
+    echo "Linux AppImage bundling enabled with APPIMAGE_EXTRACT_AND_RUN=1"
     npm run tauri -- build --bundles appimage
     ;;
   MINGW*|MSYS*|CYGWIN*)
