@@ -15,8 +15,14 @@ import type {
   TextEntry,
   UploadResponse,
 } from "@/lib/types";
-import { UploadZone } from "@/components/analysis/upload-zone";
-import { ConfigForm } from "@/components/analysis/config-form";
+import dynamic from "next/dynamic";
+
+const UploadZone = dynamic(
+  () => import("@/components/analysis/upload-zone").then(m => ({ default: m.UploadZone })),
+);
+const ConfigForm = dynamic(
+  () => import("@/components/analysis/config-form").then(m => ({ default: m.ConfigForm })),
+);
 import { StaggerContainer, StaggerItem } from "@/components/motion/stagger-container";
 import { useI18n } from "@/components/providers/i18n-provider";
 import { PageIntro, PageIntroHeader, PageIntroStat, PageIntroStatGrid } from "@/components/shell/page-intro";
