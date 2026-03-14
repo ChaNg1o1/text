@@ -1,0 +1,4 @@
+commit	perf_score	bundle_kb	lcp_ms	status	description
+daf059a	76.0	3312.5	5790	keep	baseline
+3548a1f	82.0	3067.5	4549	keep	dynamic import heavy report/chart/form components
+8527ce9	82.0	3067.5	4545	discard	optimizePackageImports + CSS containment (no improvement)

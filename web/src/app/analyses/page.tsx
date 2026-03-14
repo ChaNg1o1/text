@@ -43,7 +43,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { FadeIn } from "@/components/motion/fade-in";
 import { NumberTween } from "@/components/motion/number-tween";
-import { AnimatePresence } from "framer-motion";
 import { useI18n } from "@/components/providers/i18n-provider";
 import { PageIntro, PageIntroHeader, PageIntroStat, PageIntroStatGrid } from "@/components/shell/page-intro";
 import { AnalysisStatusBadge } from "@/components/analysis/analysis-status-badge";
@@ -382,7 +381,6 @@ export default function AnalysesPage() {
           </FadeIn>
         ) : (
           <>
-            <AnimatePresence>
             {hasStaleData && (
               <FadeIn key="stale-warning">
               <Card className="border-amber-400/40">
@@ -397,7 +395,6 @@ export default function AnalysesPage() {
               </Card>
               </FadeIn>
             )}
-            </AnimatePresence>
             <Card className="border-border/60 surface-elevated">
               <CardContent className="pt-6">
                 <Table>

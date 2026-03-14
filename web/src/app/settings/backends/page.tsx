@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/components/providers/i18n-provider";
-import { AnimatePresence } from "framer-motion";
 import { FadeIn } from "@/components/motion/fade-in";
 import { cn } from "@/lib/utils";
 import { PageIntro, PageIntroHeader, PageIntroStat, PageIntroStatGrid } from "@/components/shell/page-intro";
@@ -588,13 +587,11 @@ export function BackendManager({ embedded = false }: BackendManagerProps) {
         <Card className="border-border/60 bg-card/80 shadow-[0_18px_40px_-30px_rgba(0,0,0,0.5)] backdrop-blur-sm xl:sticky xl:top-20 xl:self-start">
           <CardHeader className="space-y-3 pb-3">
             <CardTitle className="text-base">{t("settings.backends.customTitle")}</CardTitle>
-            <AnimatePresence>
             {!customApiReady && (
               <FadeIn key="api-warning">
               <p className="text-sm text-destructive">{t("settings.backends.customApiUnavailable")}</p>
               </FadeIn>
             )}
-            </AnimatePresence>
             {embedded && (
               <Button
                 type="button"

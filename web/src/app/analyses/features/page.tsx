@@ -20,17 +20,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { NumberTween } from "@/components/motion/number-tween";
-import { DistributionChart } from "@/components/features/distribution-chart";
-import { FeatureComparison } from "@/components/features/feature-comparison";
 import {
   MAX_CHART_GROUPS,
   MAX_GROUP_FILTER_CHIPS,
 } from "@/components/features/chart-helpers";
 import dynamic from "next/dynamic";
-import { FeatureDataViewer } from "@/components/features/feature-data-viewer";
 
+const DistributionChart = dynamic(
+  () => import("@/components/features/distribution-chart").then(m => ({ default: m.DistributionChart })),
+  { ssr: false },
+);
+const FeatureComparison = dynamic(
+  () => import("@/components/features/feature-comparison").then(m => ({ default: m.FeatureComparison })),
+  { ssr: false },
+);
 const SimilarityHeatmap = dynamic(
   () => import("@/components/features/similarity-heatmap").then(m => ({ default: m.SimilarityHeatmap })),
+  { ssr: false },
+);
+const FeatureDataViewer = dynamic(
+  () => import("@/components/features/feature-data-viewer").then(m => ({ default: m.FeatureDataViewer })),
   { ssr: false },
 );
 import { useI18n } from "@/components/providers/i18n-provider";

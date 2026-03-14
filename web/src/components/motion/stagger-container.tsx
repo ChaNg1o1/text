@@ -1,9 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { motion } from "framer-motion";
-import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
-import { staggerContainerVariants, STAGGER_ITEM_VARIANTS } from "@/lib/motion";
+import { Children, type CSSProperties, type ReactNode } from "react";
 
 interface StaggerContainerProps {
   children: ReactNode;
@@ -18,21 +15,18 @@ export function StaggerContainer({
   delayChildren = 0.06,
   staggerChildren = 0.05,
 }: StaggerContainerProps) {
-  const reducedMotion = useReducedMotionPreference();
-
-  if (reducedMotion) {
-    return <div className={className}>{children}</div>;
-  }
-
   return (
-    <motion.div
-      className={className}
-      variants={staggerContainerVariants(delayChildren, staggerChildren)}
-      initial="initial"
-      animate="animate"
-    >
-      {children}
-    </motion.div>
+    <div className={className}>
+      {Children.map(children, (child, i) => {
+        if (!child) return child;
+        const delay = delayChildren + i * staggerChildren;
+        return (
+          <div className="css-fade-in" style={{ animationDelay: `${delay}s` } as CSSProperties}>
+            {child}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -42,15 +36,5 @@ interface StaggerItemProps {
 }
 
 export function StaggerItem({ children, className }: StaggerItemProps) {
-  const reducedMotion = useReducedMotionPreference();
-
-  if (reducedMotion) {
-    return <div className={className}>{children}</div>;
-  }
-
-  return (
-    <motion.div className={className} variants={STAGGER_ITEM_VARIANTS}>
-      {children}
-    </motion.div>
-  );
+  return <div className={className}>{children}</div>;
 }

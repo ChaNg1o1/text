@@ -38,15 +38,27 @@ import { useReducedMotionPreference } from "@/hooks/use-reduced-motion";
 import { FADE_VARIANTS, REVEAL_VARIANTS, TRANSITION_ENTER, TRANSITION_REVEAL } from "@/lib/motion";
 import { useI18n } from "@/components/providers/i18n-provider";
 import { ProgressPanel } from "@/components/progress/progress-panel";
-import { AgentSection } from "@/components/report/agent-section";
-import { AnomalyTable } from "@/components/report/anomaly-table";
-import { ExportButtons } from "@/components/report/export-buttons";
 import dynamic from "next/dynamic";
 import { ReportHeader } from "@/components/report/report-header";
-import { ReportQaPanel } from "@/components/report/report-qa-panel";
 
 const ForensicScroll = dynamic(
   () => import("@/components/report/forensic-scroll").then(m => ({ default: m.ForensicScroll })),
+  { ssr: false },
+);
+const AgentSection = dynamic(
+  () => import("@/components/report/agent-section").then(m => ({ default: m.AgentSection })),
+  { ssr: false },
+);
+const AnomalyTable = dynamic(
+  () => import("@/components/report/anomaly-table").then(m => ({ default: m.AnomalyTable })),
+  { ssr: false },
+);
+const ExportButtons = dynamic(
+  () => import("@/components/report/export-buttons").then(m => ({ default: m.ExportButtons })),
+  { ssr: false },
+);
+const ReportQaPanel = dynamic(
+  () => import("@/components/report/report-qa-panel").then(m => ({ default: m.ReportQaPanel })),
   { ssr: false },
 );
 
