@@ -17,19 +17,40 @@ fn char_ngrams_from_chars(chars: &[char], n: usize, max_ngrams: usize) -> HashMa
     }
 
     let mut counts: FxHashMap<String, u64> = FxHashMap::default();
-    let mut total: u64 = 0;
+    let total = (chars.len() - n + 1) as f64;
 
-    for window in chars.windows(n) {
-        let gram: String = window.iter().collect();
-        *counts.entry(gram).or_insert(0) += 1;
-        total += 1;
+    match n {
+        2 => {
+            for i in 0..(chars.len() - 1) {
+                let a = chars[i];
+                let b = chars[i + 1];
+                let mut gram = String::with_capacity(a.len_utf8() + b.len_utf8());
+                gram.push(a);
+                gram.push(b);
+                *counts.entry(gram).or_insert(0) += 1;
+            }
+        }
+        3 => {
+            for i in 0..(chars.len() - 2) {
+                let a = chars[i];
+                let b = chars[i + 1];
+                let c = chars[i + 2];
+                let mut gram = String::with_capacity(a.len_utf8() + b.len_utf8() + c.len_utf8());
+                gram.push(a);
+                gram.push(b);
+                gram.push(c);
+                *counts.entry(gram).or_insert(0) += 1;
+            }
+        }
+        _ => {
+            for window in chars.windows(n) {
+                let gram: String = window.iter().collect();
+                *counts.entry(gram).or_insert(0) += 1;
+            }
+        }
     }
 
-    if total == 0 {
-        return HashMap::new();
-    }
-
-    truncate_to_top_k(counts, max_ngrams, total as f64)
+    truncate_to_top_k(counts, max_ngrams, total)
 }
 
 fn word_ngrams_from_tokens(tokens: &[String], n: usize, max_ngrams: usize) -> HashMap<String, f64> {
@@ -38,19 +59,43 @@ fn word_ngrams_from_tokens(tokens: &[String], n: usize, max_ngrams: usize) -> Ha
     }
 
     let mut counts: FxHashMap<String, u64> = FxHashMap::default();
-    let mut total: u64 = 0;
+    let total = (tokens.len() - n + 1) as f64;
 
-    for window in tokens.windows(n) {
-        let gram = window.join(" ");
-        *counts.entry(gram).or_insert(0) += 1;
-        total += 1;
+    match n {
+        2 => {
+            for i in 0..(tokens.len() - 1) {
+                let a = &tokens[i];
+                let b = &tokens[i + 1];
+                let mut gram = String::with_capacity(a.len() + 1 + b.len());
+                gram.push_str(a);
+                gram.push(' ');
+                gram.push_str(b);
+                *counts.entry(gram).or_insert(0) += 1;
+            }
+        }
+        3 => {
+            for i in 0..(tokens.len() - 2) {
+                let a = &tokens[i];
+                let b = &tokens[i + 1];
+                let c = &tokens[i + 2];
+                let mut gram = String::with_capacity(a.len() + b.len() + c.len() + 2);
+                gram.push_str(a);
+                gram.push(' ');
+                gram.push_str(b);
+                gram.push(' ');
+                gram.push_str(c);
+                *counts.entry(gram).or_insert(0) += 1;
+            }
+        }
+        _ => {
+            for window in tokens.windows(n) {
+                let gram = window.join(" ");
+                *counts.entry(gram).or_insert(0) += 1;
+            }
+        }
     }
 
-    if total == 0 {
-        return HashMap::new();
-    }
-
-    truncate_to_top_k(counts, max_ngrams, total as f64)
+    truncate_to_top_k(counts, max_ngrams, total)
 }
 
 /// Extract character n-grams from text and return normalized frequencies.

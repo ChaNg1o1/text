@@ -44,5 +44,8 @@ The target workload is the Rust-side batch extraction path over a fixed mixed-la
 - Replaced per-call function-word lookup map construction with inline match helpers in `lexical.rs`; this improved runtime from about `4.26ms` to `3.84ms` on the benchmark corpus.
 - Tried a single-pass Unicode metrics refactor to reduce repeated scans; after fixing a compile error, runtime regressed slightly to `3.882ms`, so the idea was discarded.
 - Refactored `ngram.rs` so `extract_all_ngrams` reuses a single collected char buffer and a single tokenized word buffer instead of recomputing them separately for bigrams and trigrams; this improved runtime from `3.84ms` to `3.661ms`.
+- Specialized hot-path bigram/trigram string construction in `ngram.rs` for both char and word n-grams, replacing generic iterator collection / `join(" ")` in the dominant `n=2/3` case; this improved runtime further from `3.661ms` to `3.357ms`.
+- An attempted optimization to reuse lexical tokens for word n-grams regressed badly (`4.839ms`) and was discarded.
+- An attempted ASCII in-place lowercasing fast path for token flushing was effectively noise (`3.675ms`) and was discarded.
 - Stopping rule for this session: when improvements are smaller than roughly `3%` and `0.15ms`, treat them as negligible and stop rather than chasing micro-wins.
-- Likely remaining opportunities are more invasive: reducing token/string allocation inside tokenization and n-gram string construction, or restructuring feature pipelines to avoid duplicate passes over text.
+- Likely remaining opportunities are more invasive: reducing token/string allocation inside tokenization and n-gram key construction, or restructuring sentence/token pipelines to avoid duplicate passes over text.
