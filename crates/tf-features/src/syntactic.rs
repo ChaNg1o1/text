@@ -1,10 +1,17 @@
-use crate::lexical;
-
 /// Sentence-level metrics.
 pub struct SentenceMetrics {
     pub sentence_count: usize,
     pub avg_sentence_length: f64,
     pub sentence_length_variance: f64,
+}
+
+#[inline(always)]
+fn is_cjk(c: char) -> bool {
+    matches!(c,
+        '\u{4E00}'..='\u{9FFF}'
+        | '\u{3400}'..='\u{4DBF}'
+        | '\u{F900}'..='\u{FAFF}'
+    )
 }
 
 /// Split text into sentences based on terminal punctuation.
@@ -22,7 +29,6 @@ fn split_sentences(text: &str) -> Vec<&str> {
 
         if is_terminator {
             if !prev_was_terminator {
-                // End of sentence: from start to just after this character.
                 let end = i + c.len_utf8();
                 let segment = &text[start..end];
                 let trimmed = segment.trim();
@@ -30,7 +36,6 @@ fn split_sentences(text: &str) -> Vec<&str> {
                     sentences.push(trimmed);
                 }
             }
-            // Move start past this terminator.
             start = i + c.len_utf8();
             prev_was_terminator = true;
         } else {
@@ -38,7 +43,6 @@ fn split_sentences(text: &str) -> Vec<&str> {
         }
     }
 
-    // Handle trailing text without a sentence terminator.
     if start < text.len() {
         let remainder = text[start..].trim();
         if !remainder.is_empty() {
@@ -51,8 +55,64 @@ fn split_sentences(text: &str) -> Vec<&str> {
 
 /// Compute sentence-level statistics.
 pub fn compute_sentence_metrics(text: &str) -> SentenceMetrics {
-    let sentences = split_sentences(text);
-    let sentence_count = sentences.len();
+    if text.is_empty() {
+        return SentenceMetrics {
+            sentence_count: 0,
+            avg_sentence_length: 0.0,
+            sentence_length_variance: 0.0,
+        };
+    }
+
+    let mut sentence_count = 0usize;
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut current_tokens = 0usize;
+    let mut in_word = false;
+    let mut prev_was_terminator = false;
+
+    for c in text.chars() {
+        if is_cjk(c) {
+            if in_word {
+                current_tokens += 1;
+                in_word = false;
+            }
+            current_tokens += 1;
+        } else if c.is_alphanumeric() || c == '\'' || c == '\u{2019}' {
+            in_word = true;
+        } else if in_word {
+            current_tokens += 1;
+            in_word = false;
+        }
+
+        let is_terminator = matches!(c, '.' | '!' | '?' | '。' | '！' | '？');
+        if is_terminator {
+            if in_word {
+                current_tokens += 1;
+                in_word = false;
+            }
+
+            if !prev_was_terminator && current_tokens > 0 {
+                let len = current_tokens as f64;
+                sentence_count += 1;
+                sum += len;
+                sum_sq += len * len;
+                current_tokens = 0;
+            }
+            prev_was_terminator = true;
+        } else {
+            prev_was_terminator = false;
+        }
+    }
+
+    if in_word {
+        current_tokens += 1;
+    }
+    if current_tokens > 0 {
+        let len = current_tokens as f64;
+        sentence_count += 1;
+        sum += len;
+        sum_sq += len * len;
+    }
 
     if sentence_count == 0 {
         return SentenceMetrics {
@@ -62,20 +122,10 @@ pub fn compute_sentence_metrics(text: &str) -> SentenceMetrics {
         };
     }
 
-    // Token count per sentence.
-    let lengths: Vec<f64> = sentences
-        .iter()
-        .map(|s| lexical::tokenize(s).len() as f64)
-        .collect();
-
-    let n = lengths.len() as f64;
-    let sum: f64 = lengths.iter().sum();
+    let n = sentence_count as f64;
     let avg = sum / n;
-
-    // Population variance.
-    let variance = if n > 1.0 {
-        let sq_diff_sum: f64 = lengths.iter().map(|&l| (l - avg).powi(2)).sum();
-        sq_diff_sum / n
+    let variance = if sentence_count > 1 {
+        (sum_sq / n) - (avg * avg)
     } else {
         0.0
     };
@@ -83,7 +133,7 @@ pub fn compute_sentence_metrics(text: &str) -> SentenceMetrics {
     SentenceMetrics {
         sentence_count,
         avg_sentence_length: avg,
-        sentence_length_variance: variance,
+        sentence_length_variance: variance.max(0.0),
     }
 }
 
@@ -122,10 +172,7 @@ mod tests {
     fn test_sentence_metrics_basic() {
         let m = compute_sentence_metrics("Hello world. Foo bar baz.");
         assert_eq!(m.sentence_count, 2);
-        // Sentence 1: "Hello world." -> 2 tokens, Sentence 2: "Foo bar baz." -> 3 tokens
-        // avg = 2.5
         assert!((m.avg_sentence_length - 2.5).abs() < 1e-9);
-        // variance = ((2-2.5)^2 + (3-2.5)^2) / 2 = (0.25 + 0.25) / 2 = 0.25
         assert!((m.sentence_length_variance - 0.25).abs() < 1e-9);
     }
 
