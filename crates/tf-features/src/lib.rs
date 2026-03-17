@@ -8,6 +8,9 @@ mod ngram;
 mod syntactic;
 mod unicode;
 
+#[cfg(test)]
+mod perf_bench;
+
 /// Maximum number of n-gram entries to retain per map (char / word).
 const MAX_NGRAMS: usize = 200;
 

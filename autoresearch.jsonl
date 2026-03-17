@@ -1,2 +1,3 @@
 {"type":"config","name":"Optimizing tf-features Rust batch extraction for lowest runtime","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
 {"run":1,"commit":"3ee532b","metric":0,"metrics":{},"status":"crash","description":"baseline setup with ignored Rust benchmark; crash due to PyO3 picking unsupported system Python 3.14 during cargo test build","timestamp":1773707093602,"segment":0}
+{"run":2,"commit":"45ba9b2","metric":3.972,"metrics":{},"status":"keep","description":"baseline Rust benchmark harness for tf-features with fixed PyO3 interpreter selection","timestamp":1773707132664,"segment":0}
