@@ -243,10 +243,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
   body {
     @apply bg-background text-foreground;
   }
 
+  html:not(.dark),
   html:not(.dark) body {
     background-image:
       radial-gradient(120% 96% at 0% 0%, color-mix(in oklch, var(--surface-glow-1) 12%, transparent) 0%, transparent 48%),
@@ -256,6 +258,20 @@
         color-mix(in oklch, white 20%, var(--background) 80%) 0%,
         var(--background) 36%,
         color-mix(in oklch, var(--background) 92%, var(--surface-glow-3) 8%) 100%
+      );
+    background-attachment: fixed;
+  }
+
+  html.dark,
+  html.dark body {
+    background-image:
+      radial-gradient(124% 94% at 0% 0%, color-mix(in oklch, var(--surface-glow-1) 18%, transparent) 0%, transparent 46%),
+      radial-gradient(116% 90% at 100% 2%, color-mix(in oklch, var(--surface-glow-2) 22%, transparent) 0%, transparent 50%),
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--background) 72%, black 28%) 0%,
+        var(--background) 34%,
+        color-mix(in oklch, var(--background) 90%, var(--surface-glow-2) 10%) 100%
       );
     background-attachment: fixed;
   }

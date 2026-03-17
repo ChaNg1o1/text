@@ -30,6 +30,7 @@ desktop = [
     "python-multipart>=0.0.18",
     "sse-starlette>=2",
     "pydantic-settings>=2",
+    "httpx>=0.28",
 ]
 
 [project.scripts]

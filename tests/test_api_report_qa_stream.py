@@ -423,6 +423,167 @@ def test_given_completed_analysis_when_requesting_qa_suggestions_then_returns_ll
         ]
 
 
+def test_given_ragflow_provider_when_requesting_ai_sdk_chat_then_uses_ragflow_client(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("TEXT_QA_PROVIDER", "ragflow")
+    monkeypatch.setenv("TEXT_RAGFLOW_BASE_URL", "http://ragflow.local")
+    monkeypatch.setenv("TEXT_RAGFLOW_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_RAGFLOW_CHAT_ID", "chat-123")
+
+    class _ForbiddenLLMBackend:
+        def __init__(self, backend: str, config_path=None) -> None:
+            raise AssertionError("Local LLM backend should not be used in RAGFlow QA mode")
+
+    class _FakeRagflowClient:
+        @classmethod
+        def from_settings(cls, settings) -> "_FakeRagflowClient":
+            assert settings.qa_provider == "ragflow"
+            assert settings.ragflow_chat_id == "chat-123"
+            return cls()
+
+        async def complete(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert "VISUALIZATION INSTRUCTIONS" in system_prompt
+            assert "Question: 这份报告结论还能怎么验证？" in user_prompt
+            assert "# Analysis Context" in user_prompt
+            return "这是来自 RAGFlow 的报告问答。"
+
+    import text.api.routers.qa as qa_router
+
+    monkeypatch.setattr(qa_router, "LLMBackend", _ForbiddenLLMBackend)
+    monkeypatch.setattr(qa_router, "RagflowChatClient", _FakeRagflowClient)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id, _ = _create_analysis(deps._store, AnalysisStatus.COMPLETED, with_report=True)
+
+        response = client.post(
+            f"/api/v1/analyses/{analysis_id}/qa/chat",
+            json={
+                "id": "chat-1",
+                "messages": [
+                    {
+                        "id": "user-1",
+                        "role": "user",
+                        "parts": [{"type": "text", "text": "这份报告结论还能怎么验证？"}],
+                    }
+                ],
+                "trigger": "submit-message",
+            },
+        )
+        assert response.status_code == 200
+
+        chunks, saw_done = _parse_ui_message_chunks(response.text)
+        assert saw_done is True
+        snapshot = next(chunk for chunk in chunks if chunk["type"] == "data-reportSnapshot")
+        assert snapshot["data"]["backend"] == "demo-backend + ragflow"
+        answer = "".join(chunk["delta"] for chunk in chunks if chunk["type"] == "text-delta").strip()
+        assert answer == "这是来自 RAGFlow 的报告问答。"
+
+
+def test_given_ragflow_provider_when_requesting_ai_sdk_chat_then_embedded_tool_json_is_emitted(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("TEXT_QA_PROVIDER", "ragflow")
+    monkeypatch.setenv("TEXT_RAGFLOW_BASE_URL", "http://ragflow.local")
+    monkeypatch.setenv("TEXT_RAGFLOW_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_RAGFLOW_CHAT_ID", "chat-123")
+
+    class _FakeRagflowClient:
+        @classmethod
+        def from_settings(cls, settings) -> "_FakeRagflowClient":
+            return cls()
+
+        async def complete(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert "VISUALIZATION INSTRUCTIONS" in system_prompt
+            return (
+                "我把相似度整理成热力图。"
+                "\n\n```json\n"
+                '{"toolName":"displayHeatmap","title":"作者相似度","rowLabels":["alice"],'
+                '"colLabels":["alice"],"matrix":[[1.0]]}\n'
+                "```"
+            )
+
+    import text.api.routers.qa as qa_router
+
+    monkeypatch.setattr(qa_router, "RagflowChatClient", _FakeRagflowClient)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id, _ = _create_analysis(deps._store, AnalysisStatus.COMPLETED, with_report=True)
+
+        response = client.post(
+            f"/api/v1/analyses/{analysis_id}/qa/chat",
+            json={
+                "id": "chat-1",
+                "messages": [
+                    {
+                        "id": "user-1",
+                        "role": "user",
+                        "parts": [{"type": "text", "text": "帮我画出相似度热力图"}],
+                    }
+                ],
+                "trigger": "submit-message",
+            },
+        )
+        assert response.status_code == 200
+
+        chunks, saw_done = _parse_ui_message_chunks(response.text)
+        assert saw_done is True
+        assert any(
+            chunk["type"] == "tool-input-available"
+            and chunk["toolName"] == "displayHeatmap"
+            and chunk["input"]["title"] == "作者相似度"
+            for chunk in chunks
+        )
+        assert any(
+            chunk["type"] == "tool-output-available"
+            and chunk["output"]["matrix"] == [[1.0]]
+            for chunk in chunks
+        )
+        answer = "".join(chunk["delta"] for chunk in chunks if chunk["type"] == "text-delta").strip()
+        assert answer == "我把相似度整理成热力图。"
+
+
+def test_given_ragflow_provider_when_requesting_qa_suggestions_then_returns_fallback_items(
+    monkeypatch, tmp_path
+) -> None:
+    deps.get_settings.cache_clear()
+    monkeypatch.setenv("TEXT_DB_DIR", str(tmp_path))
+    monkeypatch.setenv("TEXT_QA_PROVIDER", "ragflow")
+    monkeypatch.setenv("TEXT_RAGFLOW_BASE_URL", "http://ragflow.local")
+    monkeypatch.setenv("TEXT_RAGFLOW_API_KEY", "test-key")
+    monkeypatch.setenv("TEXT_RAGFLOW_CHAT_ID", "chat-123")
+
+    class _ForbiddenLLMBackend:
+        def __init__(self, backend: str, config_path=None) -> None:
+            raise AssertionError("Suggestions should use deterministic fallback in RAGFlow mode")
+
+    import text.api.routers.qa as qa_router
+
+    monkeypatch.setattr(qa_router, "LLMBackend", _ForbiddenLLMBackend)
+
+    app = create_app()
+    with TestClient(app) as client:
+        assert deps._store is not None
+        analysis_id, _ = _create_analysis(deps._store, AnalysisStatus.COMPLETED, with_report=True)
+
+        response = client.post(
+            f"/api/v1/analyses/{analysis_id}/qa/suggestions",
+            json={"count": 3},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["suggestions"]) == 3
+        assert body["suggestions"][0] == "先用最简单的话告诉我，这次结论到底偏向什么？"
+
+
 def test_build_report_context_includes_narrative_sections() -> None:
     import text.api.routers.qa as qa_router
 

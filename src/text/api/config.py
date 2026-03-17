@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 
@@ -30,3 +31,10 @@ class Settings(BaseSettings):
     observability_enabled: bool = True
     observability_slow_request_ms: float = 1200.0
     observability_event_limit: int = 200
+    qa_provider: Literal["local", "ragflow"] = "local"
+    ragflow_base_url: str | None = None
+    ragflow_api_key: str | None = None
+    ragflow_chat_id: str | None = None
+    ragflow_model: str = "ragflow"
+    ragflow_reference: bool = True
+    ragflow_timeout_seconds: float = 45.0

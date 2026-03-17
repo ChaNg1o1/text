@@ -19,6 +19,7 @@ from text.api.config import Settings
 from text.api.deps import get_settings, get_store
 from text.api.models import AnalysisStatus, QaSuggestionsRequest, QaSuggestionsResponse
 from text.api.services.analysis_store import AnalysisStore
+from text.api.services.ragflow_client import RagflowChatClient
 from text.ingest.schema import AgentFinding, AgentReport, ForensicReport
 from text.llm.backend import LLMBackend
 
@@ -484,6 +485,16 @@ def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in lowered for keyword in keywords)
 
 
+def _use_ragflow_qa(settings: Settings) -> bool:
+    return settings.qa_provider == "ragflow"
+
+
+def _qa_backend_label(*, analysis_backend: str, settings: Settings) -> str:
+    if _use_ragflow_qa(settings):
+        return f"{analysis_backend} + ragflow"
+    return analysis_backend
+
+
 def _qa_snapshot_data(*, report: ForensicReport, backend_name: str) -> dict[str, object]:
     top_conclusion = report.conclusions[0].statement if report.conclusions else None
     return {
@@ -627,6 +638,9 @@ async def _generate_suggestions(
     count: int,
     exclude: list[str],
 ) -> list[str]:
+    if _use_ragflow_qa(settings):
+        return _fallback_suggestions(report, count=count, exclude=exclude)
+
     backend = LLMBackend(backend=backend_name, config_path=settings.backends_config)
     app_settings = AppSettingsStore(settings.app_settings_config).load()
     context = _build_report_context(report)
@@ -678,6 +692,13 @@ async def _generate_answer(
     report: ForensicReport,
     settings: Settings,
 ) -> str:
+    if _use_ragflow_qa(settings):
+        return await _generate_ragflow_answer(
+            question=question,
+            report=report,
+            settings=settings,
+        )
+
     backend = LLMBackend(backend=backend_name, config_path=settings.backends_config)
     app_settings = AppSettingsStore(settings.app_settings_config).load()
     context = _build_report_context(report)
@@ -703,6 +724,40 @@ async def _generate_answer(
     return answer.strip() or "I could not derive an answer from the current analysis context."
 
 
+async def _generate_ragflow_answer(
+    *,
+    question: str,
+    report: ForensicReport,
+    settings: Settings,
+    system_prompt: str | None = None,
+) -> str:
+    client = RagflowChatClient.from_settings(settings)
+    app_settings = AppSettingsStore(settings.app_settings_config).load()
+    context = _build_report_context(report)
+    resolved_system_prompt = system_prompt or (
+        "You are a forensic analysis assistant. "
+        "Answer using the provided analysis context together with the knowledge already configured "
+        "inside the RAGFlow chat assistant. "
+        "If the context is insufficient, say so explicitly. "
+        "Use concise, factual language and cite agent names or evidence snippets when relevant."
+    )
+    resolved_system_prompt = apply_prompt_override(
+        resolved_system_prompt,
+        app_settings.prompt_overrides.qa,
+    )
+    user_prompt = (
+        "Use the following analysis context as the primary case file when answering.\n\n"
+        f"{context}\n\n"
+        f"Question: {question}\n"
+        "Answer in the same language as the question when possible."
+    )
+    answer = await client.complete(
+        system_prompt=resolved_system_prompt,
+        user_prompt=user_prompt,
+    )
+    return answer.strip() or "I could not derive an answer from the current analysis context."
+
+
 async def _generate_answer_with_tools(
     question: str,
     backend_name: str,
@@ -716,6 +771,18 @@ async def _generate_answer_with_tools(
     Tries native tool-calling first; falls back to JSON-in-text extraction
     when the provider does not support function calling.
     """
+    if _use_ragflow_qa(settings):
+        raw_answer = await _generate_ragflow_answer(
+            question=question,
+            report=report,
+            settings=settings,
+            system_prompt=JSON_FALLBACK_SYSTEM_PROMPT,
+        )
+        cleaned_text, embedded_tools = _extract_embedded_tools(raw_answer)
+        if not cleaned_text and not embedded_tools:
+            cleaned_text = "I could not derive an answer from the current analysis context."
+        return cleaned_text, embedded_tools
+
     backend = LLMBackend(backend=backend_name, config_path=settings.backends_config)
     app_settings = AppSettingsStore(settings.app_settings_config).load()
     context = _build_report_context(report)
@@ -813,7 +880,10 @@ async def chat_report_qa(
                 "type": "data-reportSnapshot",
                 "data": _qa_snapshot_data(
                     report=detail.report,
-                    backend_name=detail.llm_backend,
+                    backend_name=_qa_backend_label(
+                        analysis_backend=detail.llm_backend,
+                        settings=settings,
+                    ),
                 ),
             }
         )
