@@ -2,28 +2,205 @@ use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 /// English function words — a common subset used in stylometry.
-const ENGLISH_FUNCTION_WORDS: &[&str] = &[
-    "the", "a", "an", "and", "or", "but", "if", "in", "on", "at", "to", "for", "of", "with",
-    "by", "from", "as", "is", "was", "are", "were", "been", "be", "have", "has", "had", "do",
-    "does", "did", "will", "would", "shall", "should", "may", "might", "must", "can", "could",
-    "not", "no", "nor", "so", "yet", "both", "either", "neither", "each", "every", "all", "any",
-    "few", "more", "most", "some", "such", "than", "too", "very", "just", "about", "above",
-    "after", "again", "against", "before", "below", "between", "during", "into", "through",
-    "under", "until", "up", "down", "out", "off", "over", "then", "once", "here", "there",
-    "when", "where", "why", "how", "what", "which", "who", "whom", "this", "that", "these",
-    "those", "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your",
-    "yours", "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers",
-    "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
-];
+#[inline(always)]
+fn is_english_function_word(word: &str) -> bool {
+    matches!(
+        word,
+        "the"
+            | "a"
+            | "an"
+            | "and"
+            | "or"
+            | "but"
+            | "if"
+            | "in"
+            | "on"
+            | "at"
+            | "to"
+            | "for"
+            | "of"
+            | "with"
+            | "by"
+            | "from"
+            | "as"
+            | "is"
+            | "was"
+            | "are"
+            | "were"
+            | "been"
+            | "be"
+            | "have"
+            | "has"
+            | "had"
+            | "do"
+            | "does"
+            | "did"
+            | "will"
+            | "would"
+            | "shall"
+            | "should"
+            | "may"
+            | "might"
+            | "must"
+            | "can"
+            | "could"
+            | "not"
+            | "no"
+            | "nor"
+            | "so"
+            | "yet"
+            | "both"
+            | "either"
+            | "neither"
+            | "each"
+            | "every"
+            | "all"
+            | "any"
+            | "few"
+            | "more"
+            | "most"
+            | "some"
+            | "such"
+            | "than"
+            | "too"
+            | "very"
+            | "just"
+            | "about"
+            | "above"
+            | "after"
+            | "again"
+            | "against"
+            | "before"
+            | "below"
+            | "between"
+            | "during"
+            | "into"
+            | "through"
+            | "under"
+            | "until"
+            | "up"
+            | "down"
+            | "out"
+            | "off"
+            | "over"
+            | "then"
+            | "once"
+            | "here"
+            | "there"
+            | "when"
+            | "where"
+            | "why"
+            | "how"
+            | "what"
+            | "which"
+            | "who"
+            | "whom"
+            | "this"
+            | "that"
+            | "these"
+            | "those"
+            | "i"
+            | "me"
+            | "my"
+            | "myself"
+            | "we"
+            | "our"
+            | "ours"
+            | "ourselves"
+            | "you"
+            | "your"
+            | "yours"
+            | "yourself"
+            | "yourselves"
+            | "he"
+            | "him"
+            | "his"
+            | "himself"
+            | "she"
+            | "her"
+            | "hers"
+            | "herself"
+            | "it"
+            | "its"
+            | "itself"
+            | "they"
+            | "them"
+            | "their"
+            | "theirs"
+            | "themselves"
+    )
+}
 
 /// Chinese function words (particles, pronouns, common grammatical words).
-const CHINESE_FUNCTION_CHARS: &[char] = &[
-    '的', '了', '在', '是', '我', '他', '这', '那', '有', '不', '人', '们', '中', '大',
-    '为', '上', '个', '会', '来', '到', '说', '和', '地', '也', '子', '时', '道', '出',
-    '要', '于', '而', '又', '把', '被', '让', '给', '从', '向', '往', '以', '所', '就',
-    '她', '它', '吗', '呢', '吧', '啊', '哦', '嗯', '与', '或', '但', '却', '都', '还',
-    '才', '只', '已', '经', '过', '着', '得',
-];
+#[inline(always)]
+fn is_chinese_function_char(c: char) -> bool {
+    matches!(
+        c,
+        '的'
+            | '了'
+            | '在'
+            | '是'
+            | '我'
+            | '他'
+            | '这'
+            | '那'
+            | '有'
+            | '不'
+            | '人'
+            | '们'
+            | '中'
+            | '大'
+            | '为'
+            | '上'
+            | '个'
+            | '会'
+            | '来'
+            | '到'
+            | '说'
+            | '和'
+            | '地'
+            | '也'
+            | '子'
+            | '时'
+            | '道'
+            | '出'
+            | '要'
+            | '于'
+            | '而'
+            | '又'
+            | '把'
+            | '被'
+            | '让'
+            | '给'
+            | '从'
+            | '向'
+            | '往'
+            | '以'
+            | '所'
+            | '就'
+            | '她'
+            | '它'
+            | '吗'
+            | '呢'
+            | '吧'
+            | '啊'
+            | '哦'
+            | '嗯'
+            | '与'
+            | '或'
+            | '但'
+            | '却'
+            | '都'
+            | '还'
+            | '才'
+            | '只'
+            | '已'
+            | '经'
+            | '过'
+            | '着'
+            | '得'
+    )
+}
 
 /// Check if a character belongs to the CJK Unified Ideographs block.
 fn is_cjk(c: char) -> bool {
@@ -205,27 +382,17 @@ pub fn function_word_frequencies_from_tokens(tokens: &[String]) -> HashMap<Strin
         return HashMap::new();
     }
 
-    // Build a lookup set for English function words.
-    let en_set: FxHashMap<&str, ()> = ENGLISH_FUNCTION_WORDS
-        .iter()
-        .map(|&w| (w, ()))
-        .collect();
-
-    // Build a lookup set for Chinese function characters.
-    let zh_set: FxHashMap<char, ()> = CHINESE_FUNCTION_CHARS
-        .iter()
-        .map(|&c| (c, ()))
-        .collect();
-
     let mut counts: FxHashMap<String, u64> = FxHashMap::default();
 
     for tok in tokens {
-        let is_func = if tok.chars().count() == 1 {
-            // Single-char token: check both English and Chinese.
-            let c = tok.chars().next().unwrap();
-            zh_set.contains_key(&c) || en_set.contains_key(tok.as_str())
-        } else {
-            en_set.contains_key(tok.as_str())
+        let is_func = {
+            let mut chars = tok.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => {
+                    is_chinese_function_char(c) || is_english_function_word(tok.as_str())
+                }
+                _ => is_english_function_word(tok.as_str()),
+            }
         };
 
         if is_func {
