@@ -121,36 +121,37 @@ fn compute_code_switching_ratio(chars: &[char]) -> f64 {
         Other,
     }
 
-    let classified: Vec<Script> = chars
-        .iter()
-        .map(|&c| {
-            if is_cjk(c) {
-                Script::Cjk
-            } else if is_latin(c) {
-                Script::Latin
-            } else {
-                Script::Other
+    let mut prev = Script::Other;
+    let mut pairs = 0usize;
+    let mut transitions = 0usize;
+
+    for &c in chars {
+        let script = if is_cjk(c) {
+            Script::Cjk
+        } else if is_latin(c) {
+            Script::Latin
+        } else {
+            Script::Other
+        };
+
+        if script == Script::Other {
+            continue;
+        }
+
+        if prev != Script::Other {
+            pairs += 1;
+            if prev != script {
+                transitions += 1;
             }
-        })
-        .collect();
-
-    // Filter to only CJK or Latin characters to measure transitions between them.
-    let script_seq: Vec<Script> = classified
-        .into_iter()
-        .filter(|s| *s != Script::Other)
-        .collect();
-
-    if script_seq.len() < 2 {
-        return 0.0;
+        }
+        prev = script;
     }
 
-    let pairs = script_seq.len() - 1;
-    let transitions = script_seq
-        .windows(2)
-        .filter(|w| w[0] != w[1])
-        .count();
-
-    transitions as f64 / pairs as f64
+    if pairs == 0 {
+        0.0
+    } else {
+        transitions as f64 / pairs as f64
+    }
 }
 
 /// Compute punctuation character frequencies.

@@ -46,7 +46,9 @@ The target workload is the Rust-side batch extraction path over a fixed mixed-la
 - Refactored `ngram.rs` so `extract_all_ngrams` reuses a single collected char buffer and a single tokenized word buffer instead of recomputing them separately for bigrams and trigrams; this improved runtime from `3.84ms` to `3.661ms`.
 - Specialized hot-path bigram/trigram string construction in `ngram.rs` for both char and word n-grams, replacing generic iterator collection / `join(" ")` in the dominant `n=2/3` case; this improved runtime further from `3.661ms` to `3.357ms`.
 - Rewrote `syntactic::compute_sentence_metrics` as a single-pass scanner that counts sentence token lengths directly, avoiding sentence-slice allocation plus per-sentence re-tokenization; this improved runtime from `3.357ms` to `3.163ms`.
+- Simplified `unicode::compute_code_switching_ratio` into a single-pass state machine, removing intermediate `Vec<Script>` allocations; this improved runtime slightly from `3.163ms` to `3.101ms`.
 - An attempted optimization to reuse lexical tokens for word n-grams regressed badly (`4.839ms`) and was discarded.
 - An attempted ASCII in-place lowercasing fast path for token flushing was effectively noise (`3.675ms`) and was discarded.
+- An attempted fused Unicode metrics + punctuation pass regressed badly (`5.105ms`) and was discarded.
 - Stopping rule for this session: when improvements are smaller than roughly `3%` and `0.15ms`, treat them as negligible and stop rather than chasing micro-wins.
-- Likely remaining opportunities are more invasive: reducing token/string allocation inside tokenization and n-gram key construction, or fusing more Unicode / punctuation / token statistics into fewer passes over text.
+- At the current frontier, remaining opportunities are probably more invasive and riskier: reducing token/string allocation inside tokenization and n-gram key construction, or fusing more Unicode / punctuation / token statistics into fewer passes over text.
