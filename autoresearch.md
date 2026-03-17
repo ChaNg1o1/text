@@ -34,9 +34,15 @@ The target workload is the Rust-side batch extraction path over a fixed mixed-la
 - Keep the current feature surface intact for Python callers
 - Prefer simpler, allocation-reducing, branch-reducing changes over invasive redesigns
 - Optimize measured Rust execution time, not build time
+- User preference: stop the experiment loop when further gains are not meaningfully different
+- Practical stop rule: if a change improves less than ~3% and less than 0.15ms, treat it as negligible unless it also meaningfully simplifies code
 
 ## What's Been Tried
 - Added a dedicated ignored Rust benchmark test (`perf_batch_extract_benchmark`) that exercises `extract_features` over a deterministic mixed-language corpus and reports median / best / p90 runtime.
 - Initial setup uses Cargo test in release mode as the benchmark driver so correctness checks can remain separate from the timed metric.
 - Baseline environment issue: Cargo initially picked unsupported system Python 3.14 for PyO3 build scripts; benchmark scripts now pin `PYO3_PYTHON` to the project Python 3.11 interpreter.
-- Suspected hot paths before experimentation: repeated construction of function-word lookup tables, repeated tokenization across subsystems, Unicode multi-pass scans, and n-gram string allocation.
+- Replaced per-call function-word lookup map construction with inline match helpers in `lexical.rs`; this improved runtime from about `4.26ms` to `3.84ms` on the benchmark corpus.
+- Tried a single-pass Unicode metrics refactor to reduce repeated scans; after fixing a compile error, runtime regressed slightly to `3.882ms`, so the idea was discarded.
+- Refactored `ngram.rs` so `extract_all_ngrams` reuses a single collected char buffer and a single tokenized word buffer instead of recomputing them separately for bigrams and trigrams; this improved runtime from `3.84ms` to `3.661ms`.
+- Stopping rule for this session: when improvements are smaller than roughly `3%` and `0.15ms`, treat them as negligible and stop rather than chasing micro-wins.
+- Likely remaining opportunities are more invasive: reducing token/string allocation inside tokenization and n-gram string construction, or restructuring feature pipelines to avoid duplicate passes over text.

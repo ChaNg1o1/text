@@ -11,28 +11,13 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
-/// Extract character n-grams from text and return normalized frequencies.
-///
-/// For Latin text, character n-grams slide over the raw characters (ignoring whitespace runs).
-/// For CJK text, each character is a meaningful unit, so n-grams capture character co-occurrence.
-/// Results are truncated to `max_ngrams` most frequent entries to bound memory usage.
-pub fn char_ngrams(text: &str, n: usize, max_ngrams: usize) -> HashMap<String, f64> {
-    if n == 0 || text.is_empty() {
+fn char_ngrams_from_chars(chars: &[char], n: usize, max_ngrams: usize) -> HashMap<String, f64> {
+    if n == 0 || chars.len() < n {
         return HashMap::new();
     }
 
     let mut counts: FxHashMap<String, u64> = FxHashMap::default();
     let mut total: u64 = 0;
-
-    // Collect non-whitespace characters for sliding window.
-    let chars: Vec<char> = text
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-
-    if chars.len() < n {
-        return HashMap::new();
-    }
 
     for window in chars.windows(n) {
         let gram: String = window.iter().collect();
@@ -44,22 +29,11 @@ pub fn char_ngrams(text: &str, n: usize, max_ngrams: usize) -> HashMap<String, f
         return HashMap::new();
     }
 
-    let total_f = total as f64;
-    truncate_to_top_k(counts, max_ngrams, total_f)
+    truncate_to_top_k(counts, max_ngrams, total as f64)
 }
 
-/// Extract word n-grams from text and return normalized frequencies.
-///
-/// Tokenization is Unicode-aware: Latin words are split on whitespace/punctuation,
-/// and each CJK character is treated as an individual "word" token.
-/// Results are truncated to `max_ngrams` most frequent entries to bound memory usage.
-pub fn word_ngrams(text: &str, n: usize, max_ngrams: usize) -> HashMap<String, f64> {
-    if n == 0 || text.is_empty() {
-        return HashMap::new();
-    }
-
-    let tokens = tokenize_for_ngrams(text);
-    if tokens.len() < n {
+fn word_ngrams_from_tokens(tokens: &[String], n: usize, max_ngrams: usize) -> HashMap<String, f64> {
+    if n == 0 || tokens.len() < n {
         return HashMap::new();
     }
 
@@ -76,8 +50,35 @@ pub fn word_ngrams(text: &str, n: usize, max_ngrams: usize) -> HashMap<String, f
         return HashMap::new();
     }
 
-    let total_f = total as f64;
-    truncate_to_top_k(counts, max_ngrams, total_f)
+    truncate_to_top_k(counts, max_ngrams, total as f64)
+}
+
+/// Extract character n-grams from text and return normalized frequencies.
+///
+/// For Latin text, character n-grams slide over the raw characters (ignoring whitespace runs).
+/// For CJK text, each character is a meaningful unit, so n-grams capture character co-occurrence.
+/// Results are truncated to `max_ngrams` most frequent entries to bound memory usage.
+pub fn char_ngrams(text: &str, n: usize, max_ngrams: usize) -> HashMap<String, f64> {
+    if n == 0 || text.is_empty() {
+        return HashMap::new();
+    }
+
+    let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+    char_ngrams_from_chars(&chars, n, max_ngrams)
+}
+
+/// Extract word n-grams from text and return normalized frequencies.
+///
+/// Tokenization is Unicode-aware: Latin words are split on whitespace/punctuation,
+/// and each CJK character is treated as an individual "word" token.
+/// Results are truncated to `max_ngrams` most frequent entries to bound memory usage.
+pub fn word_ngrams(text: &str, n: usize, max_ngrams: usize) -> HashMap<String, f64> {
+    if n == 0 || text.is_empty() {
+        return HashMap::new();
+    }
+
+    let tokens = tokenize_for_ngrams(text);
+    word_ngrams_from_tokens(&tokens, n, max_ngrams)
 }
 
 /// Truncate a frequency map to the top-K entries by count, normalizing to frequencies.
@@ -105,23 +106,21 @@ fn truncate_to_top_k(
 /// Combined extraction for the feature struct: character bigrams + trigrams, word bigrams + trigrams.
 /// Returns (char_ngrams_map, word_ngrams_map).
 pub fn extract_all_ngrams(text: &str, max_ngrams: usize) -> (HashMap<String, f64>, HashMap<String, f64>) {
-    let mut char_map: HashMap<String, f64> = HashMap::new();
-    let mut word_map: HashMap<String, f64> = HashMap::new();
+    let chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let tokens = tokenize_for_ngrams(text);
 
-    // Merge character bigrams and trigrams.
+    let mut char_map: HashMap<String, f64> = HashMap::with_capacity(max_ngrams * 2);
+    let mut word_map: HashMap<String, f64> = HashMap::with_capacity(max_ngrams * 2);
+
     for n in [2, 3] {
-        for (k, v) in char_ngrams(text, n, max_ngrams) {
-            // Prefix with the n-gram order to avoid collisions between bigram "ab" and trigram "ab".
-            let key = format!("c{}:{}", n, k);
-            char_map.insert(key, v);
+        for (k, v) in char_ngrams_from_chars(&chars, n, max_ngrams) {
+            char_map.insert(format!("c{}:{}", n, k), v);
         }
     }
 
-    // Merge word bigrams and trigrams.
     for n in [2, 3] {
-        for (k, v) in word_ngrams(text, n, max_ngrams) {
-            let key = format!("w{}:{}", n, k);
-            word_map.insert(key, v);
+        for (k, v) in word_ngrams_from_tokens(&tokens, n, max_ngrams) {
+            word_map.insert(format!("w{}:{}", n, k), v);
         }
     }
 
@@ -138,7 +137,6 @@ fn tokenize_for_ngrams(text: &str) -> Vec<String> {
         let mut current_latin = String::new();
         for c in word.chars() {
             if is_cjk(c) {
-                // Flush any accumulated Latin chars as one token.
                 if !current_latin.is_empty() {
                     tokens.push(current_latin.to_lowercase());
                     current_latin.clear();
@@ -171,7 +169,6 @@ mod tests {
     #[test]
     fn test_char_ngrams_cjk() {
         let result = char_ngrams("你好世界", 2, 200);
-        // 3 bigrams: 你好, 好世, 世界
         assert_eq!(result.len(), 3);
         for v in result.values() {
             assert!((v - 1.0 / 3.0).abs() < 1e-9);
@@ -189,7 +186,6 @@ mod tests {
     #[test]
     fn test_word_ngrams_cjk_chars_are_tokens() {
         let result = word_ngrams("你好世界", 2, 200);
-        // CJK chars are individual tokens: 你, 好, 世, 界 -> 3 bigrams
         assert_eq!(result.len(), 3);
     }
 
@@ -207,7 +203,6 @@ mod tests {
 
     #[test]
     fn test_truncation() {
-        // Generate text with many distinct bigrams, verify truncation works.
         let text = "abcdefghijklmnopqrstuvwxyz";
         let result = char_ngrams(text, 2, 5);
         assert_eq!(result.len(), 5);
